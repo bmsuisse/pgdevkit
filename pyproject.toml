@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pgdb"]
+
+[project]
+name = "pg-db-tools"
+version = "0.1.0"
+description = "PostgreSQL database schema comparison tools"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "psycopg[binary]>=3.2.0",
+    "rich>=13.0.0",
+    "sqlglot[c]>=30.11.0",
+    "typer>=0.26.7",
+]
+
+[project.optional-dependencies]
+azure = ["azure-identity>=1.19.0"]
+
+[project.scripts]
+pgdb = "pgdb.cli:app"
+
+[dependency-groups]
+test = [
+    "docker>=7.1.0",
+    "psycopg[binary]>=3.2.0",
+    "pytest>=9.1.0",
+    "pytest-env>=1.1.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
+[tool.pytest_env]
+PGDB_TEST_POSTGRES_HOST = "localhost"
+PGDB_TEST_POSTGRES_PORT = "54326"
+PGDB_TEST_POSTGRES_DB = "pgdb_test"
+PGDB_TEST_POSTGRES_USER = "postgres"
+PGDB_TEST_POSTGRES_PASSWORD = "testpwd"
