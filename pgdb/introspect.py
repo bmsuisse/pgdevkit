@@ -40,7 +40,7 @@ def _load_schemas(conn: Any, db: DatabaseSchema) -> None:
 
 def _load_tables(conn: Any, db: DatabaseSchema) -> None:
     tables = _q(conn, """
-        SELECT n.nspname AS schema, c.relname AS name
+        SELECT n.nspname AS schema, c.relname AS name, c.relispartition AS is_partition
         FROM pg_catalog.pg_class c
         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
         WHERE c.relkind IN ('r', 'p')
@@ -50,7 +50,7 @@ def _load_tables(conn: Any, db: DatabaseSchema) -> None:
 
     for row in tables:
         tschema, tname = row["schema"], row["name"]
-        table = TableDef(schema=tschema, name=tname)
+        table = TableDef(schema=tschema, name=tname, is_partition=bool(row["is_partition"]))
 
         for c in _q(conn, """
             SELECT a.attname AS name,

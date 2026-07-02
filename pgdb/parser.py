@@ -94,7 +94,11 @@ def _handle_table(expr: exp.Create, db_schema: DatabaseSchema) -> None:
     if not result:
         return
     tschema, tname = result
-    table = TableDef(schema=tschema, name=tname)
+    properties = expr.args.get("properties")
+    is_partition = any(
+        isinstance(p, exp.PartitionedOfProperty) for p in (properties.expressions if properties else [])
+    )
+    table = TableDef(schema=tschema, name=tname, is_partition=is_partition)
 
     this = expr.this
     items = this.expressions if isinstance(this, exp.Schema) else []

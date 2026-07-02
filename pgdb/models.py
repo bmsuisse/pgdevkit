@@ -24,6 +24,7 @@ class TableDef:
     name: str
     columns: list[ColumnDef] = field(default_factory=list)
     constraints: list[ConstraintDef] = field(default_factory=list)
+    is_partition: bool = False
 
     @property
     def qualified_name(self) -> str:
