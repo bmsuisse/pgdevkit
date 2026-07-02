@@ -19,10 +19,11 @@ err_console = Console(stderr=True)
 
 @app.command()
 def compare(
-    scripts_dir: Path = typer.Argument(..., help="Directory containing SQL scripts"),
+    
     url: str = typer.Option(..., "--url", help="PostgreSQL DSN (postgresql://user:pass@host:port/db)"),
     entra_user: str | None = typer.Option(None, "--entra-user", help="Azure Entra user (triggers token auth)"),
     report_extra_db: bool = typer.Option(False, "--report-extra-db", help="Report objects in DB but not in scripts"),
+    scripts_dir: Path = typer.Argument(..., help="Directory containing SQL scripts"),
 ) -> None:
     """Compare SQL scripts to a live PostgreSQL database and report differences."""
     if not scripts_dir.is_dir():
