@@ -103,6 +103,7 @@ def _handle_table(expr: exp.Create, db_schema: DatabaseSchema) -> None:
     this = expr.this
     items = this.expressions if isinstance(this, exp.Schema) else []
 
+    pk_columns: set[str] = set()
     for item in items:
         if isinstance(item, exp.ColumnDef):
             col = _parse_column_def(item)
@@ -112,8 +113,22 @@ def _handle_table(expr: exp.Create, db_schema: DatabaseSchema) -> None:
             constr = _parse_table_constraint(item)
             if constr:
                 table.constraints.append(constr)
+            pk_columns |= _extract_primary_key_columns(item)
+
+    for col in table.columns:
+        if col.name in pk_columns:
+            col.is_nullable = False
 
     db_schema.tables[table.qualified_name] = table
+
+
+def _extract_primary_key_columns(item: exp.Expression) -> set[str]:
+    inner = item
+    if isinstance(item, exp.Constraint):
+        inner = item.args.get("kind") or (item.expressions[0] if item.expressions else None)
+    if isinstance(inner, exp.PrimaryKey):
+        return {e.name for e in inner.expressions if hasattr(e, "name")}
+    return set()
 
 
 def _parse_column_def(col: exp.ColumnDef) -> ColumnDef | None:
@@ -127,7 +142,7 @@ def _parse_column_def(col: exp.ColumnDef) -> ColumnDef | None:
 
     for c in col.constraints:
         ck = c.kind
-        if isinstance(ck, exp.NotNullColumnConstraint):
+        if isinstance(ck, (exp.NotNullColumnConstraint, exp.PrimaryKeyColumnConstraint)):
             is_nullable = False
         elif isinstance(ck, exp.DefaultColumnConstraint):
             default = ck.this.sql(dialect="postgres") if ck.this else None
