@@ -136,7 +136,10 @@ def _parse_column_def(col: exp.ColumnDef) -> ColumnDef | None:
     if not name or col.kind is None:
         return None
     data_type = col.kind.sql(dialect="postgres").lower()
-    is_nullable = True
+    is_serial = col.kind.this in (
+        exp.DataType.Type.SERIAL, exp.DataType.Type.SMALLSERIAL, exp.DataType.Type.BIGSERIAL,
+    )
+    is_nullable = not is_serial
     default = None
     is_generated = False
 
@@ -146,7 +149,10 @@ def _parse_column_def(col: exp.ColumnDef) -> ColumnDef | None:
             is_nullable = False
         elif isinstance(ck, exp.DefaultColumnConstraint):
             default = ck.this.sql(dialect="postgres") if ck.this else None
-        elif isinstance(ck, (exp.GeneratedAsIdentityColumnConstraint, exp.ComputedColumnConstraint)):
+        elif isinstance(ck, exp.GeneratedAsIdentityColumnConstraint):
+            is_generated = True
+            is_nullable = False
+        elif isinstance(ck, exp.ComputedColumnConstraint):
             is_generated = True
 
     return ColumnDef(name=name, data_type=data_type, is_nullable=is_nullable, default=default, is_generated=is_generated)
