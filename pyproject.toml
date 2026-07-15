@@ -6,20 +6,22 @@ build-backend = "hatchling.build"
 packages = ["pgdb"]
 
 [project]
-name = "pg-db-tools"
+name = "pgdevkit"
 version = "0.1.0"
-description = "PostgreSQL database schema comparison tools"
+description = "A helper for developing with Postgres"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "psycopg[binary]>=3.2.0",
-    "rich>=13.0.0",
     "sqlglot[c]>=30.11.0",
-    "typer>=0.26.7",
 ]
 
 [project.optional-dependencies]
 azure = ["azure-identity>=1.19.0"]
+cli = [
+    "rich>=13.0.0",
+    "typer>=0.26.7",
+]
 
 [project.scripts]
 pgdb = "pgdb.cli:app"

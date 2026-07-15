@@ -6,7 +6,7 @@ def _get_entra_token() -> str:
     try:
         from azure.identity import DefaultAzureCredential
     except ImportError:
-        raise ImportError("Install azure-identity extra: pip install pg-db-tools[azure]")
+        raise ImportError("Install azure-identity extra: pip install pgdevkit[azure]")
     cred = DefaultAzureCredential()
     token = cred.get_token("https://ossrdbms-aad.database.windows.net/.default")
     return token.token
