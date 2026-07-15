@@ -83,8 +83,11 @@ db_name = f"{slugify(config.name)}_{slugify(current_branch)}"
 
 `current_branch` comes from `git rev-parse --abbrev-ref HEAD` in the current
 worktree. `slugify` lowercases and replaces any character outside
-`[a-z0-9_]` with `_`, then truncates to fit Postgres's 63-byte identifier
-limit (hashing the tail if truncation would cause a collision risk).
+`[a-z0-9_]` with `_`. If the result exceeds 30 characters, it's truncated to
+30 and an 8-character hash of the full original string is appended
+(`slug[:30] + "_" + sha256(slug)[:8]`), keeping the final `db_name` — two
+such slugs joined with `_` — safely under Postgres's 63-byte identifier
+limit.
 
 ## Python API (`pgdevkit.testdb`)
 
