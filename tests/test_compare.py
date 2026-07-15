@@ -5,9 +5,9 @@ from pathlib import Path
 import psycopg
 import pytest
 
-from pgdb.diff import DiffKind, compute_diff
-from pgdb.introspect import introspect_db
-from pgdb.parser import parse_directory
+from pgdevkit.diff import DiffKind, compute_diff
+from pgdevkit.introspect import introspect_db
+from pgdevkit.parser import parse_directory
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
