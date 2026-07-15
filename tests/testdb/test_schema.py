@@ -58,3 +58,26 @@ async def test_apply_schema_is_idempotent(schema_test_db):
 async def test_apply_schema_on_missing_directory_is_a_noop(schema_test_db):
     async with await psycopg.AsyncConnection.connect(_db_dsn(), autocommit=True) as con:
         await apply_schema(con, FIXTURES.parent / "does_not_exist")  # must not raise
+
+
+@requires_podman
+async def test_apply_schema_resolves_multi_level_fk_dependency(schema_test_db):
+    # widget_part_detail REFERENCES widget_part REFERENCES widget, and their
+    # filenames already sort alphabetically in that same dependency order.
+    # This is the layout that exposed a real bug: _iter_sql_files derived the
+    # schema/table name from the wrong path component (file.parent.parent.name
+    # instead of file.parent.name for a database/{schema}/tables/{name}.sql
+    # layout), so table dependency tracking never activated and files were
+    # applied in filename order, which for this fixture is the exact reverse
+    # of the required FK order.
+    async with await psycopg.AsyncConnection.connect(_db_dsn(), autocommit=True) as con:
+        await apply_schema(con, FIXTURES)  # must not raise
+        async with con.cursor() as cur:
+            await cur.execute("INSERT INTO app.widget_part (widget_id) VALUES (1) RETURNING id")
+            (part_id,) = await cur.fetchone()
+            await cur.execute(
+                "INSERT INTO app.widget_part_detail (widget_part_id) VALUES (%s) RETURNING id",
+                (part_id,),
+            )
+            (detail_id,) = await cur.fetchone()
+    assert detail_id == 1

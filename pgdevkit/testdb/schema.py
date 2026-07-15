@@ -39,6 +39,14 @@ def _get_type_order(path: Path) -> int:
     raise ValueError(f"Unknown SQL type for {path.name} in {path.parent.name}")
 
 
+def _strip_layer_prefix(schema_name: str) -> str:
+    """Strip a leading numeric layer prefix (e.g. "1_dim" -> "dim") so it
+    matches the unprefixed schema name used in SQL identifiers."""
+    if re.match(r"^\d+_", schema_name):
+        return schema_name.split("_", 1)[1]
+    return schema_name
+
+
 def _get_sql_deps(sql: str) -> tuple[set[str], set[str]]:
     exprs = sqlglot.parse(sql, dialect="postgres")
     deps: set[str] = set()
@@ -74,9 +82,10 @@ def _iter_sql_files(database_dir: Path):
     for file in sorted(files, key=lambda p: (_get_type_order(p), p.name)):
         content = file.read_text(encoding="utf-8")
         declares, deps = _get_sql_deps(content)
-        if file.parent.parent.name == "tables":
-            schema = file.parent.name
+        if file.parent.name == "tables":
+            schema = _strip_layer_prefix(file.parent.parent.name)
             full_name = f"{schema}.{file.stem}"
+            deps.discard(full_name)  # the file's own CREATE TABLE target is not a real dependency
             declares.add(full_name)
             all_declared.update(declares)
             if not deps or all(d in delivered_tables for d in deps):
@@ -95,6 +104,8 @@ def _iter_sql_files(database_dir: Path):
         for i in range(len(delayed) - 1, -1, -1):
             tbl_name, file, content = delayed[i]
             _, deps = _get_sql_deps(content)
+            if tbl_name:
+                deps.discard(tbl_name)
             if all(d in delivered_tables or d not in all_declared for d in deps):
                 if tbl_name:
                     delivered_tables.add(tbl_name)
@@ -155,9 +166,7 @@ async def apply_schema(
             await con.execute(cast(Any, sql))
             json_file = file.with_suffix(".test_data.json")
             if json_file.exists():
-                schema_name = file.parent.parent.name
-                if re.match(r"^\d+_", schema_name):
-                    schema_name = schema_name.split("_", 1)[1]
+                schema_name = _strip_layer_prefix(file.parent.parent.name)
                 await _insert_test_data(json_file, f"{schema_name}.{file.stem}", force_reset, con)
         except Exception as e:  # noqa: BLE001
             logger.warning("Error executing %s (will retry): %s", file, e)
