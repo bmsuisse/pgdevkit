@@ -43,6 +43,21 @@ def test_testdb_run_sql_inline_with_results(project_factory: Callable[[str, str]
 
 
 @requires_podman
+def test_testdb_run_sql_with_results_and_zero_rows(project_factory: Callable[[str, str], Path], monkeypatch):
+    project = project_factory("clitest5", "main")
+    monkeypatch.chdir(project)
+    try:
+        runner.invoke(app, ["testdb", "up"])
+        result = runner.invoke(
+            app, ["testdb", "run-sql", "--sql", "SELECT id, name FROM app.widget WHERE false", "--results"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "0 row" in result.output
+    finally:
+        clean_testdb(project)
+
+
+@requires_podman
 def test_testdb_reset(project_factory: Callable[[str, str], Path], monkeypatch):
     project = project_factory("clitest3", "main")
     monkeypatch.chdir(project)

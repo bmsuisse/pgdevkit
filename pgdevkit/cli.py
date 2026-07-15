@@ -103,6 +103,9 @@ def testdb_run_sql(
     if not results:
         console.print(f"OK — {len(rows)} row(s)")
         return
+    if not rows:
+        console.print("(0 rows)")
+        return
     table = Table(box=box.SIMPLE, show_header=True, header_style="bold")
     for col in rows[0]:
         table.add_column(col)
