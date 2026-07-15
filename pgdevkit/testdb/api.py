@@ -104,10 +104,11 @@ def clean_testdb(project_root: Path | None = None, all: bool = False) -> None:
             await _drop_database(db_name)
             return
         prefix = f"{slugify(config.name)}_"
+        escaped_prefix = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         async with await psycopg.AsyncConnection.connect(_admin_dsn(), autocommit=True) as con:
             result = await con.execute(
-                "SELECT datname FROM pg_database WHERE datname LIKE %(pattern)s",
-                {"pattern": f"{prefix}%"},
+                "SELECT datname FROM pg_database WHERE datname LIKE %(pattern)s ESCAPE '\\'",
+                {"pattern": f"{escaped_prefix}%"},
             )
             names = [row[0] for row in await result.fetchall()]
         for name in names:
