@@ -26,9 +26,11 @@ cli = [
 [project.scripts]
 pgdb = "pgdevkit.cli:app"
 
+[tool.pgdevkit]
+name = "pgdevkit"
+
 [dependency-groups]
 test = [
-    "docker>=7.1.0",
     "psycopg[binary]>=3.2.0",
     "pytest>=9.1.0",
     "pytest-asyncio>=0.24.0",
@@ -38,10 +40,3 @@ test = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 asyncio_mode = "auto"
-
-[tool.pytest_env]
-PGDB_TEST_POSTGRES_HOST = "localhost"
-PGDB_TEST_POSTGRES_PORT = "54326"
-PGDB_TEST_POSTGRES_DB = "pgdb_test"
-PGDB_TEST_POSTGRES_USER = "postgres"
-PGDB_TEST_POSTGRES_PASSWORD = "testpwd"
