@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
 
 import psycopg
@@ -74,8 +73,7 @@ def ensure_testdb(project_root: Path | None = None, force_reset: bool = False) -
     """Ensure the shared container is running, this workspace's database
     exists, and its schema is applied. Returns the {PREFIX}POSTGRES_* env
     vars for this workspace."""
-    if not os.environ.get("PGDEVKIT_SKIP_CONTAINER"):
-        ensure_container()
+    ensure_container()
     config, db_name = _resolve(project_root)
 
     async def _run() -> None:
