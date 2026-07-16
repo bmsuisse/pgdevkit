@@ -28,6 +28,14 @@ app.add_typer(testdb_app, name="testdb")
 def compare(
     url: str = typer.Option(..., "--url", help="PostgreSQL DSN (postgresql://user:pass@host:port/db)"),
     entra_user: str | None = typer.Option(None, "--entra-user", help="Azure Entra user (triggers token auth)"),
+    databricks_workspace_host: str | None = typer.Option(
+        None,
+        "--databricks-workspace-host",
+        help="Databricks workspace URL, e.g. https://adb-....azuredatabricks.net (required for Lakebase hosts)",
+    ),
+    databricks_instance: str | None = typer.Option(
+        None, "--databricks-instance", help="Lakebase instance name (required for Lakebase hosts)"
+    ),
     report_extra_db: bool = typer.Option(False, "--report-extra-db", help="Report objects in DB but not in scripts"),
     scripts_dir: Path = typer.Argument(..., help="Directory containing SQL scripts"),
 ) -> None:
@@ -36,7 +44,16 @@ def compare(
         err_console.print(f"[red]Error:[/red] {scripts_dir} is not a directory")
         raise typer.Exit(2)
 
-    conninfo = build_conninfo(url, entra_user)
+    try:
+        conninfo = build_conninfo(
+            url,
+            entra_user,
+            databricks_workspace_host=databricks_workspace_host,
+            databricks_instance=databricks_instance,
+        )
+    except ValueError as e:
+        err_console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(2)
 
     with console.status("Parsing SQL scripts..."):
         scripts_schema = parse_directory(scripts_dir)
