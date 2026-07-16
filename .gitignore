@@ -11,3 +11,6 @@ wheels/
 
 # Local planning docs (not shipped with the package)
 docs/superpowers/
+
+# Local migration checklist (not shipped with the package)
+/MIGRATION_NOTES.md

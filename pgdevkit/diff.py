@@ -204,7 +204,10 @@ def _unwrap_paren(node):
 
 
 def _norm_sql(s: str) -> str:
-    return " ".join(s.lower().split())
+    # Postgres's pg_get_viewdef()/pg_get_indexdef() always append a trailing
+    # ";", while sqlglot's Expression.sql() rendering never does; strip it so
+    # semantically-identical definitions compare equal.
+    return " ".join(s.lower().split()).rstrip(";")
 
 
 def _norm_body(s: str) -> str:

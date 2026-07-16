@@ -197,15 +197,25 @@ def _handle_view(expr: exp.Create, db_schema: DatabaseSchema) -> None:
 def _handle_function(expr: exp.Create, raw: str, db_schema: DatabaseSchema, kind: str) -> None:
     # Get name/schema from sqlglot
     func_node = expr.this
-    if hasattr(func_node, "name"):
-        fname = func_node.name
+    fname = func_node.name if hasattr(func_node, "name") else ""
+    if fname:
         db_node = func_node.args.get("db") if hasattr(func_node, "args") else None
         fschema = db_node.name if db_node else "public"
     else:
-        result = _resolve_name(expr)
-        if not result:
-            return
-        fschema, fname = result
+        # sqlglot (30.11.0) parses "CREATE FUNCTION myapp.greet(...)" as a
+        # UserDefinedFunction wrapping a Table (this=Identifier(greet),
+        # db=Identifier(myapp)). UserDefinedFunction.name doesn't unwrap
+        # that nested Table, so pull the name/schema from it directly.
+        inner = func_node.this if hasattr(func_node, "this") else None
+        if isinstance(inner, exp.Table) and inner.name:
+            fname = inner.name
+            db_node = inner.args.get("db")
+            fschema = db_node.name if db_node else "public"
+        else:
+            result = _resolve_name(expr)
+            if not result:
+                return
+            fschema, fname = result
 
     # Extract args, return type, language, body with regex on raw SQL
     args, return_type, language, body = _parse_function_details(raw)
@@ -275,8 +285,15 @@ def _handle_type(expr: exp.Create, db_schema: DatabaseSchema) -> None:
 
 def _handle_schema_create(expr: exp.Create, db_schema: DatabaseSchema) -> None:
     this = expr.this
-    if hasattr(this, "name"):
-        db_schema.schemas.add(this.name)
+    name = this.name if hasattr(this, "name") else ""
+    if not name:
+        # sqlglot (30.11.0) parses "CREATE SCHEMA myapp" as a Table node
+        # whose `db` arg holds the schema name and `.name` (the table
+        # identifier) is empty.
+        db_node = this.args.get("db") if hasattr(this, "args") else None
+        name = db_node.name if db_node else ""
+    if name:
+        db_schema.schemas.add(name)
 
 
 def _handle_index(expr: exp.Create, db_schema: DatabaseSchema) -> None:
