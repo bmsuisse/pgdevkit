@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -13,13 +14,20 @@ requires_podman = pytest.mark.skipif(
 
 FIXTURES = Path(__file__).parent / "fixtures" / "database"
 
+# Appended to every test project's [tool.pgdevkit].name so that two pytest
+# processes (e.g. from separate git worktrees) running against the shared
+# pgdevkit-postgres container at the same time get distinct database names
+# instead of dropping each other's throwaway databases mid-run.
+RUN_SUFFIX = f"pid{os.getpid()}"
+
 
 def _make_project(base: Path, name: str, branch: str) -> Path:
     project = base / f"{name}-{branch}"
     project.mkdir()
     (project / "database").symlink_to(FIXTURES)
     (project / "pyproject.toml").write_text(
-        f'[tool.pgdevkit]\nname = "{name}"\n', encoding="utf-8"
+        f'[tool.pgdevkit]\nname = "{name}_{RUN_SUFFIX}"\nenv_prefix = "{name.upper()}_"\n',
+        encoding="utf-8",
     )
     for cmd in (
         ["git", "init", "-q"],

@@ -8,6 +8,8 @@ import pytest
 
 from pgdevkit.testdb import constants
 from pgdevkit.testdb.api import clean_testdb, ensure_testdb, reset_testdb, status
+from pgdevkit.testdb.config import load_config
+from pgdevkit.testdb.naming import slugify
 from tests.testdb.conftest import requires_podman
 
 
@@ -39,9 +41,10 @@ def test_clean_all_removes_every_branch_database(project_factory: Callable[[str,
 
     clean_testdb(project_a, all=True)
 
+    prefix = slugify(load_config(project_a).name)
     with psycopg.connect(_admin_dsn()) as con:
         with con.cursor() as cur:
-            cur.execute("SELECT count(*) FROM pg_database WHERE datname LIKE 'apitest2_%'")
+            cur.execute("SELECT count(*) FROM pg_database WHERE datname LIKE %s", (f"{prefix}_%",))
             (count,) = cur.fetchone()
     assert count == 0
 

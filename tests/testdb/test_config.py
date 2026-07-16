@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from pgdevkit.testdb.config import load_config
 
 
@@ -51,3 +53,19 @@ def test_searches_upward_for_pyproject(tmp_path: Path):
     config = load_config(subdir)
     assert config.name == "root_project"
     assert config.root == tmp_path
+
+
+def test_explicit_empty_name_falls_back_to_root_name(tmp_path: Path):
+    project = tmp_path / "myproj"
+    project.mkdir()
+    (project / "pyproject.toml").write_text('[tool.pgdevkit]\nname = ""\n', encoding="utf-8")
+    config = load_config(project)
+    assert config.name == "myproj"
+
+
+def test_extensions_must_be_a_list(tmp_path: Path):
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.pgdevkit]\nname = "x"\nextensions = "vector"\n', encoding="utf-8"
+    )
+    with pytest.raises(TypeError, match="extensions"):
+        load_config(tmp_path)

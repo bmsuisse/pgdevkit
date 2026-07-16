@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import psycopg
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -11,6 +12,7 @@ from rich import box
 from . import testdb
 from .connection import build_conninfo
 from .diff import DiffKind, compute_diff
+from .fetch_missing import SUBFOLDER, find_missing_objects, layer_folder_for, reconstruct_ddl
 from .introspect import introspect_db
 from .parser import parse_directory
 
@@ -67,6 +69,67 @@ def compare(
     raise typer.Exit(1)
 
 
+@app.command("fetch-missing")
+def fetch_missing(
+    scripts_dir: Path = typer.Argument(..., help="The database/ folder to compare against and write into"),
+    url: str = typer.Option(..., "--url", help="PostgreSQL DSN (postgresql://user:pass@host:port/db)"),
+    entra_user: str | None = typer.Option(None, "--entra-user", help="Azure Entra user (triggers token auth)"),
+    write: bool = typer.Option(False, "--write", help="Write the reconstructed .sql files (default: dry run)"),
+    only: list[str] = typer.Option([], "--only", help="Only fetch schema.name (repeatable); default is everything"),
+) -> None:
+    """Find tables/views/functions that exist in the database but aren't
+    tracked under scripts_dir, and reverse-engineer their DDL into new files."""
+    if not scripts_dir.is_dir():
+        err_console.print(f"[red]Error:[/red] {scripts_dir} is not a directory")
+        raise typer.Exit(2)
+
+    conninfo = build_conninfo(url, entra_user)
+
+    with console.status("Comparing database/ against the live schema..."):
+        missing = find_missing_objects(scripts_dir, conninfo)
+
+    if only:
+        wanted = set(only)
+        missing = [m for m in missing if m.qualified_name in wanted]
+
+    if not missing:
+        console.print("[green]No missing objects.[/green]")
+        return
+
+    table = Table(box=box.SIMPLE, show_header=True, header_style="bold")
+    table.add_column("Type", style="magenta")
+    table.add_column("Object")
+    table.add_column("Destination", style="dim")
+    for m in missing:
+        dest = layer_folder_for(scripts_dir, m.schema) / SUBFOLDER[m.object_type] / f"{m.name}.sql"
+        table.add_row(m.object_type, m.qualified_name, str(dest))
+    console.print(table)
+
+    if not write:
+        console.print("\n[yellow]Dry run[/yellow] — pass --write to create these files.")
+        return
+
+    written = 0
+    with psycopg.connect(conninfo) as conn:
+        for m in missing:
+            dest_dir = layer_folder_for(scripts_dir, m.schema) / SUBFOLDER[m.object_type]
+            dest = dest_dir / f"{m.name}.sql"
+            if dest.exists():
+                console.print(f"  [yellow]SKIP[/yellow] {dest} (already exists)")
+                continue
+            try:
+                ddl = reconstruct_ddl(conn, m)
+            except Exception as e:  # noqa: BLE001
+                err_console.print(f"[red]Error[/red] reconstructing {m.qualified_name}: {e}")
+                continue
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest.write_text(ddl, encoding="utf-8")
+            console.print(f"  [green]WROTE[/green] {dest}")
+            written += 1
+
+    console.print(f"\nWrote {written} file(s).")
+
+
 @testdb_app.command("up")
 def testdb_up() -> None:
     """Ensure the container is running, the workspace DB exists, and schema is applied."""
@@ -104,7 +167,7 @@ def testdb_run_sql(
         console.print(f"OK — {len(rows)} row(s)")
         return
     if not rows:
-        console.print("(0 rows)")
+        console.print("(0 row(s))")
         return
     table = Table(box=box.SIMPLE, show_header=True, header_style="bold")
     for col in rows[0]:

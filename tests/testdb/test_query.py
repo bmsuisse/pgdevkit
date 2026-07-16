@@ -5,9 +5,35 @@ import pytest
 
 from pgdevkit.testdb import constants, query
 from pgdevkit.testdb.container import ensure_container
-from tests.testdb.conftest import requires_podman
+from pgdevkit.testdb.query import _split_statements
+from tests.testdb.conftest import RUN_SUFFIX, requires_podman
 
-TEST_DB = "pgdevkit_query_selftest"
+
+def test_split_statements_ignores_semicolon_inside_dollar_quote():
+    sql = """
+    CREATE FUNCTION f() RETURNS int AS $$
+    BEGIN
+        RETURN 1;
+    END;
+    $$ LANGUAGE plpgsql;
+    SELECT f();
+    """
+    statements = _split_statements(sql)
+    assert len(statements) == 2
+    assert "RETURN 1;" in statements[0]
+    assert statements[1] == "SELECT f();" or statements[1].startswith("SELECT f()")
+
+
+def test_split_statements_ignores_semicolon_inside_string_literal():
+    statements = _split_statements("INSERT INTO t (s) VALUES ('a;b'); SELECT 1")
+    assert statements == ["INSERT INTO t (s) VALUES ('a;b')", "SELECT 1"]
+
+
+def test_split_statements_handles_tagged_dollar_quotes():
+    statements = _split_statements("SELECT $tag$a;b$tag$ AS x; SELECT 2")
+    assert statements == ["SELECT $tag$a;b$tag$ AS x", "SELECT 2"]
+
+TEST_DB = f"pgdevkit_query_selftest_{RUN_SUFFIX}"
 
 
 def _admin_dsn() -> str:

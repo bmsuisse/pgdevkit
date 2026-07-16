@@ -14,3 +14,6 @@ docs/superpowers/
 
 # Local migration checklist (not shipped with the package)
 /MIGRATION_NOTES.md
+
+# Local follow-up tracking (not shipped with the package)
+/FOLLOWUP.md
