@@ -170,7 +170,7 @@ def _parse_table_constraint(item: exp.Expression) -> ConstraintDef | None:
 
     if isinstance(inner, exp.PrimaryKey):
         kind = "PRIMARY KEY"
-    elif isinstance(inner, (exp.UniqueKey, exp.Unique)):
+    elif isinstance(inner, exp.UniqueColumnConstraint):
         kind = "UNIQUE"
     elif isinstance(inner, exp.ForeignKey):
         kind = "FOREIGN KEY"

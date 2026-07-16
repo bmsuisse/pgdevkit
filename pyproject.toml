@@ -27,6 +27,9 @@ cli = [
 pgdb = "pgdevkit.cli:app"
 
 [dependency-groups]
+dev = [
+    "ty>=0.0.59",
+]
 test = [
     "docker>=7.1.0",
     "psycopg[binary]>=3.2.0",
