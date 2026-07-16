@@ -32,4 +32,8 @@ def test_env_vars_override_connection_defaults(monkeypatch):
         assert constants.USER == "otheruser"
         assert constants.PASSWORD == "otherpass"
     finally:
+        # monkeypatch only unsets the env vars after this function returns,
+        # so undo them now — otherwise this reload just reloads the
+        # override values right back in, leaking them into every later test.
+        monkeypatch.undo()
         importlib.reload(constants)
