@@ -8,10 +8,10 @@ import pytest
 from pgdevkit.testdb import constants
 from pgdevkit.testdb.container import ensure_container
 from pgdevkit.testdb.schema import apply_schema
-from tests.testdb.conftest import requires_podman
+from tests.testdb.conftest import RUN_SUFFIX, requires_podman
 
 FIXTURES = Path(__file__).parent / "fixtures" / "database"
-TEST_DB = "pgdevkit_schema_selftest"
+TEST_DB = f"pgdevkit_schema_selftest_{RUN_SUFFIX}"
 
 
 def _admin_dsn() -> str:
@@ -81,3 +81,17 @@ async def test_apply_schema_resolves_multi_level_fk_dependency(schema_test_db):
             )
             (detail_id,) = await cur.fetchone()
     assert detail_id == 1
+
+
+@requires_podman
+async def test_apply_schema_resolves_view_to_view_dependency(schema_test_db):
+    # a_wrapper_view selects from b_base_view, but the filenames sort in the
+    # opposite order — this only passes if cross-view dependency tracking
+    # (not just table FK tracking) delays a_wrapper_view until its dependency
+    # exists.
+    async with await psycopg.AsyncConnection.connect(_db_dsn(), autocommit=True) as con:
+        await apply_schema(con, FIXTURES)  # must not raise
+        async with con.cursor() as cur:
+            await cur.execute("SELECT id, name FROM app.a_wrapper_view ORDER BY id")
+            rows = await cur.fetchall()
+    assert rows == [(1, "sprocket")]

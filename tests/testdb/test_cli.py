@@ -43,6 +43,35 @@ def test_testdb_run_sql_inline_with_results(project_factory: Callable[[str, str]
 
 
 @requires_podman
+def test_testdb_run_sql_file_with_dollar_quoted_semicolon(
+    project_factory: Callable[[str, str], Path], monkeypatch
+):
+    # A naive ';'-split would cut this function body in half at the embedded
+    # semicolon inside the dollar-quoted body, breaking both statements.
+    project = project_factory("clitest6", "main")
+    monkeypatch.chdir(project)
+    sql_file = project / "adhoc.sql"
+    sql_file.write_text(
+        """
+        CREATE OR REPLACE FUNCTION app.answer() RETURNS int AS $$
+        BEGIN
+            RETURN 42;
+        END;
+        $$ LANGUAGE plpgsql;
+        SELECT app.answer() AS answer;
+        """,
+        encoding="utf-8",
+    )
+    try:
+        runner.invoke(app, ["testdb", "up"])
+        result = runner.invoke(app, ["testdb", "run-sql", str(sql_file), "--results"])
+        assert result.exit_code == 0, result.output
+        assert "42" in result.output
+    finally:
+        clean_testdb(project)
+
+
+@requires_podman
 def test_testdb_run_sql_with_results_and_zero_rows(project_factory: Callable[[str, str], Path], monkeypatch):
     project = project_factory("clitest5", "main")
     monkeypatch.chdir(project)

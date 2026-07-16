@@ -22,6 +22,10 @@ cli = [
     "rich>=13.0.0",
     "typer>=0.26.7",
 ]
+db = [
+    "psycopg-pool>=3.2.0",
+    "pydantic>=2.0",
+]
 
 [project.scripts]
 pgdb = "pgdevkit.cli:app"

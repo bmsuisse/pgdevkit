@@ -16,6 +16,9 @@ from psycopg.sql import SQL, Identifier, Placeholder
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlglot").setLevel(logging.ERROR)
 
+# The `database/` folder convention (layer dirs, object-type subfolders and
+# their apply order, file-naming rules) is documented in
+# docs/database-layout.md — keep that table in sync with this dict.
 _TYPE_ORDER = {
     "schema": 1,
     "types": 2,
@@ -47,20 +50,27 @@ def _strip_layer_prefix(schema_name: str) -> str:
     return schema_name
 
 
-def _get_sql_deps(sql: str) -> tuple[set[str], set[str]]:
+_SCHEMA_QUALIFIED_TYPES = {
+    "types",
+    "tables",
+    "scalar_functions",
+    "functions",
+    "views",
+    "table_functions",
+    "procedures",
+}
+
+
+def _get_sql_deps(sql: str) -> set[str]:
     exprs = sqlglot.parse(sql, dialect="postgres")
     deps: set[str] = set()
-    declares: set[str] = set()
     for e in exprs:
         if e is None:
             continue
-        for t in e.find_all(exp.Create):
-            if t.args.get("this") is not None and t.args.get("db") is not None:
-                declares.add(str(t))
         for t in e.find_all(exp.Table):
             if t.args.get("this") is not None and t.args.get("db") is not None:
                 deps.add(str(t))
-    return declares, deps
+    return deps
 
 
 def _iter_sql_files(database_dir: Path):
@@ -75,26 +85,25 @@ def _iter_sql_files(database_dir: Path):
             if file.endswith(".sql") and ".prod" not in file:
                 files.append(Path(root) / file)
 
-    delivered_tables: set[str] = set()
+    delivered: set[str] = set()
     delayed: list[tuple[str | None, Path, str]] = []
     all_declared: set[str] = set()
 
     for file in sorted(files, key=lambda p: (_get_type_order(p), p.name)):
         content = file.read_text(encoding="utf-8")
-        declares, deps = _get_sql_deps(content)
-        if file.parent.name == "tables":
+        deps = _get_sql_deps(content)
+        if file.parent.name in _SCHEMA_QUALIFIED_TYPES:
             schema = _strip_layer_prefix(file.parent.parent.name)
             full_name = f"{schema}.{file.stem}"
-            deps.discard(full_name)  # the file's own CREATE TABLE target is not a real dependency
-            declares.add(full_name)
-            all_declared.update(declares)
-            if not deps or all(d in delivered_tables for d in deps):
-                delivered_tables.add(full_name)
+            deps.discard(full_name)  # the file's own CREATE target is not a real dependency
+            all_declared.add(full_name)
+            if not deps or all(d in delivered for d in deps):
+                delivered.add(full_name)
                 yield file, content
             else:
                 delayed.append((full_name, file, content))
             continue
-        if not deps or all(d in delivered_tables for d in deps):
+        if not deps or all(d in delivered for d in deps):
             yield file, content
         else:
             delayed.append((None, file, content))
@@ -102,13 +111,13 @@ def _iter_sql_files(database_dir: Path):
     while delayed:
         progressed = False
         for i in range(len(delayed) - 1, -1, -1):
-            tbl_name, file, content = delayed[i]
-            _, deps = _get_sql_deps(content)
-            if tbl_name:
-                deps.discard(tbl_name)
-            if all(d in delivered_tables or d not in all_declared for d in deps):
-                if tbl_name:
-                    delivered_tables.add(tbl_name)
+            declared_name, file, content = delayed[i]
+            deps = _get_sql_deps(content)
+            if declared_name:
+                deps.discard(declared_name)
+            if all(d in delivered or d not in all_declared for d in deps):
+                if declared_name:
+                    delivered.add(declared_name)
                 yield file, content
                 delayed.pop(i)
                 progressed = True
@@ -160,17 +169,20 @@ async def apply_schema(
     for extension in extensions:
         await con.execute(SQL("CREATE EXTENSION IF NOT EXISTS {e}").format(e=Identifier(extension)))
 
+    async def _apply(file: Path, sql: str) -> None:
+        await con.execute(cast(Any, sql))
+        json_file = file.with_suffix(".test_data.json")
+        if json_file.exists():
+            schema_name = _strip_layer_prefix(file.parent.parent.name)
+            await _insert_test_data(json_file, f"{schema_name}.{file.stem}", force_reset, con)
+
     failures: list[tuple[Path, str]] = []
     for file, sql in _iter_sql_files(database_dir):
         try:
-            await con.execute(cast(Any, sql))
-            json_file = file.with_suffix(".test_data.json")
-            if json_file.exists():
-                schema_name = _strip_layer_prefix(file.parent.parent.name)
-                await _insert_test_data(json_file, f"{schema_name}.{file.stem}", force_reset, con)
+            await _apply(file, sql)
         except Exception as e:  # noqa: BLE001
             logger.warning("Error executing %s (will retry): %s", file, e)
             failures.append((file, sql))
 
     for file, sql in failures:
-        await con.execute(cast(Any, sql))
+        await _apply(file, sql)

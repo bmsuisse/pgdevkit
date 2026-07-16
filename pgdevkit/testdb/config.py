@@ -36,10 +36,16 @@ def load_config(start: Path | None = None) -> ProjectConfig:
         data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
         section = data.get("tool", {}).get("pgdevkit", {})
 
+    extensions = section.get("extensions", [])
+    if not isinstance(extensions, list):
+        raise TypeError(
+            f"[tool.pgdevkit].extensions in {pyproject} must be a list, got {type(extensions).__name__}"
+        )
+
     return ProjectConfig(
         name=section.get("name") or root.name,
         database_dir=section.get("database_dir", "database"),
         env_prefix=section.get("env_prefix", ""),
-        extensions=tuple(section.get("extensions", [])),
+        extensions=tuple(extensions),
         root=root,
     )
