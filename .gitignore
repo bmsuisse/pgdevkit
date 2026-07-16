@@ -17,3 +17,6 @@ docs/superpowers/
 
 # Local follow-up tracking (not shipped with the package)
 /FOLLOWUP.md
+
+# Git worktrees
+/.worktrees/
