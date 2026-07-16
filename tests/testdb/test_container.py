@@ -2,9 +2,51 @@ from __future__ import annotations
 
 import psycopg
 
-from pgdevkit.testdb import constants
-from pgdevkit.testdb.container import _create_container, ensure_container
+from pgdevkit.testdb import constants, container
+from pgdevkit.testdb.container import _available, _create_container, ensure_container
 from tests.testdb.conftest import requires_podman
+
+
+class _FakeConnection:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+
+def test_available_returns_true_when_connection_succeeds(monkeypatch):
+    monkeypatch.setattr(container.psycopg, "connect", lambda *a, **k: _FakeConnection())
+    assert _available(timeout=0.1) is True
+
+
+def test_available_returns_false_when_connection_fails(monkeypatch):
+    def _raise(*a, **k):
+        raise psycopg.OperationalError("connection refused")
+
+    monkeypatch.setattr(container.psycopg, "connect", _raise)
+    assert _available(timeout=0.1) is False
+
+
+def test_ensure_container_skips_podman_when_already_available(monkeypatch):
+    monkeypatch.setattr(container, "_available", lambda timeout=1.0: True)
+
+    def _fail(*a, **k):
+        raise AssertionError("must not shell out to podman when already available")
+
+    monkeypatch.setattr(container, "_podman", _fail)
+    ensure_container()  # must return without calling podman
+
+
+def test_ensure_container_skips_everything_when_skip_env_set(monkeypatch):
+    monkeypatch.setenv("PGDEVKIT_SKIP_CONTAINER", "1")
+
+    def _fail(*a, **k):
+        raise AssertionError("must not run when PGDEVKIT_SKIP_CONTAINER is set")
+
+    monkeypatch.setattr(container, "_available", _fail)
+    monkeypatch.setattr(container, "_podman", _fail)
+    ensure_container()  # must return without checking availability or calling podman
 
 
 def _admin_dsn() -> str:

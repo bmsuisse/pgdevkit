@@ -40,3 +40,11 @@ def ensure_test_postgres():
 ```
 
 CLI: `pgdb testdb up|reset|run-sql|status|shell|clean`.
+
+Container connection defaults (`localhost:54322`, `postgres`/`testpwd`) can
+be overridden with `PGDEVKIT_TESTDB_HOST`, `PGDEVKIT_TESTDB_PORT`,
+`PGDEVKIT_TESTDB_USER`, `PGDEVKIT_TESTDB_PASSWORD`. Before touching
+podman/docker, pgdevkit first checks (with a short timeout) whether Postgres
+is already reachable at that address and skips container management if so.
+Set `PGDEVKIT_SKIP_CONTAINER=1` to always assume it's already there and skip
+that check too.

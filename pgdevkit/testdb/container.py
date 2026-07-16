@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 
@@ -10,6 +11,25 @@ from . import constants
 
 def _podman(*args: str, check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(["podman", *args], capture_output=True, text=True, check=check)
+
+
+def _available(timeout: float = 3.0) -> bool:
+    """Quick check (short timeout) for whether Postgres is already reachable
+    at HOST:PORT, so a database started outside pgdevkit's control (or the
+    container from a previous run) doesn't trigger another podman/docker
+    lifecycle call."""
+    # libpq's connect_timeout is whole seconds; anything below 1 means "wait
+    # indefinitely" instead of a short timeout, so it's clamped up to 1.
+    connect_timeout = max(1, round(timeout))
+    dsn = (
+        f"postgresql://{constants.USER}:{constants.PASSWORD}"
+        f"@{constants.HOST}:{constants.PORT}/postgres?connect_timeout={connect_timeout}"
+    )
+    try:
+        with psycopg.connect(dsn):
+            return True
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _container_status() -> str | None:
@@ -59,7 +79,12 @@ def _wait_ready(timeout: float = 30.0) -> None:
 
 def ensure_container() -> None:
     """Idempotently ensure the shared pgdevkit-postgres container is running
-    and accepting connections."""
+    and accepting connections. Never touches podman/docker if Postgres is
+    already reachable, or if PGDEVKIT_SKIP_CONTAINER says to assume it is."""
+    if os.environ.get("PGDEVKIT_SKIP_CONTAINER"):
+        return
+    if _available():
+        return
     status = _container_status()
     if status == "running":
         return
