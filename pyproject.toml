@@ -5,6 +5,10 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["pgdevkit"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"docs" = "pgdevkit/docs"
+"skills" = "pgdevkit/skills"
+
 [project]
 name = "pgdevkit"
 version = "0.1.0"
