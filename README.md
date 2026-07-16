@@ -11,6 +11,33 @@ convention) against a live database and report differences:
 pgdb compare --url postgresql://user:pass@host:port/db path/to/database/
 ```
 
+### Entra ID auth (Azure Postgres / Databricks Lakebase)
+
+Pass `--entra-user <identity>` to `pgdb compare` to authenticate with an
+Entra ID token instead of a static password. Which token flow is used is
+auto-detected from the database hostname:
+
+- **Azure Database for PostgreSQL** (`*.postgres.database.azure.com`,
+  `*.postgres.cosmos.azure.com`) — the default: fetches a token via
+  `DefaultAzureCredential` and uses it directly as the password. Requires
+  the `azure` extra: `pip install pgdevkit[azure]`.
+- **Databricks Lakebase** (`*.database.azuredatabricks.net`,
+  `*.database.cloud.databricks.com`) — fetches a Databricks-scoped Entra
+  token, then exchanges it for a short-lived Postgres credential via the
+  Databricks workspace API. Also requires `--databricks-workspace-host`
+  and `--databricks-instance`:
+
+```bash
+pgdb compare --url postgresql://instance-abc.database.azuredatabricks.net:5432/databricks_postgres \
+  --entra-user alice@example.com \
+  --databricks-workspace-host https://adb-123456789.azuredatabricks.net \
+  --databricks-instance myinstance \
+  path/to/database/
+```
+
+(`--url`'s own user/password, if any, are discarded and replaced — `--entra-user`
+plus the fetched token become the connection's actual credentials.)
+
 ## `pgdb testdb`
 
 Manages a single shared, Podman-backed Postgres container for local tests
@@ -59,6 +86,11 @@ Install with the `db` extra: `pip install pgdevkit[db]`.
 - **`PgPool`** — an async connection pool keyed off
   `{env_prefix}HOST/PORT/DB/USER/PASSWORD` env vars. Call `await pool.open()`
   once at startup, then use `async with pool.connection() as con:`.
+  Pass `entra_user` to authenticate via Entra ID instead of a static
+  password — same host-based auto-detection as `pgdb compare`'s
+  `--entra-user`. For Lakebase hosts, also set the
+  `{env_prefix}DATABRICKS_WORKSPACE_HOST` and `{env_prefix}DATABRICKS_INSTANCE`
+  env vars.
 - **CRUD functions** — `pg_retrieve`, `pg_retrieve_many`, `pg_insert`,
   `pg_insert_many`, `pg_update`, `pg_update_dict`, `pg_upsert`,
   `pg_upsert_dict`, `pg_upsert_many`, `pg_upsert_many_dict`, `pg_delete`,
