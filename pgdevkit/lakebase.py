@@ -4,13 +4,17 @@ import datetime
 import json
 import time
 import uuid
+from typing import TYPE_CHECKING
 from urllib import request as urllib_request
 from urllib.error import HTTPError
+
+if TYPE_CHECKING:
+    from azure.identity import DefaultAzureCredential
 
 _DATABRICKS_RESOURCE_SCOPE = "2ff814a6-3304-4ab8-85cb-cd0e6f879c1d/.default"
 _REFRESH_MARGIN_SECONDS = 300
 
-_credential: object | None = None
+_credential: DefaultAzureCredential | None = None
 _credential_cache: dict[tuple[str, str], tuple[str, float]] = {}
 _dns_cache: dict[tuple[str, str], str] = {}
 
