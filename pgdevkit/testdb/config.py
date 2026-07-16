@@ -1,12 +1,8 @@
 from __future__ import annotations
 
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-
-try:
-    import tomllib
-except ImportError:  # pragma: no cover - Python < 3.11
-    import tomli as tomllib  # type: ignore[no-redef]
 
 
 @dataclass(frozen=True)

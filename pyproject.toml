@@ -30,6 +30,9 @@ pgdb = "pgdevkit.cli:app"
 name = "pgdevkit"
 
 [dependency-groups]
+dev = [
+    "ty>=0.0.59",
+]
 test = [
     "psycopg[binary]>=3.2.0",
     "pytest>=9.1.0",

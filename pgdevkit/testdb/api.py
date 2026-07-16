@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 import psycopg
+from psycopg.sql import SQL, Identifier
 
 from . import constants, query
 from .config import ProjectConfig, load_config
@@ -45,7 +46,7 @@ async def _ensure_database(db_name: str) -> None:
         if await result.fetchone():
             return
         try:
-            await con.execute(f'CREATE DATABASE "{db_name}"')
+            await con.execute(SQL("CREATE DATABASE {}").format(Identifier(db_name)))
         except psycopg.errors.DuplicateDatabase:
             pass
 
@@ -56,7 +57,7 @@ async def _drop_database(db_name: str) -> None:
             "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = %(db)s",
             {"db": db_name},
         )
-        await con.execute(f'DROP DATABASE IF EXISTS "{db_name}"')
+        await con.execute(SQL("DROP DATABASE IF EXISTS {}").format(Identifier(db_name)))
 
 
 async def _apply(config: ProjectConfig, db_name: str, force_reset: bool) -> None:
