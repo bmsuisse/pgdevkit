@@ -148,8 +148,10 @@ async def _insert_test_data(
             if row and row["cnt"] == len(rows):
                 return
 
-        col_names = list(rows[0].keys())
         complex_types = await complex_helper.load_all_complex_types((schema, table_name))
+        # Silently drop JSON keys that don't correspond to a real column —
+        # e.g. a stale fixture left over from a since-renamed/removed column.
+        col_names = [c for c in rows[0] if c in complex_types]
         for row in rows:
             for col in col_names:
                 info = complex_types.get(col)

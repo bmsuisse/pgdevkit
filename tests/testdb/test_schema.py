@@ -101,6 +101,9 @@ async def test_apply_schema_resolves_view_to_view_dependency(schema_test_db):
 async def test_apply_schema_seeds_composite_enum_and_jsonb_columns(schema_test_db):
     # gadget.mood is an enum, gadget.size a composite type, gadget.tags
     # jsonb — plain json.dumps() would corrupt/error on the first two.
+    # gadget.test_data.json also carries a "stale_removed_column" key that
+    # doesn't match any real column (simulating a fixture left behind after
+    # a column rename/removal) — must be silently dropped, not error.
     async with await psycopg.AsyncConnection.connect(_db_dsn(), autocommit=True) as con:
         await apply_schema(con, FIXTURES)
         async with con.cursor() as cur:
