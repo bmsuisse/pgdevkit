@@ -21,10 +21,7 @@ def _available(timeout: float = 3.0) -> bool:
     # libpq's connect_timeout is whole seconds; anything below 1 means "wait
     # indefinitely" instead of a short timeout, so it's clamped up to 1.
     connect_timeout = max(1, round(timeout))
-    dsn = (
-        f"postgresql://{constants.USER}:{constants.PASSWORD}"
-        f"@{constants.HOST}:{constants.PORT}/postgres?connect_timeout={connect_timeout}"
-    )
+    dsn = constants.conninfo("postgres", connect_timeout=connect_timeout)
     try:
         with psycopg.connect(dsn):
             return True
@@ -62,10 +59,7 @@ def _create_container() -> None:
 
 def _wait_ready(timeout: float = 30.0) -> None:
     deadline = time.monotonic() + timeout
-    dsn = (
-        f"postgresql://{constants.USER}:{constants.PASSWORD}"
-        f"@{constants.HOST}:{constants.PORT}/postgres?connect_timeout=2"
-    )
+    dsn = constants.conninfo("postgres", connect_timeout=2)
     last_error: Exception | None = None
     while time.monotonic() < deadline:
         try:

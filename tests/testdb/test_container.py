@@ -50,10 +50,7 @@ def test_ensure_container_skips_everything_when_skip_env_set(monkeypatch):
 
 
 def _admin_dsn() -> str:
-    return (
-        f"postgresql://{constants.USER}:{constants.PASSWORD}"
-        f"@{constants.HOST}:{constants.PORT}/postgres?connect_timeout=5"
-    )
+    return constants.conninfo("postgres", connect_timeout=5)
 
 
 @requires_podman

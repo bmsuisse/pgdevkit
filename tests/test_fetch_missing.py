@@ -14,11 +14,11 @@ TEST_DB = f"pgdevkit_fetchmissing_selftest_{RUN_SUFFIX}"
 
 
 def _admin_dsn() -> str:
-    return f"postgresql://{constants.USER}:{constants.PASSWORD}@{constants.HOST}:{constants.PORT}/postgres"
+    return constants.conninfo("postgres")
 
 
 def _db_dsn() -> str:
-    return f"postgresql://{constants.USER}:{constants.PASSWORD}@{constants.HOST}:{constants.PORT}/{TEST_DB}"
+    return constants.conninfo(TEST_DB)
 
 
 def test_layer_folder_for_matches_stripped_sort_prefix(tmp_path: Path):

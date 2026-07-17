@@ -15,11 +15,11 @@ TEST_DB = f"pgdevkit_schema_selftest_{RUN_SUFFIX}"
 
 
 def _admin_dsn() -> str:
-    return f"postgresql://{constants.USER}:{constants.PASSWORD}@{constants.HOST}:{constants.PORT}/postgres"
+    return constants.conninfo("postgres")
 
 
 def _db_dsn() -> str:
-    return f"postgresql://{constants.USER}:{constants.PASSWORD}@{constants.HOST}:{constants.PORT}/{TEST_DB}"
+    return constants.conninfo(TEST_DB)
 
 
 @pytest.fixture
