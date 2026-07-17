@@ -7,6 +7,7 @@ import pytest
 from pydantic import ConfigDict
 
 from pgdevkit.db import (
+    ComplexHelper,
     PgPool,
     PostgresTableModel,
     pg_delete,
@@ -43,6 +44,20 @@ class Widget(PostgresTableModel):
         return ["id"]
 
 
+class Gizmo(PostgresTableModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    label: dict
+
+    @staticmethod
+    def get_table_name() -> tuple[str, str]:
+        return ("public", "gizmo")
+
+    @staticmethod
+    def get_primary_key() -> Sequence[str]:
+        return ["id"]
+
+
 @pytest.fixture
 async def pool(monkeypatch: pytest.MonkeyPatch):
     ensure_container()
@@ -51,6 +66,8 @@ async def pool(monkeypatch: pytest.MonkeyPatch):
         con.execute(f'CREATE DATABASE "{TEST_DB}"')
     with psycopg.connect(f"{_admin_dsn().rsplit('/', 1)[0]}/{TEST_DB}", autocommit=True) as con:
         con.execute("CREATE TABLE widget (id serial PRIMARY KEY, name text NOT NULL)")
+        con.execute("CREATE TYPE label_pair AS (en text, de text)")
+        con.execute("CREATE TABLE gizmo (id serial PRIMARY KEY, label label_pair NOT NULL)")
 
     monkeypatch.setenv(f"{ENV_PREFIX}HOST", constants.HOST)
     monkeypatch.setenv(f"{ENV_PREFIX}PORT", str(constants.PORT))
@@ -106,3 +123,28 @@ async def test_upsert_and_upsert_many(pool: PgPool):
         fetched = await pg_retrieve(con, Widget, {"id": widget2.id})
         assert fetched is not None
         assert fetched.name == "new-widget"
+
+
+@requires_podman
+async def test_insert_retrieve_composite_column_with_normalizer(pool: PgPool):
+    # label_pair mirrors a real project's locale-labels composite type: a
+    # normalizer backfills a missing locale before the value is converted
+    # into the psycopg-registered composite type for INSERT. `RETURNING *`
+    # gives back the psycopg-generated composite instance directly (since
+    # register_composite() also wires up decoding); pg_retrieve's to_jsonb()
+    # wrapping instead unwraps it back into a plain dict.
+    def backfill_de(value: dict) -> dict:
+        if not value.get("de"):
+            value = {**value, "de": f"[{value['en']}]"}
+        return value
+
+    async with pool.connection() as con:
+        helper = ComplexHelper(con, normalizers={"label_pair": backfill_de})
+        inserted = await pg_insert(con, ("public", "gizmo"), {"label": {"en": "Hello"}}, complex_helper=helper)
+        assert inserted["label"].en == "Hello"
+        assert inserted["label"].de == "[Hello]"
+        gizmo_id = inserted["id"]
+
+        fetched = await pg_retrieve(con, Gizmo, {"id": gizmo_id}, complex_helper=helper)
+        assert fetched is not None
+        assert fetched.label == {"en": "Hello", "de": "[Hello]"}

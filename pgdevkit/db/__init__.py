@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from .complex_types import ComplexHelper
 from .connection import PgPool
 from .crud import (
     pg_delete,
@@ -19,6 +20,7 @@ from .loader import SqlLoader
 from .model import PostgresTableModel
 
 __all__ = [
+    "ComplexHelper",
     "PgPool",
     "PostgresTableModel",
     "SqlLoader",

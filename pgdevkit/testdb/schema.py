@@ -13,6 +13,8 @@ import sqlglot.expressions as exp
 from psycopg.rows import dict_row
 from psycopg.sql import SQL, Identifier, Placeholder
 
+from ..db.complex_types import ComplexHelper
+
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlglot").setLevel(logging.ERROR)
 
@@ -126,7 +128,11 @@ def _iter_sql_files(database_dir: Path):
 
 
 async def _insert_test_data(
-    json_file: Path, table: str, force_reset: bool, con: psycopg.AsyncConnection
+    json_file: Path,
+    table: str,
+    force_reset: bool,
+    con: psycopg.AsyncConnection,
+    complex_helper: ComplexHelper,
 ) -> None:
     if not json_file.exists():
         return
@@ -143,9 +149,17 @@ async def _insert_test_data(
                 return
 
         col_names = list(rows[0].keys())
+        complex_types = await complex_helper.load_all_complex_types((schema, table_name))
         for row in rows:
             for col in col_names:
-                if isinstance(row[col], (dict, list)):
+                if not isinstance(row[col], (dict, list)):
+                    continue
+                info = complex_types.get(col)
+                if info is not None:
+                    row[col] = await complex_helper.recursive_convert(row[col], info, con)
+                else:
+                    # Not a recognized composite/enum/JSONB column but the
+                    # value looks structured anyway — fall back to a JSON string.
                     row[col] = json.dumps(row[col])
 
         await cur.execute(SQL("DELETE FROM {t}").format(t=Identifier(schema, table_name)))
@@ -157,24 +171,52 @@ async def _insert_test_data(
         await cur.executemany(insert_sql, rows)
 
 
+def _is_additive_migration(sql: str) -> bool:
+    """Only pure-additive migrations (ADD COLUMN/CREATE ... IF NOT EXISTS,
+    etc.) are safe to (re-)apply against a schema that already reflects
+    later migrations — skip anything that alters an existing column or
+    changes ownership."""
+    normalized = sql.upper()
+    has_alter_column = "ALTER COLUMN" in normalized and "ADD COLUMN" not in normalized
+    has_owner_change = "OWNER TO" in normalized
+    return not (has_alter_column or has_owner_change)
+
+
+def _iter_migration_files(database_dir: Path):
+    """Yield every `*.sql` file in any `migrations/` subdirectory, in
+    filename order (the project's naming convention — numeric or date
+    prefixes — sorts chronologically)."""
+    for root, _, files in os.walk(database_dir):
+        if Path(root).name != "migrations":
+            continue
+        for file in sorted(files):
+            if file.endswith(".sql"):
+                yield Path(root) / file
+
+
 async def apply_schema(
     con: psycopg.AsyncConnection,
     database_dir: Path,
     extensions: tuple[str, ...] = (),
     force_reset: bool = False,
 ) -> None:
-    """Apply every .sql file under database_dir (in dependency-safe order)
-    and seed any matching .test_data.json files. Safe to call repeatedly."""
+    """Apply every .sql file under database_dir (in dependency-safe order),
+    seed any matching .test_data.json files, then apply purely-additive
+    `migrations/*.sql` files (see `_is_additive_migration`) so a schema that
+    ships changes via migration files rather than editing the base object
+    files stays in sync. Safe to call repeatedly."""
     await con.set_autocommit(True)
     for extension in extensions:
         await con.execute(SQL("CREATE EXTENSION IF NOT EXISTS {e}").format(e=Identifier(extension)))
+
+    complex_helper = ComplexHelper(con)
 
     async def _apply(file: Path, sql: str) -> None:
         await con.execute(cast(Any, sql))
         json_file = file.with_suffix(".test_data.json")
         if json_file.exists():
             schema_name = _strip_layer_prefix(file.parent.parent.name)
-            await _insert_test_data(json_file, f"{schema_name}.{file.stem}", force_reset, con)
+            await _insert_test_data(json_file, f"{schema_name}.{file.stem}", force_reset, con, complex_helper)
 
     failures: list[tuple[Path, str]] = []
     for file, sql in _iter_sql_files(database_dir):
@@ -186,3 +228,13 @@ async def apply_schema(
 
     for file, sql in failures:
         await _apply(file, sql)
+
+    for migration_file in _iter_migration_files(database_dir):
+        content = migration_file.read_text(encoding="utf-8")
+        if not _is_additive_migration(content):
+            continue
+        try:
+            await con.execute(cast(Any, content))
+            logger.info("Applied migration %s", migration_file.name)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Migration %s skipped (likely already applied): %s", migration_file.name, e)

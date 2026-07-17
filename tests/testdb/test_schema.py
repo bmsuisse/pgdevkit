@@ -95,3 +95,32 @@ async def test_apply_schema_resolves_view_to_view_dependency(schema_test_db):
             await cur.execute("SELECT id, name FROM app.a_wrapper_view ORDER BY id")
             rows = await cur.fetchall()
     assert rows == [(1, "sprocket")]
+
+
+@requires_podman
+async def test_apply_schema_seeds_composite_enum_and_jsonb_columns(schema_test_db):
+    # gadget.mood is an enum, gadget.size a composite type, gadget.tags
+    # jsonb — plain json.dumps() would corrupt/error on the first two.
+    async with await psycopg.AsyncConnection.connect(_db_dsn(), autocommit=True) as con:
+        await apply_schema(con, FIXTURES)
+        async with con.cursor() as cur:
+            await cur.execute("SELECT mood, size, tags FROM app.gadget WHERE id = 1")
+            mood, size, tags = await cur.fetchone()
+    assert mood.name == "happy"
+    assert size == (10, 20)
+    assert tags == ["small", "shiny"]
+
+
+@requires_podman
+async def test_apply_schema_applies_additive_migrations(schema_test_db):
+    # app/migrations/001_add_gadget_note.sql adds a column not present in
+    # gadget.sql itself — only reachable via the migrations pass.
+    async with await psycopg.AsyncConnection.connect(_db_dsn(), autocommit=True) as con:
+        await apply_schema(con, FIXTURES)
+        async with con.cursor() as cur:
+            await cur.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = 'app' AND table_name = 'gadget' AND column_name = 'note'"
+            )
+            row = await cur.fetchone()
+    assert row is not None
