@@ -152,15 +152,14 @@ async def _insert_test_data(
         complex_types = await complex_helper.load_all_complex_types((schema, table_name))
         for row in rows:
             for col in col_names:
-                if not isinstance(row[col], (dict, list)):
-                    continue
                 info = complex_types.get(col)
-                if info is not None:
+                if info is not None and isinstance(row[col], (dict, list)):
+                    # composite/enum/JSONB: needs psycopg-registered-type
+                    # conversion. Anything else (plain scalars, and native
+                    # Postgres arrays like text[], which aren't "complex" —
+                    # psycopg already adapts a Python list to those natively)
+                    # is left untouched.
                     row[col] = await complex_helper.recursive_convert(row[col], info, con)
-                else:
-                    # Not a recognized composite/enum/JSONB column but the
-                    # value looks structured anyway — fall back to a JSON string.
-                    row[col] = json.dumps(row[col])
 
         await cur.execute(SQL("DELETE FROM {t}").format(t=Identifier(schema, table_name)))
         insert_sql = SQL("INSERT INTO {t} ({cols}) VALUES ({vals})").format(
