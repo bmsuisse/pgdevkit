@@ -14,7 +14,7 @@ from tests.testdb.conftest import requires_podman
 
 
 def _admin_dsn() -> str:
-    return f"postgresql://{constants.USER}:{constants.PASSWORD}@{constants.HOST}:{constants.PORT}/postgres"
+    return constants.conninfo("postgres")
 
 
 @requires_podman
