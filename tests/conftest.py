@@ -4,6 +4,7 @@ from typing import Any
 
 import psycopg
 import pytest
+from psycopg.conninfo import make_conninfo
 
 from pgdevkit.testdb import ensure_testdb
 
@@ -11,10 +12,15 @@ from pgdevkit.testdb import ensure_testdb
 @pytest.fixture(scope="session")
 def postgres_dsn() -> str:
     env = ensure_testdb()
-    return (
-        f"postgresql://{env['PGDEVKIT_POSTGRES_USER']}:{env['PGDEVKIT_POSTGRES_PASSWORD']}"
-        f"@{env['PGDEVKIT_POSTGRES_HOST']}:{env['PGDEVKIT_POSTGRES_PORT']}/{env['PGDEVKIT_POSTGRES_DB']}"
-    )
+    params = {
+        "host": env["PGDEVKIT_POSTGRES_HOST"],
+        "port": env["PGDEVKIT_POSTGRES_PORT"],
+        "user": env["PGDEVKIT_POSTGRES_USER"],
+        "dbname": env["PGDEVKIT_POSTGRES_DB"],
+    }
+    if env["PGDEVKIT_POSTGRES_PASSWORD"]:
+        params["password"] = env["PGDEVKIT_POSTGRES_PASSWORD"]
+    return make_conninfo(**params)
 
 
 @pytest.fixture

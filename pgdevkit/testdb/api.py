@@ -14,11 +14,11 @@ from .schema import apply_schema
 
 
 def _admin_dsn() -> str:
-    return f"postgresql://{constants.USER}:{constants.PASSWORD}@{constants.HOST}:{constants.PORT}/postgres?connect_timeout=10"
+    return constants.conninfo("postgres", connect_timeout=10)
 
 
 def _db_dsn(db_name: str) -> str:
-    return f"postgresql://{constants.USER}:{constants.PASSWORD}@{constants.HOST}:{constants.PORT}/{db_name}?connect_timeout=10"
+    return constants.conninfo(db_name, connect_timeout=10)
 
 
 def _resolve(project_root: Path | None) -> tuple[ProjectConfig, str]:

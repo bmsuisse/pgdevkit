@@ -49,6 +49,14 @@ is already reachable at that address and skips container management if so.
 Set `PGDEVKIT_SKIP_CONTAINER=1` to always assume it's already there and skip
 that check too.
 
+To point at a local Postgres install instead of the podman container —
+useful when podman isn't available, or you'd rather use peer authentication
+as the current OS user — set `PGDEVKIT_TESTDB_HOST` to the unix socket
+directory (e.g. `/var/run/postgresql`) and `PGDEVKIT_TESTDB_PASSWORD=""`.
+The role named by `PGDEVKIT_TESTDB_USER` must exist and match your OS user
+(`CREATE ROLE <user> SUPERUSER LOGIN;`) and `pg_hba.conf` must allow `peer`
+auth for local connections (Debian/Ubuntu Postgres ships this by default).
+
 ## `pgdevkit.db` — helpers for application code
 
 Install with the `db` extra: `pip install pgdevkit[db]`.

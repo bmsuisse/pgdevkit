@@ -26,7 +26,7 @@ ENV_PREFIX = "PGDEVKIT_DB_SELFTEST_"
 
 
 def _admin_dsn() -> str:
-    return f"postgresql://{constants.USER}:{constants.PASSWORD}@{constants.HOST}:{constants.PORT}/postgres"
+    return constants.conninfo("postgres")
 
 
 class Widget(PostgresTableModel):
@@ -49,7 +49,7 @@ async def pool(monkeypatch: pytest.MonkeyPatch):
     with psycopg.connect(_admin_dsn(), autocommit=True) as con:
         con.execute(f'DROP DATABASE IF EXISTS "{TEST_DB}"')
         con.execute(f'CREATE DATABASE "{TEST_DB}"')
-    with psycopg.connect(f"{_admin_dsn().rsplit('/', 1)[0]}/{TEST_DB}", autocommit=True) as con:
+    with psycopg.connect(constants.conninfo(TEST_DB), autocommit=True) as con:
         con.execute("CREATE TABLE widget (id serial PRIMARY KEY, name text NOT NULL)")
 
     monkeypatch.setenv(f"{ENV_PREFIX}HOST", constants.HOST)
