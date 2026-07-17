@@ -94,7 +94,11 @@ def _get_sql_deps(sql: str) -> set[str]:
             continue
         for t in e.find_all(exp.Table):
             if t.args.get("this") is not None and t.args.get("db") is not None:
-                deps.add(str(t))
+                # exp.table_name(), not str(t): str() includes " AS alias" for
+                # an aliased reference (e.g. "FROM editing.visit v"), which
+                # would never match the plain declared name any dependent
+                # file's own CREATE target is recorded under.
+                deps.add(exp.table_name(t))
     return deps
 
 
@@ -119,7 +123,7 @@ def _iter_sql_files(database_dir: Path):
         deps = _get_sql_deps(content)
         if file.parent.name in _SCHEMA_QUALIFIED_TYPES:
             schema = _strip_layer_prefix(file.parent.parent.name)
-            full_name = f"{schema}.{file.stem}"
+            full_name = f"{schema}.{_strip_layer_prefix(file.stem)}"
             deps.discard(full_name)  # the file's own CREATE target is not a real dependency
             all_declared.add(full_name)
             if not deps or all(d in delivered for d in deps):
@@ -219,7 +223,8 @@ async def apply_schema(
         json_file = file.with_suffix(".test_data.json")
         if json_file.exists():
             schema_name = _strip_layer_prefix(file.parent.parent.name)
-            await _insert_test_data(json_file, f"{schema_name}.{file.stem}", force_reset, con, complex_helper)
+            table_stem = _strip_layer_prefix(file.stem)
+            await _insert_test_data(json_file, f"{schema_name}.{table_stem}", force_reset, con, complex_helper)
 
     failures: list[tuple[Path, str]] = []
     for file, sql in _iter_sql_files(database_dir):
