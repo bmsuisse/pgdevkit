@@ -9,7 +9,18 @@ from psycopg.types.composite import CompositeInfo, register_composite
 from psycopg.types.enum import EnumInfo, register_enum
 from psycopg.types.json import Jsonb
 
-ComplexTypeInfo = CompositeInfo | EnumInfo | type[Jsonb] | None
+
+class JsonbArray:
+    """Sentinel for a `jsonb[]` column (a Postgres ARRAY of jsonb) — distinct
+    from `Jsonb` (a scalar jsonb column) so `recursive_convert` knows whether
+    an incoming Python list *is* the array (each element needs its own
+    `Jsonb(...)` wrapper) or is JSON array *content* for one scalar jsonb
+    value (the whole list gets wrapped once). Both cases arrive from
+    `information_schema.columns` looking identical (a plain Python list) —
+    only the column's own array-ness disambiguates them."""
+
+
+ComplexTypeInfo = CompositeInfo | EnumInfo | type[Jsonb] | type[JsonbArray] | None
 
 
 class ComplexHelper:
@@ -67,7 +78,7 @@ class ComplexHelper:
         if res["data_type"].lower() == "jsonb":
             return Jsonb
         if res["data_type"].upper() == "ARRAY" and res["udt_name"] == "_jsonb":
-            return Jsonb
+            return JsonbArray
         if (
             not res["is_enum"]
             and not res["is_user_defined"]
@@ -181,9 +192,16 @@ class ComplexHelper:
             return None
         if self.system_complex_type_dict is None:
             await self.load_complex_type_dict()
+        if info == JsonbArray:
+            # The value here *is* the jsonb[] array -- each element is its
+            # own scalar jsonb value, unlike the plain-Jsonb case below.
+            assert isinstance(value, list), f"Expected a list for a jsonb[] column, got {type(value)}"
+            return [Jsonb(item) for item in value]
         if info == Jsonb:
-            # A JSONB column's value is wrapped whole, even if it's a list —
-            # only an array-of-composite/enum column recurses per element.
+            # A scalar JSONB column's value is wrapped whole, even if it's a
+            # list — that list is JSON array *content* for the one jsonb
+            # value, not multiple array elements (see JsonbArray above for
+            # the jsonb[] column case).
             return Jsonb(value)
         if isinstance(value, list):
             return [await self.recursive_convert(item, info, con) for item in value]
