@@ -172,15 +172,29 @@ async def _insert_test_data(
         await cur.executemany(insert_sql, rows)
 
 
+_UNSAFE_MIGRATION_PATTERNS = (
+    "DROP COLUMN",
+    "DROP TABLE",
+    "TRUNCATE",
+    "RENAME COLUMN",
+    "RENAME TO",
+    "DELETE FROM",
+    "OWNER TO",
+)
+
+
 def _is_additive_migration(sql: str) -> bool:
     """Only pure-additive migrations (ADD COLUMN/CREATE ... IF NOT EXISTS,
     etc.) are safe to (re-)apply against a schema that already reflects
-    later migrations — skip anything that alters an existing column or
-    changes ownership."""
+    later migrations — skip anything that could drop, rename, truncate, or
+    delete existing structure/data, alter an existing column, or change
+    ownership. This is a substring heuristic, not a SQL parser, so it errs
+    towards skipping (a false negative here means real data loss replayed
+    on every apply_schema() call) rather than trying to be exhaustive."""
     normalized = sql.upper()
     has_alter_column = "ALTER COLUMN" in normalized and "ADD COLUMN" not in normalized
-    has_owner_change = "OWNER TO" in normalized
-    return not (has_alter_column or has_owner_change)
+    has_unsafe_pattern = any(pattern in normalized for pattern in _UNSAFE_MIGRATION_PATTERNS)
+    return not (has_alter_column or has_unsafe_pattern)
 
 
 def _iter_migration_files(database_dir: Path):

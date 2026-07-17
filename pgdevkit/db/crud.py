@@ -21,7 +21,7 @@ async def _select_list(
     `SELECT *` (no extra query) when no ComplexHelper is given."""
     if complex_helper is None:
         return SQL("*")
-    complex_types = await complex_helper.load_all_complex_types(table_name)
+    complex_types = await complex_helper.load_all_complex_types(table_name, include_generated=True)
     if not complex_types:
         return SQL("*")
     parts = [
