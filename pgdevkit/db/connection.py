@@ -122,3 +122,12 @@ class PgPool:
         if self._pool is None:
             raise RuntimeError("Call open() first (e.g. in app startup).")
         return self._pool.connection()
+
+    @property
+    def raw_pool(self) -> AsyncConnectionPool | AsyncNullConnectionPool:
+        """The underlying psycopg_pool object — for integrating with other
+        pool-consuming libraries (e.g. Procrastinate's `open_async(pool=...)`)
+        that need it directly rather than going through `connection()`."""
+        if self._pool is None:
+            raise RuntimeError("Call open() first (e.g. in app startup).")
+        return self._pool

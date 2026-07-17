@@ -104,8 +104,15 @@ async def test_open_uses_regular_pool_for_non_azure_host(monkeypatch):
 
         assert type(pool._pool) is AsyncConnectionPool
         assert pool._pool.kwargs == {}
+        assert pool.raw_pool is pool._pool
     finally:
         await pool.close()
+
+
+def test_raw_pool_before_open_raises():
+    pool = PgPool(env_prefix=ENV_PREFIX)
+    with pytest.raises(RuntimeError, match="Call open"):
+        pool.raw_pool
 
 
 async def test_dsn_databricks_lakebase_entra(monkeypatch):
