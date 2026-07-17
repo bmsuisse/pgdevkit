@@ -75,6 +75,8 @@ def _testdb_env():
 
 `ensure_testdb()` starts the shared `pgdevkit-postgres` container if needed (via `podman`), creates a database scoped to this project+branch (so different worktrees/branches never collide), and applies every `.sql` file under `database_dir` in dependency order, seeding any `.test_data.json` sidecar files.
 
+**`migrations/` is never applied here, on purpose.** If the test schema is missing something, that's a sign the base `tables/`/`views`/... file has drifted behind a migration that was only ever run manually against a real database — fix the base file, don't add migration-replay to `apply_schema()` (tried once, reverted: a migration can't be judged "safe to re-run" from its SQL text alone — see `docs/database-layout.md`'s Migrations section).
+
 | What do you need? | Command |
 |---|---|
 | First-time setup / apply new files | `pgdb testdb up` |
