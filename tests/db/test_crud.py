@@ -12,11 +12,13 @@ from pgdevkit.db import (
     PostgresTableModel,
     pg_delete,
     pg_insert,
+    pg_insert_many,
     pg_retrieve,
     pg_retrieve_many,
     pg_update,
     pg_upsert,
     pg_upsert_many,
+    pg_upsert_many_dict,
 )
 from pgdevkit.testdb import constants
 from pgdevkit.testdb.container import ensure_container
@@ -123,6 +125,40 @@ async def test_upsert_and_upsert_many(pool: PgPool):
         fetched = await pg_retrieve(con, Widget, {"id": widget2.id})
         assert fetched is not None
         assert fetched.name == "new-widget"
+
+
+@requires_podman
+async def test_upsert_many_dict_must_exist_updates_without_inserting(pool: PgPool):
+    async with pool.connection() as con:
+        inserted = await pg_insert(con, ("public", "widget"), {"name": "sprocket"})
+        existing_id = inserted["id"]
+        missing_id = existing_id + 1000
+
+        await pg_upsert_many_dict(
+            con,
+            ("public", "widget"),
+            [{"id": existing_id, "name": "updated"}, {"id": missing_id, "name": "ghost"}],
+            ["id"],
+            must_exist=True,
+        )
+
+        updated = await pg_retrieve(con, Widget, {"id": existing_id})
+        assert updated is not None
+        assert updated.name == "updated"
+        assert await pg_retrieve(con, Widget, {"id": missing_id}) is None
+
+
+@requires_podman
+async def test_insert_many_accepts_model_instances(pool: PgPool):
+    async with pool.connection() as con:
+        await pg_insert_many(
+            con,
+            ("public", "widget"),
+            [Widget(id=5001, name="from-model-a"), Widget(id=5002, name="from-model-b")],
+        )
+        fetched = await pg_retrieve_many(con, Widget, {})
+        names = {w.name for w in fetched}
+        assert {"from-model-a", "from-model-b"} <= names
 
 
 @requires_podman

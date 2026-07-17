@@ -5,6 +5,7 @@ from typing import Any, Callable, Mapping, Optional, Sequence, Type, TypeVar
 from psycopg.connection_async import AsyncConnection
 from psycopg.rows import dict_row
 from psycopg.sql import SQL, Composable, Identifier, Placeholder
+from pydantic import BaseModel
 
 from .complex_types import ComplexHelper
 from .model import PostgresTableModel
@@ -220,21 +221,39 @@ async def pg_upsert_many_dict(
     data: Sequence[dict],
     primary_keys: Sequence[str],
     *,
+    must_exist: bool = False,
     complex_helper: ComplexHelper | None = None,
 ) -> None:
-    """Batch upsert — one round-trip via executemany."""
+    """Batch upsert — one round-trip via executemany.
+
+    `must_exist=True` switches to a plain UPDATE (no INSERT) matched on
+    `primary_keys` — for callers that only ever update pre-existing rows and
+    want a missing row to be a silent no-op rather than create one."""
     if not data:
         return
     data = await _convert_complex_values_many(con, table_name, data, complex_helper)
     fields = list(data[0])
-    updates = [SQL("{col} = EXCLUDED.{col}").format(col=Identifier(k)) for k in fields if k not in primary_keys]
-    query = SQL("INSERT INTO {tbl} ({cols}) VALUES ({vals}) ON CONFLICT ({pks}) DO UPDATE SET {updates}").format(
-        tbl=Identifier(*table_name),
-        cols=SQL(", ").join(Identifier(k) for k in fields),
-        vals=SQL(", ").join(Placeholder(k) for k in fields),
-        pks=SQL(", ").join(Identifier(pk) for pk in primary_keys),
-        updates=SQL(", ").join(updates),
-    )
+    if must_exist:
+        update_assignments = [
+            SQL("{col} = {val}").format(col=Identifier(k), val=Placeholder(k)) for k in fields if k not in primary_keys
+        ]
+        target_eq = SQL(" AND ").join(
+            SQL("t.{col} = {val}").format(col=Identifier(pk), val=Placeholder(pk)) for pk in primary_keys
+        )
+        query = SQL("UPDATE {tbl} t SET {updates} WHERE {target_eq}").format(
+            tbl=Identifier(*table_name),
+            updates=SQL(", ").join(update_assignments),
+            target_eq=target_eq,
+        )
+    else:
+        updates = [SQL("{col} = EXCLUDED.{col}").format(col=Identifier(k)) for k in fields if k not in primary_keys]
+        query = SQL("INSERT INTO {tbl} ({cols}) VALUES ({vals}) ON CONFLICT ({pks}) DO UPDATE SET {updates}").format(
+            tbl=Identifier(*table_name),
+            cols=SQL(", ").join(Identifier(k) for k in fields),
+            vals=SQL(", ").join(Placeholder(k) for k in fields),
+            pks=SQL(", ").join(Identifier(pk) for pk in primary_keys),
+            updates=SQL(", ").join(updates),
+        )
     async with con.cursor() as cur:
         await cur.executemany(query, data)
 
@@ -254,22 +273,23 @@ async def pg_upsert_many(
 async def pg_insert_many(
     con: AsyncConnection,
     table_name: tuple[str, str],
-    data: Sequence[dict],
+    data: Sequence[dict | BaseModel],
     *,
     complex_helper: ComplexHelper | None = None,
 ) -> None:
     """Batch insert — no RETURNING, one round-trip via executemany."""
     if not data:
         return
-    data = await _convert_complex_values_many(con, table_name, data, complex_helper)
-    fields = list(data[0])
+    dict_data = [d if isinstance(d, dict) else d.model_dump() for d in data]
+    dict_data = await _convert_complex_values_many(con, table_name, dict_data, complex_helper)
+    fields = list(dict_data[0])
     query = SQL("INSERT INTO {tbl} ({cols}) VALUES ({vals})").format(
         tbl=Identifier(*table_name),
         cols=SQL(", ").join(Identifier(k) for k in fields),
         vals=SQL(", ").join(Placeholder(k) for k in fields),
     )
     async with con.cursor() as cur:
-        await cur.executemany(query, data)
+        await cur.executemany(query, dict_data)
 
 
 async def pg_delete_dict(con: AsyncConnection, table_name: tuple[str, str], data: dict) -> dict | None:
