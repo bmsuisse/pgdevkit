@@ -63,8 +63,31 @@ _SCHEMA_QUALIFIED_TYPES = {
 }
 
 
+_DECLARE_RE = re.compile(
+    r"CREATE\s+(?:OR\s+REPLACE\s+)?(?:TABLE|VIEW|FUNCTION|PROCEDURE|TYPE|SCHEMA)\s+(\w+\.\w+)", re.IGNORECASE
+)
+_DEPEND_RE = re.compile(r"(?:FROM|JOIN|INTO|UPDATE|TABLE|ON)\s+(\w+\.\w+)", re.IGNORECASE)
+
+
+def _get_sql_deps_regex_fallback(sql: str) -> set[str]:
+    """Crude regex scan used when sqlglot can't parse a statement even with
+    error_level=IGNORE. This only feeds dependency *ordering* (which file to
+    apply first), not execution, so an imprecise-but-safe approximation here
+    is fine."""
+    declares = set(_DECLARE_RE.findall(sql))
+    deps = set(_DEPEND_RE.findall(sql))
+    return deps - declares
+
+
 def _get_sql_deps(sql: str) -> set[str]:
-    exprs = sqlglot.parse(sql, dialect="postgres")
+    try:
+        # error_level=IGNORE lets sqlglot recover from statements it can't
+        # fully parse (e.g. a schema-qualified `DROP TRIGGER ... ON
+        # schema.table`) and keep going, instead of raising and losing every
+        # other statement's dependency info in the same file.
+        exprs = sqlglot.parse(sql, dialect="postgres", error_level=sqlglot.ErrorLevel.IGNORE)
+    except Exception:  # noqa: BLE001
+        return _get_sql_deps_regex_fallback(sql)
     deps: set[str] = set()
     for e in exprs:
         if e is None:
@@ -206,5 +229,21 @@ async def apply_schema(
             logger.warning("Error executing %s (will retry): %s", file, e)
             failures.append((file, sql))
 
-    for file, sql in failures:
-        await _apply(file, sql)
+    # Retry the whole failed set, not just once: a single extra pass in
+    # original order can still raise on an item whose dependency is later
+    # in the same list and hasn't had its own retry yet. Every CREATE here
+    # is idempotent, so looping until a full pass makes no progress
+    # converges on any resolvable ordering without re-doing finished work.
+    while failures:
+        still_failing: list[tuple[Path, str]] = []
+        last_error: Exception | None = None
+        for file, sql in failures:
+            try:
+                await _apply(file, sql)
+            except Exception as e:  # noqa: BLE001
+                still_failing.append((file, sql))
+                last_error = e
+        if len(still_failing) == len(failures):
+            assert last_error is not None
+            raise last_error
+        failures = still_failing
