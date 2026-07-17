@@ -73,7 +73,7 @@ def _testdb_env():
         os.environ[key] = value
 ```
 
-`ensure_testdb()` starts the shared `pgdevkit-postgres` container if needed (via `podman`), creates a database scoped to this project+branch (so different worktrees/branches never collide), and applies every `.sql` file under `database_dir` in dependency order, seeding any `.test_data.json` sidecar files.
+`ensure_testdb()` starts the shared `pgdevkit-postgres` container if needed (via the Docker API — works against a real Docker daemon or Podman's socket, no CLI binary required), creates a database scoped to this project+branch (so different worktrees/branches never collide), and applies every `.sql` file under `database_dir` in dependency order, seeding any `.test_data.json` sidecar files.
 
 **`migrations/` is never applied here, on purpose.** If the test schema is missing something, that's a sign the base `tables/`/`views`/... file has drifted behind a migration that was only ever run manually against a real database — fix the base file, don't add migration-replay to `apply_schema()` (tried once, reverted: a migration can't be judged "safe to re-run" from its SQL text alone — see `docs/database-layout.md`'s Migrations section).
 
@@ -88,7 +88,7 @@ def _testdb_env():
 
 ### CI
 
-Podman needs to be available on the runner (`apt-get install -y podman` on `ubuntu-latest` if not preinstalled) — `ensure_testdb()`/`ensure_container()` shell out to it directly. There's no `PGDEVKIT_SKIP_CONTAINER` + service-container escape hatch wired through every fixture yet — if a project's CI can't run podman, it needs its own workaround for now.
+`ensure_testdb()`/`ensure_container()` talk to whatever Docker-compatible API is reachable (`DOCKER_HOST`, the default Docker socket, or Podman's socket as a fallback) — `ubuntu-latest`'s preinstalled Docker daemon just works, no setup step needed. There's no `PGDEVKIT_SKIP_CONTAINER` + service-container escape hatch wired through every fixture yet — if a project's CI has neither Docker nor Podman reachable, it needs its own workaround for now.
 
 ---
 

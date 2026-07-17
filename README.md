@@ -70,15 +70,20 @@ CLI: `pgdb testdb up|reset|run-sql|status|shell|clean`.
 
 Container connection defaults (`localhost:54322`, `postgres`/`testpwd`) can
 be overridden with `PGDEVKIT_TESTDB_HOST`, `PGDEVKIT_TESTDB_PORT`,
-`PGDEVKIT_TESTDB_USER`, `PGDEVKIT_TESTDB_PASSWORD`. Before touching
-podman/docker, pgdevkit first checks (with a short timeout) whether Postgres
+`PGDEVKIT_TESTDB_USER`, `PGDEVKIT_TESTDB_PASSWORD`. Before touching the
+Docker API, pgdevkit first checks (with a short timeout) whether Postgres
 is already reachable at that address and skips container management if so.
 Set `PGDEVKIT_SKIP_CONTAINER=1` to always assume it's already there and skip
 that check too.
 
-To point at a local Postgres install instead of the podman container —
-useful when podman isn't available, or you'd rather use peer authentication
-as the current OS user — set `PGDEVKIT_TESTDB_HOST` to the unix socket
+Container management goes through the Docker API (the `docker` package,
+`docker.from_env()`, falling back to Podman's rootful/rootless socket) — it
+works against a real Docker daemon or Podman transparently, no CLI binary
+required either way.
+
+To point at a local Postgres install instead of the container — useful when
+neither is available, or you'd rather use peer authentication as the
+current OS user — set `PGDEVKIT_TESTDB_HOST` to the unix socket
 directory (e.g. `/var/run/postgresql`) and `PGDEVKIT_TESTDB_PASSWORD=""`.
 The role named by `PGDEVKIT_TESTDB_USER` must exist and match your OS user
 (`CREATE ROLE <user> SUPERUSER LOGIN;`) and `pg_hba.conf` must allow `peer`

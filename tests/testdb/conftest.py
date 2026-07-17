@@ -1,15 +1,25 @@
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Callable
 
 import pytest
 
+
+def _has_container_runtime() -> bool:
+    from pgdevkit.testdb.container import _client
+
+    try:
+        _client()
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 requires_podman = pytest.mark.skipif(
-    shutil.which("podman") is None, reason="podman is not installed"
+    not _has_container_runtime(), reason="no Docker-compatible API reachable"
 )
 
 FIXTURES = Path(__file__).parent / "fixtures" / "database"
