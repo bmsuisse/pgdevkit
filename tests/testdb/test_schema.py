@@ -7,32 +7,11 @@ import pytest
 
 from pgdevkit.testdb import constants
 from pgdevkit.testdb.container import ensure_container
-from pgdevkit.testdb.schema import _is_additive_migration, apply_schema
+from pgdevkit.testdb.schema import apply_schema
 from tests.testdb.conftest import RUN_SUFFIX, requires_podman
 
 FIXTURES = Path(__file__).parent / "fixtures" / "database"
 TEST_DB = f"pgdevkit_schema_selftest_{RUN_SUFFIX}"
-
-
-@pytest.mark.parametrize(
-    "sql,expected",
-    [
-        ("ALTER TABLE t ADD COLUMN IF NOT EXISTS x text;", True),
-        ("CREATE TABLE IF NOT EXISTS t (id serial primary key);", True),
-        ("CREATE INDEX IF NOT EXISTS idx ON t(x);", True),
-        ("ALTER TABLE t ALTER COLUMN x TYPE text;", False),
-        ("ALTER TABLE t DROP COLUMN x;", False),
-        ("DROP TABLE t;", False),
-        ("DROP TABLE IF EXISTS t;", False),
-        ("TRUNCATE t;", False),
-        ("ALTER TABLE t RENAME COLUMN x TO y;", False),
-        ("ALTER TABLE t RENAME TO t2;", False),
-        ("DELETE FROM t WHERE id = 1;", False),
-        ("ALTER TABLE t OWNER TO someone;", False),
-    ],
-)
-def test_is_additive_migration(sql, expected):
-    assert _is_additive_migration(sql) is expected
 
 
 def _admin_dsn() -> str:
@@ -136,9 +115,11 @@ async def test_apply_schema_seeds_composite_enum_and_jsonb_columns(schema_test_d
 
 
 @requires_podman
-async def test_apply_schema_applies_additive_migrations(schema_test_db):
-    # app/migrations/001_add_gadget_note.sql adds a column not present in
-    # gadget.sql itself — only reachable via the migrations pass.
+async def test_apply_schema_never_applies_migrations_dir(schema_test_db):
+    # migrations/ is for one-time manual application against real databases,
+    # not for building a fresh schema — the base table file is the only
+    # source of truth apply_schema uses. app/migrations/001_add_gadget_note.sql
+    # adds a column that gadget.sql itself doesn't have; it must NOT appear.
     async with await psycopg.AsyncConnection.connect(_db_dsn(), autocommit=True) as con:
         await apply_schema(con, FIXTURES)
         async with con.cursor() as cur:
@@ -147,20 +128,4 @@ async def test_apply_schema_applies_additive_migrations(schema_test_db):
                 "WHERE table_schema = 'app' AND table_name = 'gadget' AND column_name = 'note'"
             )
             row = await cur.fetchone()
-    assert row is not None
-
-
-@requires_podman
-async def test_apply_schema_skips_unsafe_migrations(schema_test_db):
-    # app/migrations/002_unsafe_drop_gadget_note.sql drops the column that
-    # 001 added — apply_schema must skip it (not execute it), so the column
-    # added by 001 must still be present afterwards.
-    async with await psycopg.AsyncConnection.connect(_db_dsn(), autocommit=True) as con:
-        await apply_schema(con, FIXTURES)
-        async with con.cursor() as cur:
-            await cur.execute(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_schema = 'app' AND table_name = 'gadget' AND column_name = 'note'"
-            )
-            row = await cur.fetchone()
-    assert row is not None
+    assert row is None
