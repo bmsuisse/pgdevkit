@@ -230,9 +230,14 @@ join latest_order as lo on lo.user_id = u.id and lo.rn = 1
 
 See [`references/temporal-tables.md`](references/temporal-tables.md) for row-level history via `nearform/temporal_tables`.
 
-### Custom Postgres types in test data
+### Custom Postgres types (composites, enums)
 
-`pgdevkit.testdb.schema`'s test-data seeding handles plain columns and JSONB, but not composite types or enums directly. See [`references/complex_helper.py`](references/complex_helper.py) for a psycopg adapter (`ComplexHelper`) if a project needs that.
+`pgdevkit.db.complex_types.ComplexHelper` detects a table's composite/enum/JSONB
+columns and converts plain dict/list values into the psycopg-registered types
+those columns need — used automatically by both `pgdevkit.testdb.schema`'s
+test-data seeding and `pgdevkit.db.crud`'s CRUD helpers. Pass a `normalizers`
+dict (keyed by composite type name) if a project needs to reshape a value
+before conversion (e.g. backfilling missing locale keys).
 
 ### SQL formatting
 

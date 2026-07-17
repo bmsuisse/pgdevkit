@@ -20,9 +20,9 @@ def conninfo(dbname: str, *, connect_timeout: int | None = None) -> str:
     be pointed at a unix socket directory (e.g. /var/run/postgresql) and
     authenticate via peer auth as the current OS user instead of a password.
     """
-    params: dict[str, str | int] = {"host": HOST, "port": PORT, "user": USER, "dbname": dbname}
+    params: dict[str, str] = {"host": HOST, "port": str(PORT), "user": USER, "dbname": dbname}
     if PASSWORD:
         params["password"] = PASSWORD
     if connect_timeout is not None:
-        params["connect_timeout"] = connect_timeout
+        params["connect_timeout"] = str(connect_timeout)
     return make_conninfo(**params)

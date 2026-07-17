@@ -1,0 +1,1 @@
+[{"id": 1, "mood": "happy", "size": {"width": 10, "height": 20}, "tags": ["small", "shiny"], "stale_removed_column": "should be silently dropped"}]

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from pgdevkit.connection import build_conninfo, detect_provider
+from pgdevkit.connection import build_conninfo, detect_provider, is_azure_postgres_host
 
 
 @pytest.mark.parametrize(
@@ -20,13 +20,27 @@ def test_detect_provider(host, expected):
     assert detect_provider(host) == expected
 
 
+@pytest.mark.parametrize(
+    "host,expected",
+    [
+        ("myserver.postgres.database.azure.com", True),
+        ("myserver.postgres.cosmos.azure.com", True),
+        ("localhost", False),
+        ("db.internal.example.com", False),
+        ("instance-abc123.database.azuredatabricks.net", False),
+    ],
+)
+def test_is_azure_postgres_host(host, expected):
+    assert is_azure_postgres_host(host) is expected
+
+
 def test_build_conninfo_without_entra_user_returns_url_unchanged():
     url = "postgresql://user:pass@host:5432/db"
     assert build_conninfo(url) == url
 
 
 def test_build_conninfo_azure_postgres_uses_token_as_password(monkeypatch):
-    monkeypatch.setattr("pgdevkit.connection.get_azure_postgres_password", lambda: "TOKEN123")
+    monkeypatch.setattr("pgdevkit.connection.get_azure_postgres_password", lambda **kwargs: "TOKEN123")
     conninfo = build_conninfo(
         "postgresql://myserver.postgres.database.azure.com:5432/db", "alice@example.com"
     )

@@ -13,6 +13,8 @@ import sqlglot.expressions as exp
 from psycopg.rows import dict_row
 from psycopg.sql import SQL, Identifier, Placeholder
 
+from ..db.complex_types import ComplexHelper
+
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlglot").setLevel(logging.ERROR)
 
@@ -126,7 +128,11 @@ def _iter_sql_files(database_dir: Path):
 
 
 async def _insert_test_data(
-    json_file: Path, table: str, force_reset: bool, con: psycopg.AsyncConnection
+    json_file: Path,
+    table: str,
+    force_reset: bool,
+    con: psycopg.AsyncConnection,
+    complex_helper: ComplexHelper,
 ) -> None:
     if not json_file.exists():
         return
@@ -142,11 +148,20 @@ async def _insert_test_data(
             if row and row["cnt"] == len(rows):
                 return
 
-        col_names = list(rows[0].keys())
+        complex_types = await complex_helper.load_all_complex_types((schema, table_name))
+        # Silently drop JSON keys that don't correspond to a real column —
+        # e.g. a stale fixture left over from a since-renamed/removed column.
+        col_names = [c for c in rows[0] if c in complex_types]
         for row in rows:
             for col in col_names:
-                if isinstance(row[col], (dict, list)):
-                    row[col] = json.dumps(row[col])
+                info = complex_types.get(col)
+                if info is not None and isinstance(row[col], (dict, list)):
+                    # composite/enum/JSONB: needs psycopg-registered-type
+                    # conversion. Anything else (plain scalars, and native
+                    # Postgres arrays like text[], which aren't "complex" —
+                    # psycopg already adapts a Python list to those natively)
+                    # is left untouched.
+                    row[col] = await complex_helper.recursive_convert(row[col], info, con)
 
         await cur.execute(SQL("DELETE FROM {t}").format(t=Identifier(schema, table_name)))
         insert_sql = SQL("INSERT INTO {t} ({cols}) VALUES ({vals})").format(
@@ -157,24 +172,66 @@ async def _insert_test_data(
         await cur.executemany(insert_sql, rows)
 
 
+_UNSAFE_MIGRATION_PATTERNS = (
+    "DROP COLUMN",
+    "DROP TABLE",
+    "TRUNCATE",
+    "RENAME COLUMN",
+    "RENAME TO",
+    "DELETE FROM",
+    "OWNER TO",
+)
+
+
+def _is_additive_migration(sql: str) -> bool:
+    """Only pure-additive migrations (ADD COLUMN/CREATE ... IF NOT EXISTS,
+    etc.) are safe to (re-)apply against a schema that already reflects
+    later migrations — skip anything that could drop, rename, truncate, or
+    delete existing structure/data, alter an existing column, or change
+    ownership. This is a substring heuristic, not a SQL parser, so it errs
+    towards skipping (a false negative here means real data loss replayed
+    on every apply_schema() call) rather than trying to be exhaustive."""
+    normalized = sql.upper()
+    has_alter_column = "ALTER COLUMN" in normalized and "ADD COLUMN" not in normalized
+    has_unsafe_pattern = any(pattern in normalized for pattern in _UNSAFE_MIGRATION_PATTERNS)
+    return not (has_alter_column or has_unsafe_pattern)
+
+
+def _iter_migration_files(database_dir: Path):
+    """Yield every `*.sql` file in any `migrations/` subdirectory, in
+    filename order (the project's naming convention — numeric or date
+    prefixes — sorts chronologically)."""
+    for root, _, files in os.walk(database_dir):
+        if Path(root).name != "migrations":
+            continue
+        for file in sorted(files):
+            if file.endswith(".sql"):
+                yield Path(root) / file
+
+
 async def apply_schema(
     con: psycopg.AsyncConnection,
     database_dir: Path,
     extensions: tuple[str, ...] = (),
     force_reset: bool = False,
 ) -> None:
-    """Apply every .sql file under database_dir (in dependency-safe order)
-    and seed any matching .test_data.json files. Safe to call repeatedly."""
+    """Apply every .sql file under database_dir (in dependency-safe order),
+    seed any matching .test_data.json files, then apply purely-additive
+    `migrations/*.sql` files (see `_is_additive_migration`) so a schema that
+    ships changes via migration files rather than editing the base object
+    files stays in sync. Safe to call repeatedly."""
     await con.set_autocommit(True)
     for extension in extensions:
         await con.execute(SQL("CREATE EXTENSION IF NOT EXISTS {e}").format(e=Identifier(extension)))
+
+    complex_helper = ComplexHelper(con)
 
     async def _apply(file: Path, sql: str) -> None:
         await con.execute(cast(Any, sql))
         json_file = file.with_suffix(".test_data.json")
         if json_file.exists():
             schema_name = _strip_layer_prefix(file.parent.parent.name)
-            await _insert_test_data(json_file, f"{schema_name}.{file.stem}", force_reset, con)
+            await _insert_test_data(json_file, f"{schema_name}.{file.stem}", force_reset, con, complex_helper)
 
     failures: list[tuple[Path, str]] = []
     for file, sql in _iter_sql_files(database_dir):
@@ -186,3 +243,13 @@ async def apply_schema(
 
     for file, sql in failures:
         await _apply(file, sql)
+
+    for migration_file in _iter_migration_files(database_dir):
+        content = migration_file.read_text(encoding="utf-8")
+        if not _is_additive_migration(content):
+            continue
+        try:
+            await con.execute(cast(Any, content))
+            logger.info("Applied migration %s", migration_file.name)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Migration %s skipped (likely already applied): %s", migration_file.name, e)
