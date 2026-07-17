@@ -80,6 +80,47 @@ async def test_select_list_includes_generated_columns(complex_types_test_db):
     assert '"total"' in rendered
 
 
+@requires_podman
+async def test_jsonb_array_column_wraps_each_element_not_the_whole_list(complex_types_test_db):
+    # Regression: a jsonb[] column (a Postgres ARRAY of jsonb) and a plain
+    # jsonb column both surface identically from information_schema (a bare
+    # Python list, if that's the value) -- previously both were detected as
+    # the same `Jsonb` sentinel, and recursive_convert wrapped the whole
+    # incoming list as one Jsonb(...) for either case. That's correct for a
+    # plain jsonb column storing a JSON array *value*, but wrong for a
+    # jsonb[] column, where the list *is* the array and each element needs
+    # its own Jsonb(...) wrapper -- psycopg would otherwise try to bind a
+    # single jsonb value to an array column and Postgres would raise
+    # DatatypeMismatch ("column ... is of type jsonb[] but expression is of
+    # type jsonb").
+    async with await psycopg.AsyncConnection.connect(_db_dsn(), autocommit=True) as con:
+        await con.execute("""
+            CREATE TABLE gadget (
+                id serial PRIMARY KEY,
+                tags jsonb[],
+                metadata jsonb
+            )
+        """)
+        helper = ComplexHelper(con)
+        types = await helper.load_all_complex_types(("public", "gadget"))
+
+        tags_value = [{"name": "a"}, {"name": "b"}]
+        converted_tags = await helper.recursive_convert(tags_value, types["tags"], con)
+
+        metadata_value = [1, 2, 3]  # JSON array *content* for one scalar jsonb value
+        converted_metadata = await helper.recursive_convert(metadata_value, types["metadata"], con)
+
+        await con.execute(
+            "INSERT INTO gadget (id, tags, metadata) VALUES (1, %s, %s)",
+            (converted_tags, converted_metadata),
+        )
+        async with con.cursor() as cur:
+            await cur.execute("SELECT tags, metadata FROM gadget WHERE id = 1")
+            tags, metadata = await cur.fetchone()
+    assert tags == tags_value
+    assert metadata == metadata_value
+
+
 def test_complex_types_cache_is_per_instance_not_shared():
     # Regression: complex_types used to be a mutable class attribute, so a
     # CompositeInfo/EnumInfo (which carries OIDs from one specific
