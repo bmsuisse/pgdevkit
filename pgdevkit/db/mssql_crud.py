@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Callable, Mapping, Optional, Sequence, Type, TypeVar
 
-from .mssql_sql import ident, qualified
+from .mssql_sql import ident, json_encode_values, qualified
 from .model import TableModel
 
 T = TypeVar("T", bound=TableModel)
@@ -166,6 +166,7 @@ async def mssql_insert(
     complex_helper: Any | None = None,
 ) -> dict[str, Any]:
     """Insert one row and return the full row (`OUTPUT INSERTED.*`)."""
+    data = json_encode_values(data)
     sql, params = _build_insert(table_name, data)
     row = await _execute_returning(con, sql, params)
     assert row is not None
@@ -182,6 +183,7 @@ async def mssql_insert_many(
     """Batch insert -- no OUTPUT, one round-trip via executemany."""
     if not data:
         return
+    data = [json_encode_values(row) for row in data]
     fields = list(data[0])
     sql = _build_insert_many(table_name, fields)
     await _execute_many(con, sql, [[row[k] for k in fields] for row in data])
@@ -194,6 +196,7 @@ async def mssql_update_dict(
     primary_keys: Sequence[str],
 ) -> dict | None:
     """Update a row identified by primary_keys. Returns the updated row."""
+    data = json_encode_values(data)
     sql, params = _build_update(table_name, data, primary_keys)
     return await _execute_returning(con, sql, params)
 
@@ -212,6 +215,7 @@ async def mssql_upsert_dict(
     complex_helper: Any | None = None,
 ) -> dict:
     """MERGE-based upsert, returns the row as a dict."""
+    data = json_encode_values(data)
     sql, params = _build_upsert_merge(table_name, data, primary_keys)
     row = await _execute_returning(con, sql, params)
     assert row is not None
@@ -241,6 +245,7 @@ async def mssql_upsert_many_dict(
     and want a missing row to be a silent no-op rather than create one."""
     if not data:
         return
+    data = [json_encode_values(row) for row in data]
     fields = list(data[0])
     if must_exist:
         sql = _build_update_many(table_name, fields, primary_keys)

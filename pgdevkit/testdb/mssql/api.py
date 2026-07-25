@@ -7,7 +7,7 @@ from typing import Any
 
 import mssql_python
 
-from ...db.mssql_sql import ident
+from ...db.mssql_sql import ident, json_encode_value
 from ...dialect import MSSQL
 from .. import query
 from ..config import ProjectConfig
@@ -84,21 +84,18 @@ async def _insert_test_data(json_file: Path, table: str, force_reset: bool, conn
             (count,) = cur.fetchone()
             if count == len(rows):
                 return
-        # Unlike the Postgres path (ComplexHelper-driven composite/enum/JSONB
-        # conversion), MSSQL fixtures are limited to flat scalar columns for
-        # this first cut -- there is no MSSQL equivalent to convert into, so
-        # dict/list values are serialized as JSON text (matching how a
-        # NVARCHAR(MAX)-typed "JSON column" is conventionally stored on this
-        # engine) rather than silently dropped or erroring.
+        # Unlike the Postgres path (ComplexHelper-driven composite/enum
+        # conversion), MSSQL has no composite/enum equivalent to convert
+        # into -- dict/list values are serialized as JSON text instead
+        # (see db/mssql_sql.json_encode_value), matching a `json`-typed or
+        # legacy NVARCHAR(MAX)-storing-JSON column, rather than silently
+        # dropped or erroring.
         col_names = list(rows[0])
         cur.execute(f"DELETE FROM {qualified}")
         cols = ", ".join(ident(c) for c in col_names)
         placeholders = ", ".join("?" for _ in col_names)
         insert_sql = f"INSERT INTO {qualified} ({cols}) VALUES ({placeholders})"
-        param_rows = [
-            [json.dumps(row[c]) if isinstance(row[c], (dict, list)) else row[c] for c in col_names]
-            for row in rows
-        ]
+        param_rows = [[json_encode_value(row[c]) for c in col_names] for row in rows]
         cur.executemany(insert_sql, param_rows)
 
     await asyncio.to_thread(_run)

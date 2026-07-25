@@ -50,9 +50,13 @@ pgdb compare --dialect mssql --url "Server=host,1433;Database=db;UID=user;PWD=pa
 Requires the `mssql` extra: `pip install pgdevkit[mssql]` (pulls in
 [mssql-python](https://github.com/microsoft/mssql-python), which bundles its
 own driver — no system ODBC driver install needed). MSSQL has no composite
-type, native enum, or first-class JSONB column type, so those areas of a
-`database/` tree don't have a direct equivalent on this backend — see
-`docs/database-layout.md`.
+type or native enum equivalent, so those areas of a `database/` tree don't
+have a direct equivalent on this backend — see `docs/database-layout.md`.
+Current Azure SQL/SQL Server (2025+) does have a native `json` column type,
+which parses/introspects/diffs like any other column type; see
+"`pgdevkit.db` — helpers for application code" below for how JSON values are
+handled on the CRUD side (write-side serialization only, no auto-parsing on
+read — `mssql-python` doesn't distinguish `json` columns from `nvarchar`).
 
 ## `pgdb testdb`
 
@@ -144,8 +148,17 @@ Install with the `db` extra: `pip install pgdevkit[db]`.
   table, built on `psycopg` for safe identifier/value handling. The `mssql`
   extra provides an `mssql_*`-prefixed mirror of the same functions in
   `pgdevkit.db.mssql_crud`, built on `mssql-python` (`MERGE`-based upsert,
-  `OUTPUT` instead of `RETURNING`) — MSSQL has no composite/enum/JSONB
-  equivalent, so `complex_helper` is always `None` on that path.
+  `OUTPUT` instead of `RETURNING`) — MSSQL has no composite/enum equivalent,
+  so `complex_helper` is always `None` on that path. It does have a native
+  `json` column type on current versions (and the older
+  `NVARCHAR(MAX)`-plus-`OPENJSON()` convention works on any version), but
+  `mssql-python` has no auto-serialization for dict/list parameter values
+  (binding one raises `TypeError`) and no way to distinguish a `json`
+  column from `nvarchar` on fetch — so every `mssql_*` write function
+  serializes dict/list values to JSON text automatically
+  (`db.mssql_sql.json_encode_value`), while reads always come back as plain
+  `str`; deserialize with `json.loads()` yourself if you need the parsed
+  value back.
 - **`SqlLoader`** — loads and caches `.sql` files from
   `{root}/<topic>/<name>.sql`, for keeping hand-written queries out of
   Python source.

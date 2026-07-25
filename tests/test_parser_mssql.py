@@ -82,6 +82,21 @@ def test_parse_function_details_tsql_extracts_args_and_body_directly():
     assert "return @a + @b" in body
 
 
+def test_parses_native_json_column_type(tmp_path: Path):
+    # SQL Server's native `json` type (current Azure SQL/SQL Server 2025+ --
+    # distinct from the older NVARCHAR(MAX)-plus-OPENJSON() convention).
+    # sqlglot's tsql dialect already recognizes it as exp.DataType.Type.JSON;
+    # this just confirms parser.py round-trips it to "json" like any other
+    # type name, unaffected by the fact that MSSQL has no native enum/
+    # composite type (Dialect.supports_enums/supports_composites are about
+    # CREATE TYPE, not built-in column types like this one).
+    _write(tmp_path, "widget.sql", "CREATE TABLE dbo.widget (id INT PRIMARY KEY, payload JSON NULL);")
+    schema = parse_directory(tmp_path, dialect="mssql")
+    cols = {c.name: c for c in schema.tables["dbo.widget"].columns}
+    assert cols["payload"].data_type == "json"
+    assert cols["payload"].is_nullable
+
+
 def test_mssql_enum_style_type_is_ignored_not_erroring(tmp_path: Path):
     # A Postgres-style `CREATE TYPE ... AS ENUM` has no T-SQL equivalent --
     # parsing it under dialect="mssql" must not raise, and (since sqlglot's
