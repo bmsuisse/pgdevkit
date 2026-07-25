@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import mssql_python
@@ -31,12 +32,19 @@ class Widget(TableModel):
 
 
 @requires_mssql
-async def test_crud_round_trip(tmp_path: Path):
+def test_crud_round_trip(tmp_path: Path):
+    # A plain (not `async def`) test function -- `ensure_testdb`/
+    # `clean_testdb` are sync wrappers that call `asyncio.run()` internally,
+    # which raises "cannot be called from a running event loop" if this test
+    # were itself async (pytest-asyncio already runs async tests inside a
+    # loop). The actual async CRUD calls get their own separate, sequential
+    # `asyncio.run()` below instead.
     project = _make_project(tmp_path, "mssqlcrudlive", "main", engine="mssql")
     try:
         ensure_testdb(project)
         conn = mssql_python.connect(status(project)["dsn"], autocommit=True)
-        try:
+
+        async def _run() -> None:
             inserted = await mssql_insert(conn, ("app", "widget"), {"id": 2, "name": "cog"})
             assert inserted["name"] == "cog"
 
@@ -56,6 +64,9 @@ async def test_crud_round_trip(tmp_path: Path):
             deleted = await mssql_delete_dict(conn, ("app", "widget"), {"id": 2})
             assert deleted is not None and deleted["name"] == "cog2"
             assert await mssql_retrieve(conn, Widget, {"id": 2}) is None
+
+        try:
+            asyncio.run(_run())
         finally:
             conn.close()
     finally:

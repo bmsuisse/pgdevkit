@@ -3,10 +3,13 @@ from __future__ import annotations
 from typing import Any
 
 import mssql_python
+import sqlglot
+import sqlglot.expressions as exp
 
 from .models import (
     ColumnDef, ConstraintDef, DatabaseSchema, FunctionDef, IndexDef, TableDef, ViewDef,
 )
+from .parser import _parse_function_details_tsql
 
 # Schemas that are SQL Server system/fixed-role schemas, not user schemas --
 # the equivalent of introspect.py's "pg_catalog"/"information_schema"/"pg_%"
@@ -191,8 +194,24 @@ def _load_views(conn: Any, db: DatabaseSchema) -> None:
     """):
         if _is_system_schema(r["schema"]):
             continue
-        view = ViewDef(schema=r["schema"], name=r["name"], definition=(r["definition"] or "").lower())
+        definition = _extract_view_query(r["definition"] or "").lower()
+        view = ViewDef(schema=r["schema"], name=r["name"], definition=definition)
         db.views[view.qualified_name] = view
+
+
+def _extract_view_query(definition: str) -> str:
+    """`sys.sql_modules.definition` is the verbatim `CREATE [OR ALTER] VIEW
+    ... AS <query>` statement text -- unlike Postgres's `pg_get_viewdef()`,
+    which returns only the query body. Parse it back out so `ViewDef.definition`
+    means the same thing on both backends and compares equal to parser.py's
+    script-side definition (also query-only)."""
+    try:
+        parsed = sqlglot.parse_one(definition, dialect="tsql")
+    except Exception:  # noqa: BLE001
+        return definition
+    if isinstance(parsed, exp.Create) and parsed.expression is not None:
+        return parsed.expression.sql(dialect="tsql")
+    return definition
 
 
 _FUNCTION_KINDS = {"FN": "function", "IF": "function", "TF": "function", "P": "procedure"}
@@ -200,8 +219,8 @@ _FUNCTION_KINDS = {"FN": "function", "IF": "function", "TF": "function", "P": "p
 
 def _load_functions(conn: Any, db: DatabaseSchema) -> None:
     for r in _q(conn, """
-        SELECT s.name AS [schema], o.name AS name, o.object_id AS object_id,
-               o.type AS type_code, m.definition AS body
+        SELECT s.name AS [schema], o.name AS name,
+               o.type AS type_code, m.definition AS definition
         FROM sys.objects o
         JOIN sys.schemas s ON s.schema_id = o.schema_id
         JOIN sys.sql_modules m ON m.object_id = o.object_id
@@ -209,24 +228,18 @@ def _load_functions(conn: Any, db: DatabaseSchema) -> None:
     """):
         if _is_system_schema(r["schema"]):
             continue
-        params = _q(conn, """
-            SELECT parameter_id, name, TYPE_NAME(system_type_id) AS type_name
-            FROM sys.parameters
-            WHERE object_id = ?
-            ORDER BY parameter_id
-        """, (r["object_id"],))
-        args = ", ".join(f"{p['name']} {p['type_name']}".strip().lower() for p in params if p["parameter_id"] > 0)
-        return_row = next((p for p in params if p["parameter_id"] == 0), None)
-        return_type = (return_row["type_name"] or "").lower() if return_row else ""
-
-        raw_body = r["body"] or ""
-        lines = [line.strip() for line in raw_body.splitlines()]
-        body = "\n".join(line.lower() for line in lines if line)
+        # Same verbatim-statement-text situation as views (see
+        # _extract_view_query) -- reuse parser.py's own T-SQL signature/body
+        # extraction on the catalog's stored definition text, so the
+        # introspected side is parsed exactly the same way the script side
+        # is, rather than maintaining two separate extraction paths that can
+        # drift out of sync.
+        args, return_type, language, body = _parse_function_details_tsql(r["definition"] or "")
 
         func = FunctionDef(
             schema=r["schema"], name=r["name"],
             args=args, return_type=return_type,
-            language="sql", body=body,
+            language=language, body=body,
             kind=_FUNCTION_KINDS[r["type_code"]],
         )
         db.functions[func.qualified_name] = func
