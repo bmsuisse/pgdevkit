@@ -6,6 +6,7 @@ from enum import Enum
 import sqlglot
 import sqlglot.expressions as exp
 
+from .dialect import Dialect, POSTGRES, resolve_dialect
 from .models import DatabaseSchema, FunctionDef, IndexDef, TableDef
 
 
@@ -23,7 +24,14 @@ class DiffEntry:
     detail: str = ""
 
 
-def compute_diff(scripts: DatabaseSchema, db: DatabaseSchema, report_extra_db: bool = False) -> list[DiffEntry]:
+def compute_diff(
+    scripts: DatabaseSchema,
+    db: DatabaseSchema,
+    report_extra_db: bool = False,
+    *,
+    dialect: str | Dialect = "postgres",
+) -> list[DiffEntry]:
+    resolved = resolve_dialect(dialect)
     diffs: list[DiffEntry] = []
 
     _diff_set("schema", scripts.schemas, db.schemas, diffs, report_extra_db)
@@ -36,7 +44,7 @@ def compute_diff(scripts: DatabaseSchema, db: DatabaseSchema, report_extra_db: b
             tables_missing_in_db.add(name)
             diffs.append(DiffEntry(DiffKind.MISSING_IN_DB, "table", name))
         else:
-            _diff_table(name, obj, db.tables[name], diffs)
+            _diff_table(name, obj, db.tables[name], diffs, resolved)
     if report_extra_db:
         for name in db.tables:
             if name not in scripts.tables:
@@ -60,7 +68,7 @@ def compute_diff(scripts: DatabaseSchema, db: DatabaseSchema, report_extra_db: b
         if name not in db.functions:
             diffs.append(DiffEntry(DiffKind.MISSING_IN_DB, "function", name))
         else:
-            _diff_function(name, obj, db.functions[name], diffs)
+            _diff_function(name, obj, db.functions[name], diffs, resolved)
     if report_extra_db:
         for name in db.functions:
             if name not in scripts.functions:
@@ -91,7 +99,7 @@ def compute_diff(scripts: DatabaseSchema, db: DatabaseSchema, report_extra_db: b
             if f"{obj.schema}.{obj.table}" not in tables_missing_in_db:
                 diffs.append(DiffEntry(DiffKind.MISSING_IN_DB, "index", name))
         else:
-            _diff_index(name, obj, db.indexes[name], diffs)
+            _diff_index(name, obj, db.indexes[name], diffs, resolved)
     if report_extra_db:
         for name, obj in db.indexes.items():
             if name not in scripts.indexes:
@@ -111,7 +119,7 @@ def _diff_set(obj_type: str, scripts_set: set, db_set: set, diffs: list[DiffEntr
                 diffs.append(DiffEntry(DiffKind.MISSING_IN_SCRIPTS, obj_type, item))
 
 
-def _diff_table(name: str, s: TableDef, d: TableDef, diffs: list[DiffEntry]) -> None:
+def _diff_table(name: str, s: TableDef, d: TableDef, diffs: list[DiffEntry], dialect: Dialect) -> None:
     if s.is_partition or d.is_partition:
         return
 
@@ -123,7 +131,7 @@ def _diff_table(name: str, s: TableDef, d: TableDef, diffs: list[DiffEntry]) -> 
         else:
             dc = dcols[cname]
             issues = []
-            if _norm_type(sc.data_type) != _norm_type(dc.data_type):
+            if _norm_type(sc.data_type, dialect) != _norm_type(dc.data_type, dialect):
                 issues.append(f"type: {sc.data_type!r} vs {dc.data_type!r}")
             if sc.is_nullable != dc.is_nullable:
                 issues.append(f"nullable: {sc.is_nullable} vs {dc.is_nullable}")
@@ -134,9 +142,9 @@ def _diff_table(name: str, s: TableDef, d: TableDef, diffs: list[DiffEntry]) -> 
             diffs.append(DiffEntry(DiffKind.MISSING_IN_SCRIPTS, "column", f"{name}.{cname}"))
 
 
-def _diff_function(name: str, s: FunctionDef, d: FunctionDef, diffs: list[DiffEntry]) -> None:
+def _diff_function(name: str, s: FunctionDef, d: FunctionDef, diffs: list[DiffEntry], dialect: Dialect) -> None:
     issues = []
-    if _norm_type(s.return_type) != _norm_type(d.return_type):
+    if _norm_type(s.return_type, dialect) != _norm_type(d.return_type, dialect):
         issues.append(f"return_type: {s.return_type!r} vs {d.return_type!r}")
     if _norm_body(s.body) != _norm_body(d.body):
         issues.append("body differs")
@@ -144,9 +152,9 @@ def _diff_function(name: str, s: FunctionDef, d: FunctionDef, diffs: list[DiffEn
         diffs.append(DiffEntry(DiffKind.MISMATCH, "function", name, "; ".join(issues)))
 
 
-def _diff_index(name: str, s: IndexDef, d: IndexDef, diffs: list[DiffEntry]) -> None:
-    s_info = _parse_index_def(s.definition)
-    d_info = _parse_index_def(d.definition)
+def _diff_index(name: str, s: IndexDef, d: IndexDef, diffs: list[DiffEntry], dialect: Dialect) -> None:
+    s_info = _parse_index_def(s.definition, dialect)
+    d_info = _parse_index_def(d.definition, dialect)
 
     if s_info is None or d_info is None:
         if _norm_sql(s.definition) != _norm_sql(d.definition):
@@ -167,9 +175,9 @@ def _diff_index(name: str, s: IndexDef, d: IndexDef, diffs: list[DiffEntry]) -> 
         diffs.append(DiffEntry(DiffKind.MISMATCH, "index", name, "; ".join(issues)))
 
 
-def _parse_index_def(definition: str) -> dict | None:
+def _parse_index_def(definition: str, dialect: Dialect = POSTGRES) -> dict | None:
     try:
-        parsed = sqlglot.parse_one(definition, dialect="postgres")
+        parsed = sqlglot.parse_one(definition, dialect=dialect.sqlglot_name)
     except Exception:
         return None
     if not isinstance(parsed, exp.Create):
@@ -184,11 +192,11 @@ def _parse_index_def(definition: str) -> dict | None:
 
     columns = []
     for col in (params.args.get("columns") if params else None) or []:
-        columns.append(_norm_sql(col.sql(dialect="postgres")))
+        columns.append(_norm_sql(col.sql(dialect=dialect.sqlglot_name)))
 
     where_node = params.args.get("where") if params else None
     where_ast = _unwrap_paren(where_node.this) if where_node else None
-    where_display = _norm_sql(where_node.this.sql(dialect="postgres")) if where_node else None
+    where_display = _norm_sql(where_node.this.sql(dialect=dialect.sqlglot_name)) if where_node else None
 
     return {
         "unique": bool(parsed.args.get("unique")),
@@ -215,28 +223,7 @@ def _norm_body(s: str) -> str:
     return "\n".join(l.lower() for l in lines if l)
 
 
-_TYPE_SYNONYMS = {
-    "int": "integer", "int4": "integer",
-    "int2": "smallint",
-    "int8": "bigint",
-    "float4": "real",
-    "float8": "double precision",
-    "bool": "boolean",
-    "decimal": "numeric",
-    "varchar": "character varying",
-    "char": "character", "bpchar": "character",
-    "timestamptz": "timestamp with time zone",
-    "timestamp": "timestamp without time zone",
-    "timetz": "time with time zone",
-    "time": "time without time zone",
-    "varbit": "bit varying",
-    "serial": "integer", "serial4": "integer",
-    "smallserial": "smallint", "serial2": "smallint",
-    "bigserial": "bigint", "serial8": "bigint",
-}
-
-
-def _norm_type(t: str) -> str:
+def _norm_type(t: str, dialect: Dialect = POSTGRES) -> str:
     s = " ".join(t.lower().split())
 
     array_suffix = ""
@@ -249,5 +236,5 @@ def _norm_type(t: str) -> str:
     base = (s[: match.start()] + s[match.end() :]).strip() if match else s
     base = " ".join(base.split())
 
-    base = _TYPE_SYNONYMS.get(base, base)
+    base = dialect.type_synonyms.get(base, base)
     return f"{base}{params}{array_suffix}"

@@ -38,6 +38,22 @@ pgdb compare --url postgresql://instance-abc.database.azuredatabricks.net:5432/d
 (`--url`'s own user/password, if any, are discarded and replaced — `--entra-user`
 plus the fetched token become the connection's actual credentials.)
 
+### MSSQL
+
+`pgdb compare`/`pgdb fetch-missing` default to Postgres. Pass `--dialect mssql`
+to compare against a SQL Server database instead:
+
+```bash
+pgdb compare --dialect mssql --url "Server=host,1433;Database=db;UID=user;PWD=pass" path/to/database/
+```
+
+Requires the `mssql` extra: `pip install pgdevkit[mssql]` (pulls in
+[mssql-python](https://github.com/microsoft/mssql-python), which bundles its
+own driver — no system ODBC driver install needed). MSSQL has no composite
+type, native enum, or first-class JSONB column type, so those areas of a
+`database/` tree don't have a direct equivalent on this backend — see
+`docs/database-layout.md`.
+
 ## `pgdb testdb`
 
 Manages a single shared, Podman-backed Postgres container for local tests
@@ -89,12 +105,29 @@ The role named by `PGDEVKIT_TESTDB_USER` must exist and match your OS user
 (`CREATE ROLE <user> SUPERUSER LOGIN;`) and `pg_hba.conf` must allow `peer`
 auth for local connections (Debian/Ubuntu Postgres ships this by default).
 
+### MSSQL
+
+Add `engine = "mssql"` to `[tool.pgdevkit]` (or set
+`PGDEVKIT_TESTDB_ENGINE=mssql` for a one-off run) to manage a shared SQL
+Server container instead of Postgres — same one-container-per-machine,
+one-database-per-workspace model. Requires the `mssql` extra (see above).
+
+Container defaults (`localhost:14330`, `sa`/a generated complexity-valid
+password) can be overridden with `PGDEVKIT_TESTDB_MSSQL_HOST`, `_PORT`,
+`_USER`, `_PASSWORD`, `_IMAGE`, `_MEMORY_LIMIT_MB`. The container only
+bootstraps the `sa` login — additional logins are a known limitation.
+`pgdb testdb shell` execs into
+[`sqlcmd`](https://github.com/microsoft/go-sqlcmd) (an external prerequisite,
+the same category as `psql` for the Postgres path) rather than a Python
+REPL.
+
 ## `pgdevkit.db` — helpers for application code
 
 Install with the `db` extra: `pip install pgdevkit[db]`.
 
-- **`PostgresTableModel`** — a `pydantic.BaseModel` base class for models
-  that map 1:1 to a table row. Implement `get_table_name()` (returns
+- **`TableModel`** (formerly `PostgresTableModel`, still importable under
+  that name) — a `pydantic.BaseModel` base class for models that map 1:1 to
+  a table row, for either engine. Implement `get_table_name()` (returns
   `(schema, table)`) and `get_primary_key()` on each model.
 - **`PgPool`** — an async connection pool keyed off
   `{env_prefix}HOST/PORT/DB/USER/PASSWORD` env vars. Call `await pool.open()`
@@ -107,8 +140,12 @@ Install with the `db` extra: `pip install pgdevkit[db]`.
 - **CRUD functions** — `pg_retrieve`, `pg_retrieve_many`, `pg_insert`,
   `pg_insert_many`, `pg_update`, `pg_update_dict`, `pg_upsert`,
   `pg_upsert_dict`, `pg_upsert_many`, `pg_upsert_many_dict`, `pg_delete`,
-  `pg_delete_dict` — typed (`PostgresTableModel`-based) or dict-based CRUD
-  against a table, built on `psycopg` for safe identifier/value handling.
+  `pg_delete_dict` — typed (`TableModel`-based) or dict-based CRUD against a
+  table, built on `psycopg` for safe identifier/value handling. The `mssql`
+  extra provides an `mssql_*`-prefixed mirror of the same functions in
+  `pgdevkit.db.mssql_crud`, built on `mssql-python` (`MERGE`-based upsert,
+  `OUTPUT` instead of `RETURNING`) — MSSQL has no composite/enum/JSONB
+  equivalent, so `complex_helper` is always `None` on that path.
 - **`SqlLoader`** — loads and caches `.sql` files from
   `{root}/<topic>/<name>.sql`, for keeping hand-written queries out of
   Python source.

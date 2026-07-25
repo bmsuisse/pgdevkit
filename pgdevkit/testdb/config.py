@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+
+_ENGINES = ("postgres", "mssql")
 
 
 @dataclass(frozen=True)
@@ -11,11 +14,14 @@ class ProjectConfig:
     database_dir: str = "database"
     env_prefix: str = ""
     extensions: tuple[str, ...] = ()
+    engine: str = "postgres"
     root: Path = field(default_factory=Path)
 
     def __post_init__(self) -> None:
         if not self.env_prefix:
             object.__setattr__(self, "env_prefix", f"{self.name.upper()}_")
+        if self.engine not in _ENGINES:
+            raise ValueError(f"[tool.pgdevkit].engine must be one of {_ENGINES}, got {self.engine!r}")
 
 
 def _find_pyproject(start: Path) -> Path | None:
@@ -42,10 +48,17 @@ def load_config(start: Path | None = None) -> ProjectConfig:
             f"[tool.pgdevkit].extensions in {pyproject} must be a list, got {type(extensions).__name__}"
         )
 
+    # PGDEVKIT_TESTDB_ENGINE lets CI/ad-hoc runs flip engines without
+    # editing pyproject.toml; the toml value is the durable, per-project
+    # default (a project's database/ tree is written in one dialect, so
+    # this isn't meant to vary per-invocation the way a CLI flag would).
+    engine = os.environ.get("PGDEVKIT_TESTDB_ENGINE") or section.get("engine", "postgres")
+
     return ProjectConfig(
         name=section.get("name") or root.name,
         database_dir=section.get("database_dir", "database"),
         env_prefix=section.get("env_prefix", ""),
         extensions=tuple(extensions),
+        engine=engine,
         root=root,
     )

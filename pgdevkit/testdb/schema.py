@@ -14,6 +14,7 @@ from psycopg.rows import dict_row
 from psycopg.sql import SQL, Identifier, Placeholder
 
 from ..db.complex_types import ComplexHelper
+from ..dialect import Dialect, POSTGRES
 
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlglot").setLevel(logging.ERROR)
@@ -63,6 +64,17 @@ _SCHEMA_QUALIFIED_TYPES = {
 }
 
 
+# Schemas that hold system catalog views/tables, never a file this project
+# manages -- a reference to one is never a real cross-file dependency to
+# wait for. Matters most for T-SQL, where "IF NOT EXISTS (SELECT ... FROM
+# sys.schemas/sys.tables/sys.objects ...) BEGIN CREATE ... END" is the
+# idiomatic idempotency-guard pattern (T-SQL has no native "CREATE TABLE IF
+# NOT EXISTS"/"CREATE SCHEMA IF NOT EXISTS"), so without this exclusion
+# nearly every T-SQL file would pick up a spurious, never-resolvable
+# dependency on "sys.*" and get shuffled into the delayed-retry path, whose
+# reverse-order resolution can then apply files out of their intended order.
+_SYSTEM_SCHEMAS = {"pg_catalog", "information_schema", "sys"}
+
 _DECLARE_RE = re.compile(
     r"CREATE\s+(?:OR\s+REPLACE\s+)?(?:TABLE|VIEW|FUNCTION|PROCEDURE|TYPE|SCHEMA)\s+(\w+\.\w+)", re.IGNORECASE
 )
@@ -76,16 +88,17 @@ def _get_sql_deps_regex_fallback(sql: str) -> set[str]:
     is fine."""
     declares = set(_DECLARE_RE.findall(sql))
     deps = set(_DEPEND_RE.findall(sql))
+    deps = {d for d in deps if d.split(".", 1)[0].lower() not in _SYSTEM_SCHEMAS}
     return deps - declares
 
 
-def _get_sql_deps(sql: str) -> set[str]:
+def _get_sql_deps(sql: str, dialect: Dialect = POSTGRES) -> set[str]:
     try:
         # error_level=IGNORE lets sqlglot recover from statements it can't
         # fully parse (e.g. a schema-qualified `DROP TRIGGER ... ON
         # schema.table`) and keep going, instead of raising and losing every
         # other statement's dependency info in the same file.
-        exprs = sqlglot.parse(sql, dialect="postgres", error_level=sqlglot.ErrorLevel.IGNORE)
+        exprs = sqlglot.parse(sql, dialect=dialect.sqlglot_name, error_level=sqlglot.ErrorLevel.IGNORE)
     except Exception:  # noqa: BLE001
         return _get_sql_deps_regex_fallback(sql)
     deps: set[str] = set()
@@ -93,7 +106,10 @@ def _get_sql_deps(sql: str) -> set[str]:
         if e is None:
             continue
         for t in e.find_all(exp.Table):
-            if t.args.get("this") is not None and t.args.get("db") is not None:
+            db_node = t.args.get("db")
+            if t.args.get("this") is not None and db_node is not None:
+                if db_node.name.lower() in _SYSTEM_SCHEMAS:
+                    continue
                 # exp.table_name(), not str(t): str() includes " AS alias" for
                 # an aliased reference (e.g. "FROM editing.visit v"), which
                 # would never match the plain declared name any dependent
@@ -102,7 +118,7 @@ def _get_sql_deps(sql: str) -> set[str]:
     return deps
 
 
-def _iter_sql_files(database_dir: Path):
+def _iter_sql_files(database_dir: Path, dialect: Dialect = POSTGRES):
     """Yield (Path, sql_content) pairs in dependency-safe execution order."""
     files: list[Path] = []
     for root, _, dbfiles in os.walk(database_dir):
@@ -120,7 +136,7 @@ def _iter_sql_files(database_dir: Path):
 
     for file in sorted(files, key=lambda p: (_get_type_order(p), p.name)):
         content = file.read_text(encoding="utf-8")
-        deps = _get_sql_deps(content)
+        deps = _get_sql_deps(content, dialect)
         if file.parent.name in _SCHEMA_QUALIFIED_TYPES:
             schema = _strip_layer_prefix(file.parent.parent.name)
             full_name = f"{schema}.{_strip_layer_prefix(file.stem)}"
@@ -141,7 +157,7 @@ def _iter_sql_files(database_dir: Path):
         progressed = False
         for i in range(len(delayed) - 1, -1, -1):
             declared_name, file, content = delayed[i]
-            deps = _get_sql_deps(content)
+            deps = _get_sql_deps(content, dialect)
             if declared_name:
                 deps.discard(declared_name)
             if all(d in delivered or d not in all_declared for d in deps):
@@ -204,6 +220,8 @@ async def apply_schema(
     database_dir: Path,
     extensions: tuple[str, ...] = (),
     force_reset: bool = False,
+    *,
+    dialect: Dialect = POSTGRES,
 ) -> None:
     """Apply every .sql file under database_dir (in dependency-safe order)
     and seed any matching .test_data.json files. Safe to call repeatedly.
@@ -227,7 +245,7 @@ async def apply_schema(
             await _insert_test_data(json_file, f"{schema_name}.{table_stem}", force_reset, con, complex_helper)
 
     failures: list[tuple[Path, str]] = []
-    for file, sql in _iter_sql_files(database_dir):
+    for file, sql in _iter_sql_files(database_dir, dialect):
         try:
             await _apply(file, sql)
         except Exception as e:  # noqa: BLE001

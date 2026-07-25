@@ -7,6 +7,44 @@ import psycopg
 from psycopg.rows import dict_row
 
 _DOLLAR_TAG = re.compile(r"\$[A-Za-z_]*\$")
+_GO_LINE = re.compile(r"^\s*GO\s*(\d+)?\s*$", re.IGNORECASE)
+
+
+def split_tsql_batches(sql: str) -> list[str]:
+    """Split T-SQL script text on standalone `GO` batch-separator lines (the
+    sqlcmd/SSMS convention T-SQL scripts conventionally use) -- `GO` is not
+    valid inside a single driver `execute()` call, unlike Postgres's `;`
+    statement separator which the driver handles natively. Tracks `/* ... */`
+    block comments as opaque so a `GO`-looking line inside a comment doesn't
+    split; does not attempt full tokenization of string literals spanning a
+    `GO` line, which is exceedingly rare in practice for schema/DDL scripts.
+    A script with no `GO` lines at all (any Postgres script, or a T-SQL one
+    that just doesn't use them) returns as a single batch, unchanged."""
+    batches: list[str] = []
+    buf: list[str] = []
+    in_block_comment = False
+    for line in sql.splitlines():
+        stripped = line.strip()
+        if in_block_comment:
+            buf.append(line)
+            if "*/" in line:
+                in_block_comment = False
+            continue
+        if stripped.startswith("/*") and "*/" not in stripped:
+            in_block_comment = True
+            buf.append(line)
+            continue
+        if _GO_LINE.match(line):
+            batch = "\n".join(buf).strip()
+            if batch:
+                batches.append(batch)
+            buf = []
+            continue
+        buf.append(line)
+    tail = "\n".join(buf).strip()
+    if tail:
+        batches.append(tail)
+    return batches
 
 
 def _split_statements(sql: str) -> list[str]:

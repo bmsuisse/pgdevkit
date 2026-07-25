@@ -8,40 +8,7 @@ import docker.errors
 import psycopg
 
 from . import constants
-
-# Candidate Docker-API-compatible socket URLs tried after plain
-# docker.from_env() (which only looks at DOCKER_HOST / the default Docker
-# socket) fails to connect -- covers rootful and rootless Podman, which
-# speaks the same API but doesn't always advertise itself via DOCKER_HOST.
-_FALLBACK_SOCKET_URLS = [
-    f"unix://{os.environ['XDG_RUNTIME_DIR']}/podman/podman.sock" if os.environ.get("XDG_RUNTIME_DIR") else None,
-    "unix:///run/podman/podman.sock",
-]
-
-
-def _client() -> docker.DockerClient:
-    """A Docker-API client, working against a real Docker daemon or a
-    Podman one (Podman exposes the same API over its own socket) -- callers
-    never need to know or care which one is actually running."""
-    try:
-        client = docker.from_env()
-        client.ping()
-        return client
-    except Exception:  # noqa: BLE001
-        pass
-    for base_url in _FALLBACK_SOCKET_URLS:
-        if base_url is None:
-            continue
-        try:
-            client = docker.DockerClient(base_url=base_url)
-            client.ping()
-            return client
-        except Exception:  # noqa: BLE001
-            continue
-    raise RuntimeError(
-        "Could not reach a Docker-compatible API. Set DOCKER_HOST, or make sure "
-        "Docker or Podman's API socket is running."
-    )
+from ._docker import client as _client
 
 
 def _available(timeout: float = 3.0) -> bool:

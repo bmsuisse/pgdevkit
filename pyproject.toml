@@ -11,7 +11,7 @@ packages = ["pgdevkit"]
 
 [project]
 name = "pgdevkit"
-version = "0.2.4"
+version = "0.3.0"
 description = "A helper for developing with Postgres"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -31,6 +31,7 @@ db = [
     "psycopg-pool>=3.3.0",
     "pydantic>=2.0",
 ]
+mssql = ["mssql-python>=1.0.0"]
 
 [project.scripts]
 pgdb = "pgdevkit.cli:app"
@@ -52,3 +53,4 @@ test = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 asyncio_mode = "auto"
+markers = ["mssql: requires a live MSSQL testdb container and the mssql extra (msodbcsql driver)"]

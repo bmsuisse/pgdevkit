@@ -121,6 +121,21 @@ comment on column dim.user.is_active is 'False once a user is soft-deleted; keep
 
 ---
 
+## MSSQL projects (`engine = "mssql"`)
+
+Everything above is engine-agnostic *as a folder/apply-order convention*,
+with two exceptions:
+
+- `types/` (custom types / enums) has no direct T-SQL equivalent -- MSSQL
+  has neither a native enum type nor composite types, so a `CREATE TYPE ...
+  AS ENUM`/composite `.sql` file is a Postgres-only construct. `pgdb compare`
+  reports every such object as missing on an MSSQL database (correctly --
+  it genuinely doesn't exist there), rather than erroring.
+- T-SQL scripts conventionally separate batches with a standalone `GO` line
+  (an `sqlcmd`/SSMS scripting convention, not valid inside a single
+  driver `execute()` call). `pgdb testdb` splits on these automatically when
+  applying a file; hand-written `.sql` files may use `GO` freely.
+
 ## Backfilling untracked objects
 
 If a table, scalar function, or table function was created directly on the
