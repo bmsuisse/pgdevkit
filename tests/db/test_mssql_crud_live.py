@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import Callable
 from pathlib import Path
 
 import mssql_python
@@ -9,7 +8,11 @@ import pytest
 from pgdevkit.db.mssql_crud import mssql_delete_dict, mssql_insert, mssql_retrieve, mssql_update_dict, mssql_upsert_dict
 from pgdevkit.db.model import TableModel
 from pgdevkit.testdb.api import clean_testdb, ensure_testdb, status
-from tests.testdb.conftest import requires_mssql
+# _make_project (not the project_factory fixture) -- project_factory lives
+# in tests/testdb/conftest.py, whose fixtures pytest only injects into tests
+# under tests/testdb/ itself. This file sits outside that directory, so it
+# calls the same helper directly with its own tmp_path instead.
+from tests.testdb.conftest import _make_project, requires_mssql
 
 pytestmark = pytest.mark.mssql
 
@@ -28,8 +31,8 @@ class Widget(TableModel):
 
 
 @requires_mssql
-async def test_crud_round_trip(project_factory: Callable[..., Path]):
-    project = project_factory("mssqlcrudlive", "main", engine="mssql")
+async def test_crud_round_trip(tmp_path: Path):
+    project = _make_project(tmp_path, "mssqlcrudlive", "main", engine="mssql")
     try:
         ensure_testdb(project)
         conn = mssql_python.connect(status(project)["dsn"], autocommit=True)

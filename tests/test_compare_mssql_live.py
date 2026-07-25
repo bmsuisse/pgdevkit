@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import Callable
 from pathlib import Path
 
 import pytest
@@ -9,7 +8,11 @@ from pgdevkit.backends import get_backend
 from pgdevkit.diff import compute_diff
 from pgdevkit.parser import parse_directory
 from pgdevkit.testdb.api import clean_testdb, ensure_testdb, status
-from tests.testdb.conftest import requires_mssql
+# _make_project (not the project_factory fixture) -- project_factory lives
+# in tests/testdb/conftest.py, whose fixtures pytest only injects into tests
+# under tests/testdb/ itself. This file sits outside that directory, so it
+# calls the same helper directly with its own tmp_path instead.
+from tests.testdb.conftest import _make_project, requires_mssql
 
 # See tests/testdb/test_api_mssql_live.py's module docstring for why this is
 # marked `mssql` (selected only by the dedicated CI job) rather than run
@@ -21,8 +24,8 @@ pytestmark = pytest.mark.mssql
 
 
 @requires_mssql
-def test_introspection_matches_applied_scripts_with_no_diff(project_factory: Callable[..., Path]):
-    project = project_factory("mssqlcompare", "main", engine="mssql")
+def test_introspection_matches_applied_scripts_with_no_diff(tmp_path: Path):
+    project = _make_project(tmp_path, "mssqlcompare", "main", engine="mssql")
     try:
         ensure_testdb(project)
         conninfo = status(project)["dsn"]
