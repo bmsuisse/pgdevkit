@@ -31,4 +31,26 @@ jobs:
       - name: ty check
         run: uv run ty check pgdevkit
       - name: Test with pytest
-        run: uv run -m pytest  --capture=tee-sys --maxfail=3 tests
+        run: uv run -m pytest --capture=tee-sys --maxfail=3 -m "not mssql" tests
+
+  mssql-test:
+    # Separate job (not folded into `build`) so a live SQL Server -- a much
+    # larger image and slower cold start than the Postgres container --
+    # never slows down or blocks the fast, always-run Postgres suite above.
+    # mssql-python bundles its own ODBC driver, so unlike pyodbc this needs
+    # no system driver package install here.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - name: Install project dependencies
+        run: uv sync --all-extras --all-groups
+      - name: Run MSSQL-only tests
+        run: uv run -m pytest --capture=tee-sys --maxfail=3 -m mssql tests

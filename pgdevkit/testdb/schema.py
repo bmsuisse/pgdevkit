@@ -14,6 +14,7 @@ from psycopg.rows import dict_row
 from psycopg.sql import SQL, Identifier, Placeholder
 
 from ..db.complex_types import ComplexHelper
+from ..dialect import Dialect, POSTGRES
 
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlglot").setLevel(logging.ERROR)
@@ -79,13 +80,13 @@ def _get_sql_deps_regex_fallback(sql: str) -> set[str]:
     return deps - declares
 
 
-def _get_sql_deps(sql: str) -> set[str]:
+def _get_sql_deps(sql: str, dialect: Dialect = POSTGRES) -> set[str]:
     try:
         # error_level=IGNORE lets sqlglot recover from statements it can't
         # fully parse (e.g. a schema-qualified `DROP TRIGGER ... ON
         # schema.table`) and keep going, instead of raising and losing every
         # other statement's dependency info in the same file.
-        exprs = sqlglot.parse(sql, dialect="postgres", error_level=sqlglot.ErrorLevel.IGNORE)
+        exprs = sqlglot.parse(sql, dialect=dialect.sqlglot_name, error_level=sqlglot.ErrorLevel.IGNORE)
     except Exception:  # noqa: BLE001
         return _get_sql_deps_regex_fallback(sql)
     deps: set[str] = set()
@@ -102,7 +103,7 @@ def _get_sql_deps(sql: str) -> set[str]:
     return deps
 
 
-def _iter_sql_files(database_dir: Path):
+def _iter_sql_files(database_dir: Path, dialect: Dialect = POSTGRES):
     """Yield (Path, sql_content) pairs in dependency-safe execution order."""
     files: list[Path] = []
     for root, _, dbfiles in os.walk(database_dir):
@@ -120,7 +121,7 @@ def _iter_sql_files(database_dir: Path):
 
     for file in sorted(files, key=lambda p: (_get_type_order(p), p.name)):
         content = file.read_text(encoding="utf-8")
-        deps = _get_sql_deps(content)
+        deps = _get_sql_deps(content, dialect)
         if file.parent.name in _SCHEMA_QUALIFIED_TYPES:
             schema = _strip_layer_prefix(file.parent.parent.name)
             full_name = f"{schema}.{_strip_layer_prefix(file.stem)}"
@@ -141,7 +142,7 @@ def _iter_sql_files(database_dir: Path):
         progressed = False
         for i in range(len(delayed) - 1, -1, -1):
             declared_name, file, content = delayed[i]
-            deps = _get_sql_deps(content)
+            deps = _get_sql_deps(content, dialect)
             if declared_name:
                 deps.discard(declared_name)
             if all(d in delivered or d not in all_declared for d in deps):
@@ -204,6 +205,8 @@ async def apply_schema(
     database_dir: Path,
     extensions: tuple[str, ...] = (),
     force_reset: bool = False,
+    *,
+    dialect: Dialect = POSTGRES,
 ) -> None:
     """Apply every .sql file under database_dir (in dependency-safe order)
     and seed any matching .test_data.json files. Safe to call repeatedly.
@@ -227,7 +230,7 @@ async def apply_schema(
             await _insert_test_data(json_file, f"{schema_name}.{table_stem}", force_reset, con, complex_helper)
 
     failures: list[tuple[Path, str]] = []
-    for file, sql in _iter_sql_files(database_dir):
+    for file, sql in _iter_sql_files(database_dir, dialect):
         try:
             await _apply(file, sql)
         except Exception as e:  # noqa: BLE001

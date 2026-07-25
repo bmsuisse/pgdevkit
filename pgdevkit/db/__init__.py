@@ -17,13 +17,14 @@ from .crud import (
     pg_upsert_many_dict,
 )
 from .loader import SqlLoader
-from .model import PostgresTableModel
+from .model import PostgresTableModel, TableModel
 
 __all__ = [
     "ComplexHelper",
     "PgPool",
     "PostgresTableModel",
     "SqlLoader",
+    "TableModel",
     "pg_delete",
     "pg_delete_dict",
     "pg_insert",

@@ -28,6 +28,15 @@ def _resolve(project_root: Path | None) -> tuple[ProjectConfig, str]:
     return config, db_name
 
 
+def _mssql_api():
+    # Imported lazily so importing pgdevkit.testdb (and thus pgdevkit.cli)
+    # doesn't require the mssql extra unless a project actually opts into
+    # `engine = "mssql"`.
+    from .mssql import api as mssql_api
+
+    return mssql_api
+
+
 def _env_for(config: ProjectConfig, db_name: str) -> dict[str, str]:
     prefix = config.env_prefix
     return {
@@ -72,9 +81,13 @@ async def _apply(config: ProjectConfig, db_name: str, force_reset: bool) -> None
 def ensure_testdb(project_root: Path | None = None, force_reset: bool = False) -> dict[str, str]:
     """Ensure the shared container is running, this workspace's database
     exists, and its schema is applied. Returns the {PREFIX}POSTGRES_* env
-    vars for this workspace."""
-    ensure_container()
+    vars for this workspace (or the mssql equivalent's env vars, per
+    `config.engine`)."""
     config, db_name = _resolve(project_root)
+    if config.engine == "mssql":
+        return _mssql_api().ensure_testdb(config, db_name, force_reset)
+
+    ensure_container()
 
     async def _run() -> None:
         if force_reset:
@@ -97,6 +110,9 @@ def clean_testdb(project_root: Path | None = None, all: bool = False) -> None:
     belonging to this project (matched by its name-slug prefix), across
     every worktree/branch."""
     config, db_name = _resolve(project_root)
+    if config.engine == "mssql":
+        _mssql_api().clean_testdb(config, db_name, all)
+        return
 
     async def _run() -> None:
         if not all:
@@ -118,7 +134,10 @@ def clean_testdb(project_root: Path | None = None, all: bool = False) -> None:
 
 def status(project_root: Path | None = None) -> dict[str, str]:
     config, db_name = _resolve(project_root)
+    if config.engine == "mssql":
+        return _mssql_api().status(config, db_name)
     return {
+        "engine": config.engine,
         "container": constants.CONTAINER_NAME,
         "host": constants.HOST,
         "port": str(constants.PORT),
@@ -128,10 +147,23 @@ def status(project_root: Path | None = None) -> dict[str, str]:
 
 
 def run_sql(sql: str, project_root: Path | None = None) -> list[dict] | None:
-    _, db_name = _resolve(project_root)
+    config, db_name = _resolve(project_root)
+    if config.engine == "mssql":
+        return _mssql_api().run_sql(config, db_name, sql)
     return asyncio.run(query.execute(_db_dsn(db_name), sql))
 
 
 def dsn_for(project_root: Path | None = None) -> str:
-    _, db_name = _resolve(project_root)
+    config, db_name = _resolve(project_root)
+    if config.engine == "mssql":
+        return _mssql_api().dsn_for(config, db_name)
     return _db_dsn(db_name)
+
+
+def shell_argv(project_root: Path | None = None) -> tuple[str, list[str]]:
+    """The (binary, argv) to `os.execvp` for an interactive shell against
+    this workspace's database -- `psql` for Postgres, `sqlcmd` for MSSQL."""
+    config, db_name = _resolve(project_root)
+    if config.engine == "mssql":
+        return _mssql_api().shell_argv(config, db_name)
+    return "psql", ["psql", _db_dsn(db_name)]

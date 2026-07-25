@@ -5,7 +5,7 @@ import pytest
 
 from pgdevkit.testdb import constants, query
 from pgdevkit.testdb.container import ensure_container
-from pgdevkit.testdb.query import _split_statements
+from pgdevkit.testdb.query import _split_statements, split_tsql_batches
 from tests.testdb.conftest import RUN_SUFFIX, requires_podman
 
 
@@ -32,6 +32,32 @@ def test_split_statements_ignores_semicolon_inside_string_literal():
 def test_split_statements_handles_tagged_dollar_quotes():
     statements = _split_statements("SELECT $tag$a;b$tag$ AS x; SELECT 2")
     assert statements == ["SELECT $tag$a;b$tag$ AS x", "SELECT 2"]
+
+def test_split_tsql_batches_splits_on_standalone_go_line():
+    sql = "CREATE TABLE dbo.widget (id INT);\nGO\nINSERT INTO dbo.widget VALUES (1);\nGO\n"
+    batches = split_tsql_batches(sql)
+    assert len(batches) == 2
+    assert batches[0] == "CREATE TABLE dbo.widget (id INT);"
+    assert batches[1] == "INSERT INTO dbo.widget VALUES (1);"
+
+
+def test_split_tsql_batches_with_no_go_returns_single_batch():
+    sql = "SELECT 1;\nSELECT 2;"
+    assert split_tsql_batches(sql) == [sql]
+
+
+def test_split_tsql_batches_ignores_go_inside_block_comment():
+    sql = "SELECT 1;\n/* remember:\nGO\ndo something */\nSELECT 2;"
+    batches = split_tsql_batches(sql)
+    assert len(batches) == 1
+    assert "GO" in batches[0]
+
+
+def test_split_tsql_batches_accepts_go_with_repeat_count():
+    sql = "SELECT 1;\nGO 3\nSELECT 2;"
+    batches = split_tsql_batches(sql)
+    assert batches == ["SELECT 1;", "SELECT 2;"]
+
 
 TEST_DB = f"pgdevkit_query_selftest_{RUN_SUFFIX}"
 

@@ -10,10 +10,10 @@ from rich.table import Table
 from rich import box
 
 from . import testdb
+from .backends import get_backend
 from .connection import build_conninfo
 from .diff import DiffKind, compute_diff
 from .fetch_missing import SUBFOLDER, find_missing_objects, layer_folder_for, reconstruct_ddl
-from .introspect import introspect_db
 from .parser import parse_directory
 
 app = typer.Typer(name="pgdb", help="PostgreSQL database schema tools")
@@ -37,9 +37,10 @@ def compare(
         None, "--databricks-instance", help="Lakebase instance name (required for Lakebase hosts)"
     ),
     report_extra_db: bool = typer.Option(False, "--report-extra-db", help="Report objects in DB but not in scripts"),
+    dialect: str = typer.Option("postgres", "--dialect", help="postgres (default) or mssql"),
     scripts_dir: Path = typer.Argument(..., help="Directory containing SQL scripts"),
 ) -> None:
-    """Compare SQL scripts to a live PostgreSQL database and report differences."""
+    """Compare SQL scripts to a live database and report differences."""
     if not scripts_dir.is_dir():
         err_console.print(f"[red]Error:[/red] {scripts_dir} is not a directory")
         raise typer.Exit(2)
@@ -55,13 +56,19 @@ def compare(
         err_console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(2)
 
+    try:
+        backend = get_backend(dialect)
+    except ValueError as e:
+        err_console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(2)
+
     with console.status("Parsing SQL scripts..."):
-        scripts_schema = parse_directory(scripts_dir)
+        scripts_schema = parse_directory(scripts_dir, dialect=backend.dialect)
 
     with console.status("Introspecting database..."):
-        db_schema = introspect_db(conninfo)
+        db_schema = backend.introspect(conninfo)
 
-    diffs = compute_diff(scripts_schema, db_schema, report_extra_db=report_extra_db)
+    diffs = compute_diff(scripts_schema, db_schema, report_extra_db=report_extra_db, dialect=backend.dialect)
 
     if not diffs:
         console.print("[green]No differences found.[/green]")
@@ -204,8 +211,10 @@ def testdb_status() -> None:
 
 @testdb_app.command("shell")
 def testdb_shell() -> None:
-    """Drop into psql against this workspace's database."""
-    os.execvp("psql", ["psql", testdb.dsn_for()])
+    """Drop into an interactive shell (psql, or sqlcmd for MSSQL) against
+    this workspace's database."""
+    binary, argv = testdb.shell_argv()
+    os.execvp(binary, argv)
 
 
 @testdb_app.command("clean")

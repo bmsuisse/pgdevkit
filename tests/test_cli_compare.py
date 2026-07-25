@@ -39,11 +39,11 @@ def test_compare_lakebase_host_with_flags_reaches_introspection(tmp_path: Path, 
 
     monkeypatch.setattr("pgdevkit.lakebase.get_lakebase_password", fake_get_lakebase_password)
 
-    def fake_introspect_db(conninfo):
+    def fake_introspect(self, conninfo):
         assert "LAKEBASE_TOKEN" in conninfo
         raise RuntimeError("stop after conninfo built — introspection itself isn't under test here")
 
-    monkeypatch.setattr("pgdevkit.cli.introspect_db", fake_introspect_db)
+    monkeypatch.setattr("pgdevkit.backends.postgres.PostgresBackend.introspect", fake_introspect)
 
     result = runner.invoke(
         app,

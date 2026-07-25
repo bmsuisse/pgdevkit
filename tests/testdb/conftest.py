@@ -22,7 +22,22 @@ requires_podman = pytest.mark.skipif(
     not _has_container_runtime(), reason="no Docker-compatible API reachable"
 )
 
+
+def _has_mssql_support() -> bool:
+    try:
+        import mssql_python  # noqa: F401
+    except ImportError:
+        return False
+    return _has_container_runtime()
+
+
+requires_mssql = pytest.mark.skipif(
+    not _has_mssql_support(),
+    reason="no Docker-compatible API reachable, or the mssql extra isn't installed",
+)
+
 FIXTURES = Path(__file__).parent / "fixtures" / "database"
+MSSQL_FIXTURES = Path(__file__).parent / "fixtures" / "database_mssql"
 
 # Appended to every test project's [tool.pgdevkit].name so that two pytest
 # processes (e.g. from separate git worktrees) running against the shared
@@ -31,12 +46,13 @@ FIXTURES = Path(__file__).parent / "fixtures" / "database"
 RUN_SUFFIX = f"pid{os.getpid()}"
 
 
-def _make_project(base: Path, name: str, branch: str) -> Path:
+def _make_project(base: Path, name: str, branch: str, engine: str = "postgres") -> Path:
     project = base / f"{name}-{branch}"
     project.mkdir()
-    (project / "database").symlink_to(FIXTURES)
+    (project / "database").symlink_to(MSSQL_FIXTURES if engine == "mssql" else FIXTURES)
+    engine_line = f'engine = "{engine}"\n' if engine != "postgres" else ""
     (project / "pyproject.toml").write_text(
-        f'[tool.pgdevkit]\nname = "{name}_{RUN_SUFFIX}"\nenv_prefix = "{name.upper()}_"\n',
+        f'[tool.pgdevkit]\nname = "{name}_{RUN_SUFFIX}"\nenv_prefix = "{name.upper()}_"\n{engine_line}',
         encoding="utf-8",
     )
     for cmd in (
@@ -53,8 +69,8 @@ def _make_project(base: Path, name: str, branch: str) -> Path:
 
 
 @pytest.fixture
-def project_factory(tmp_path: Path) -> Callable[[str, str], Path]:
-    def _factory(name: str, branch: str) -> Path:
-        return _make_project(tmp_path, name, branch)
+def project_factory(tmp_path: Path) -> Callable[..., Path]:
+    def _factory(name: str, branch: str, engine: str = "postgres") -> Path:
+        return _make_project(tmp_path, name, branch, engine)
 
     return _factory
