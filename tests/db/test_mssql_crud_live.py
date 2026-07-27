@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import mssql_python
@@ -64,6 +65,38 @@ def test_crud_round_trip(tmp_path: Path):
             deleted = await mssql_delete_dict(conn, ("app", "widget"), {"id": 2})
             assert deleted is not None and deleted["name"] == "cog2"
             assert await mssql_retrieve(conn, Widget, {"id": 2}) is None
+
+        try:
+            asyncio.run(_run())
+        finally:
+            conn.close()
+    finally:
+        clean_testdb(project)
+
+
+@requires_mssql
+def test_json_column_round_trip(tmp_path: Path):
+    # app.widget.tags is NVARCHAR(MAX) (see fixtures/database_mssql) --
+    # this is the main way the write-side JSON fix actually gets validated
+    # against a real driver+server: without db/mssql_sql.json_encode_value,
+    # mssql-python raises TypeError outright on a raw dict/list parameter
+    # (confirmed via source inspection, not just assumed), so this insert
+    # wouldn't merely round-trip wrong, it would crash.
+    project = _make_project(tmp_path, "mssqljsonlive", "main", engine="mssql")
+    try:
+        ensure_testdb(project)
+        conn = mssql_python.connect(status(project)["dsn"], autocommit=True)
+
+        async def _run() -> None:
+            inserted = await mssql_insert(
+                conn, ("app", "widget"), {"id": 5, "name": "tagged", "tags": ["red", "blue"]}
+            )
+            assert json.loads(inserted["tags"]) == ["red", "blue"]
+
+            upserted = await mssql_upsert_dict(
+                conn, ("app", "widget"), {"id": 5, "name": "tagged", "tags": {"a": 1}}, ["id"]
+            )
+            assert json.loads(upserted["tags"]) == {"a": 1}
 
         try:
             asyncio.run(_run())
