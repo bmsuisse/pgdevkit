@@ -16,6 +16,7 @@ from pgdevkit.db import (
     pg_retrieve,
     pg_retrieve_many,
     pg_update,
+    pg_update_dict,
     pg_upsert,
     pg_upsert_many,
     pg_upsert_many_dict,
@@ -60,6 +61,20 @@ class Gizmo(PostgresTableModel):
         return ["id"]
 
 
+class Gadget(PostgresTableModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    status: str
+
+    @staticmethod
+    def get_table_name() -> tuple[str, str]:
+        return ("public", "gadget")
+
+    @staticmethod
+    def get_primary_key() -> Sequence[str]:
+        return ["id"]
+
+
 @pytest.fixture
 async def pool(monkeypatch: pytest.MonkeyPatch):
     ensure_container()
@@ -70,6 +85,8 @@ async def pool(monkeypatch: pytest.MonkeyPatch):
         con.execute("CREATE TABLE widget (id serial PRIMARY KEY, name text NOT NULL)")
         con.execute("CREATE TYPE label_pair AS (en text, de text)")
         con.execute("CREATE TABLE gizmo (id serial PRIMARY KEY, label label_pair NOT NULL)")
+        con.execute("CREATE TYPE gadget_status AS ENUM ('active', 'inactive')")
+        con.execute("CREATE TABLE gadget (id serial PRIMARY KEY, status gadget_status NOT NULL)")
 
     monkeypatch.setenv(f"{ENV_PREFIX}HOST", constants.HOST)
     monkeypatch.setenv(f"{ENV_PREFIX}PORT", str(constants.PORT))
@@ -184,3 +201,70 @@ async def test_insert_retrieve_composite_column_with_normalizer(pool: PgPool):
         fetched = await pg_retrieve(con, Gizmo, {"id": gizmo_id}, complex_helper=helper)
         assert fetched is not None
         assert fetched.label == {"en": "Hello", "de": "[Hello]"}
+
+
+@requires_podman
+async def test_update_dict_without_complex_helper_still_works_on_plain_columns(pool: PgPool):
+    # complex_helper is a new optional kwarg -- omitting it (the pre-existing call
+    # shape) must behave exactly as before for tables with no composite/enum columns.
+    async with pool.connection() as con:
+        inserted = await pg_insert(con, ("public", "widget"), {"name": "sprocket"})
+        widget_id = inserted["id"]
+
+        await pg_update_dict(con, ("public", "widget"), {"id": widget_id, "name": "renamed"}, ["id"])
+
+        fetched = await pg_retrieve(con, Widget, {"id": widget_id})
+        assert fetched is not None
+        assert fetched.name == "renamed"
+
+
+@requires_podman
+async def test_update_dict_converts_enum_column_with_complex_helper(pool: PgPool):
+    # psycopg already binds a plain str to an enum-typed UPDATE target column
+    # fine on its own (Postgres resolves it via the usual assignment cast), so
+    # this isn't a failing-without/passing-with case the way composite columns
+    # are below -- it just confirms complex_helper doesn't break the enum path
+    # and round-trips correctly end to end.
+    async with pool.connection() as con:
+        helper = ComplexHelper(con)
+        inserted = await pg_insert(con, ("public", "gadget"), {"status": "active"}, complex_helper=helper)
+        gadget_id = inserted["id"]
+
+        await pg_update_dict(
+            con, ("public", "gadget"), {"id": gadget_id, "status": "inactive"}, ["id"], complex_helper=helper
+        )
+        fetched = await pg_retrieve(con, Gadget, {"id": gadget_id}, complex_helper=helper)
+        assert fetched is not None
+        assert fetched.status == "inactive"
+
+        # pg_update (typed-model variant) threads complex_helper through the same way.
+        fetched.status = "active"
+        await pg_update(con, fetched, Gadget, complex_helper=helper)
+        refetched = await pg_retrieve(con, Gadget, {"id": gadget_id}, complex_helper=helper)
+        assert refetched is not None
+        assert refetched.status == "active"
+
+
+@requires_podman
+async def test_update_dict_composite_column_requires_complex_helper(pool: PgPool):
+    # Unlike enums, psycopg has no built-in way to adapt a plain Python dict
+    # to a composite column type -- this is the real case pg_update_dict's
+    # complex_helper support fixes.
+    async with pool.connection() as con:
+        helper = ComplexHelper(con)
+        inserted = await pg_insert(con, ("public", "gizmo"), {"label": {"en": "Hello", "de": "Hallo"}}, complex_helper=helper)
+        gizmo_id = inserted["id"]
+
+        with pytest.raises(psycopg.ProgrammingError):
+            await pg_update_dict(con, ("public", "gizmo"), {"id": gizmo_id, "label": {"en": "Bye", "de": "Tschuess"}}, ["id"])
+
+        await pg_update_dict(
+            con,
+            ("public", "gizmo"),
+            {"id": gizmo_id, "label": {"en": "Bye", "de": "Tschuess"}},
+            ["id"],
+            complex_helper=helper,
+        )
+        fetched = await pg_retrieve(con, Gizmo, {"id": gizmo_id}, complex_helper=helper)
+        assert fetched is not None
+        assert fetched.label == {"en": "Bye", "de": "Tschuess"}

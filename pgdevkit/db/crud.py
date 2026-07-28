@@ -157,8 +157,15 @@ async def pg_update_dict(
     table_name: tuple[str, str],
     data: dict,
     primary_keys: Sequence[str],
+    *,
+    complex_helper: ComplexHelper | None = None,
 ) -> Any | None:
-    """Update a row identified by primary_keys. Returns the raw row tuple."""
+    """Update a row identified by primary_keys. Returns the raw row tuple.
+
+    Pass `complex_helper` when the table has composite/enum columns among the
+    values being set — omitted, this behaves exactly as before (plain values
+    passed straight through to psycopg)."""
+    data = await _convert_complex_values(con, table_name, data, complex_helper)
     set_parts = [
         SQL("{col} = {val}").format(col=Identifier(k), val=Placeholder(k)) for k in data if k not in primary_keys
     ]
@@ -173,9 +180,13 @@ async def pg_update_dict(
         return await cur.fetchone()
 
 
-async def pg_update(con: AsyncConnection, data: T, data_type: type[T]) -> Any | None:
+async def pg_update(
+    con: AsyncConnection, data: T, data_type: type[T], *, complex_helper: ComplexHelper | None = None
+) -> Any | None:
     """Update a typed model instance."""
-    return await pg_update_dict(con, data_type.get_table_name(), data.model_dump(), data_type.get_primary_key())
+    return await pg_update_dict(
+        con, data_type.get_table_name(), data.model_dump(), data_type.get_primary_key(), complex_helper=complex_helper
+    )
 
 
 async def pg_upsert_dict(
