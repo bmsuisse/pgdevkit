@@ -219,20 +219,12 @@ async def test_update_dict_without_complex_helper_still_works_on_plain_columns(p
 
 
 @requires_podman
-async def test_update_enum_column_requires_complex_helper(pool: PgPool):
-    # Without a ComplexHelper, a plain str targeting an enum column fails --
-    # psycopg has no registered adapter for the custom enum type, so Postgres
-    # rejects the untyped parameter against the enum-typed column.
-    async with pool.connection() as con:
-        inserted = await pg_insert(con, ("public", "gadget"), {"status": "active"}, complex_helper=ComplexHelper(con))
-        gadget_id = inserted["id"]
-
-        with pytest.raises(psycopg.errors.DatatypeMismatch):
-            await pg_update_dict(con, ("public", "gadget"), {"id": gadget_id, "status": "inactive"}, ["id"])
-
-
-@requires_podman
-async def test_update_dict_and_update_convert_enum_column_with_complex_helper(pool: PgPool):
+async def test_update_dict_converts_enum_column_with_complex_helper(pool: PgPool):
+    # psycopg already binds a plain str to an enum-typed UPDATE target column
+    # fine on its own (Postgres resolves it via the usual assignment cast), so
+    # this isn't a failing-without/passing-with case the way composite columns
+    # are below -- it just confirms complex_helper doesn't break the enum path
+    # and round-trips correctly end to end.
     async with pool.connection() as con:
         helper = ComplexHelper(con)
         inserted = await pg_insert(con, ("public", "gadget"), {"status": "active"}, complex_helper=helper)
@@ -251,3 +243,28 @@ async def test_update_dict_and_update_convert_enum_column_with_complex_helper(po
         refetched = await pg_retrieve(con, Gadget, {"id": gadget_id}, complex_helper=helper)
         assert refetched is not None
         assert refetched.status == "active"
+
+
+@requires_podman
+async def test_update_dict_composite_column_requires_complex_helper(pool: PgPool):
+    # Unlike enums, psycopg has no built-in way to adapt a plain Python dict
+    # to a composite column type -- this is the real case pg_update_dict's
+    # complex_helper support fixes.
+    async with pool.connection() as con:
+        helper = ComplexHelper(con)
+        inserted = await pg_insert(con, ("public", "gizmo"), {"label": {"en": "Hello", "de": "Hallo"}}, complex_helper=helper)
+        gizmo_id = inserted["id"]
+
+        with pytest.raises(psycopg.ProgrammingError):
+            await pg_update_dict(con, ("public", "gizmo"), {"id": gizmo_id, "label": {"en": "Bye", "de": "Tschuess"}}, ["id"])
+
+        await pg_update_dict(
+            con,
+            ("public", "gizmo"),
+            {"id": gizmo_id, "label": {"en": "Bye", "de": "Tschuess"}},
+            ["id"],
+            complex_helper=helper,
+        )
+        fetched = await pg_retrieve(con, Gizmo, {"id": gizmo_id}, complex_helper=helper)
+        assert fetched is not None
+        assert fetched.label == {"en": "Bye", "de": "Tschuess"}
