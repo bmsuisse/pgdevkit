@@ -8,7 +8,7 @@ CONTAINER_NAME = "pgdevkit-mssql"
 # emulated under Docker Desktop (slow, occasionally flaky startup). The
 # documented escape hatch is mcr.microsoft.com/azure-sql-edge (multi-arch,
 # missing a few full-SQL-Server features).
-IMAGE = os.environ.get("PGDEVKIT_TESTDB_MSSQL_IMAGE", "mcr.microsoft.com/mssql/server:2022-latest")
+IMAGE = os.environ.get("PGDEVKIT_TESTDB_MSSQL_IMAGE", "mcr.microsoft.com/mssql/server:2025-latest")
 HOST = os.environ.get("PGDEVKIT_TESTDB_MSSQL_HOST", "localhost")
 # Deliberately not SQL Server's native 1433 -- avoids colliding with a
 # locally-installed instance, mirroring how the Postgres container's own
