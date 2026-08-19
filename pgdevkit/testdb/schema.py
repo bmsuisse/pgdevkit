@@ -195,6 +195,25 @@ async def _insert_test_data(
         # Silently drop JSON keys that don't correspond to a real column —
         # e.g. a stale fixture left over from a since-renamed/removed column.
         col_names = [c for c in rows[0] if c in complex_types]
+        has_complex_col = any(complex_types.get(col) is not None for col in col_names)
+
+        await cur.execute(SQL("DELETE FROM {t}").format(t=Identifier(schema, table_name)))
+
+        if not has_complex_col:
+            # No composite/enum/JSONB column on this table -- every value is a
+            # plain scalar or a native Postgres array, so COPY can take the
+            # rows as-is. COPY sends the whole batch as one stream instead of
+            # a parse/bind/execute round trip per row, which matters a lot for
+            # fixtures with tens of thousands of rows.
+            copy_sql = SQL("COPY {t} ({cols}) FROM STDIN").format(
+                t=Identifier(schema, table_name),
+                cols=SQL(", ").join(Identifier(c) for c in col_names),
+            )
+            async with cur.copy(copy_sql) as copy:
+                for row in rows:
+                    await copy.write_row(tuple(row[c] for c in col_names))
+            return
+
         for row in rows:
             for col in col_names:
                 info = complex_types.get(col)
@@ -206,7 +225,6 @@ async def _insert_test_data(
                     # is left untouched.
                     row[col] = await complex_helper.recursive_convert(row[col], info, con)
 
-        await cur.execute(SQL("DELETE FROM {t}").format(t=Identifier(schema, table_name)))
         insert_sql = SQL("INSERT INTO {t} ({cols}) VALUES ({vals})").format(
             t=Identifier(schema, table_name),
             cols=SQL(", ").join(Identifier(c) for c in col_names),
