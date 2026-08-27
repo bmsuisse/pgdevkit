@@ -25,6 +25,7 @@ dependencies = [
 azure = ["azure-identity>=1.19.0"]
 cli = [
     "rich>=13.0.0",
+    "tqdm>=4.66.0",
     "typer>=0.26.7",
 ]
 db = [

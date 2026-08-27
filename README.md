@@ -125,6 +125,60 @@ bootstraps the `sa` login — additional logins are a known limitation.
 the same category as `psql` for the Postgres path) rather than a Python
 REPL.
 
+## `pgdb migrate`
+
+Applies numbered, forward-only SQL migration files from a directory to a live
+Postgres database, tracking each one in a `schema.table` (default
+`public.schema_migrations`) so repeat runs only apply what's pending. Postgres only —
+not available for `--dialect mssql`.
+
+```bash
+pgdb migrate check  path/to/database/_migration_scripts --url postgresql://user:pass@host:port/db
+pgdb migrate apply  path/to/database/_migration_scripts --url postgresql://user:pass@host:port/db
+```
+
+`--entra-user` works the same as `pgdb compare` (see above). The tracking
+table needs `filename text primary key, applied_at timestamptz not null
+default now(), applied_by text not null default current_user` (a migration
+file that creates it, in the same directory, is the usual way to bootstrap
+it — inserting into a not-yet-existing tracking table is tolerated so that
+migration can still run).
+
+The tracking table defaults to `public.schema_migrations`. Override it per-project in
+`pyproject.toml`:
+
+```toml
+[tool.pgdevkit]
+migrations_table = "myschema.migrations"
+```
+
+or per-invocation with `--tracking-table`, which takes precedence over the
+pyproject.toml value.
+
+`--ask` prints each pending file and asks yes/no/already-done/quit before
+running it. Answering yes queues the file on a background worker and moves
+straight to the next prompt — you can keep reviewing while earlier files are
+still executing, instead of waiting on each one before seeing the next. A
+`tqdm` progress bar tracks the queue; migrations still run one at a time, in
+file order. Without `--ask`, `apply` queues every pending file up front and
+shows the same progress bar. `--file <name>` applies a single file (still
+through the same verify-and-track path) instead of walking all pending ones.
+Pass `--yes` to skip the "about to run migrations against ..." confirmation
+prompt (e.g. in CI).
+
+After each file's DDL is applied, `apply` re-checks that every `CREATE TABLE`
+statement's target actually exists (via `to_regclass`) before recording the
+file as applied — catching a migration that silently rolled back. That check
+parses each statement with `sqlglot` and only falls back to a regex (run
+against comment-stripped SQL) for statements sqlglot's postgres dialect can't
+parse, so a `CREATE TABLE` mentioned only in a `--` comment is never mistaken
+for a real one.
+
+`pgdevkit.migrate` is also usable directly as a library — `list_migration_files`,
+`applied_migrations`, `pending_migrations`, and `apply_migration` are the same
+functions the CLI calls, so a project can script around them without shelling
+out.
+
 ## `pgdevkit.db` — helpers for application code
 
 Install with the `db` extra: `pip install pgdevkit[db]`.
