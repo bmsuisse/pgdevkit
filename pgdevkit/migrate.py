@@ -191,7 +191,7 @@ def _created_table_names(stmts: list[str]) -> list[str]:
         names.extend(
             m.group(1)
             for m in re.finditer(
-                r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\S+)", stripped, re.IGNORECASE
+                r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w."]+)', stripped, re.IGNORECASE
             )
         )
     return names
