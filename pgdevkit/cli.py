@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import queue
+import threading
 from pathlib import Path
 
 import psycopg
@@ -8,6 +10,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 from rich import box
+from tqdm import tqdm
 
 from . import migrate, testdb
 from .backends import get_backend
@@ -313,33 +316,93 @@ def migrate_apply(
         console.print("No pending migrations.")
         return
 
+    # A single background worker applies queued migrations in file order (each still waits
+    # for the previous one to land) while --ask keeps prompting for the *next* file, instead
+    # of the review blocking on every execution.
+    work_q: queue.Queue[tuple[Path, bool] | None] = queue.Queue()
+    failure: Exception | None = None
+    stop = threading.Event()
+    outcomes: list[tuple[str, str]] = []
+    bar = tqdm(total=len(targets), unit="migration", desc="Applying")
+
+    def worker() -> None:
+        nonlocal failure
+        for path, already_done in iter(work_q.get, None):
+            if not stop.is_set():
+                try:
+                    result = migrate.apply_migration(conninfo, path, tracking_table, already_done=already_done)
+                except Exception as e:  # noqa: BLE001
+                    failure = e
+                    stop.set()
+                    bar.write(f"FAILED {path.name}: {e}")
+                    outcomes.append((path.name, "failed"))
+                else:
+                    if result.executed:
+                        for tbl in result.verified_tables:
+                            bar.write(f"  table {tbl} exists")
+                        bar.write(f"Applied {path.name}")
+                        outcomes.append((path.name, "applied"))
+                    else:
+                        bar.write(f"Recorded {path.name} as already applied (not executed)")
+                        outcomes.append((path.name, "recorded"))
+            bar.update(1)
+            work_q.task_done()
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+
+    quit_requested = False
     for path in targets:
-        console.print(f"\n=== {path.name} ===")
+        if stop.is_set():
+            break
         already_done = False
         if ask:
-            console.print(path.read_text(encoding="utf-8"))
+            bar.write(f"\n=== {path.name} ===")
+            bar.write(path.read_text(encoding="utf-8"))
             answer = typer.prompt("[Y]es execute / [n]o skip / [a]lready done / [q]uit", default="y").strip().lower()
             if answer in ("q", "quit"):
-                console.print("Aborted.")
-                raise typer.Exit(1)
+                quit_requested = True
+                break
             if answer in ("n", "no"):
-                console.print(f"Skipped {path.name}")
+                bar.write(f"Skipped {path.name}")
+                outcomes.append((path.name, "skipped"))
+                bar.update(1)
                 continue
             if answer in ("a", "already", "already done"):
                 already_done = True
             elif answer not in ("", "y", "yes"):
-                console.print(f"Skipped {path.name}")
+                bar.write(f"Skipped {path.name}")
+                outcomes.append((path.name, "skipped"))
+                bar.update(1)
                 continue
 
-        try:
-            result = migrate.apply_migration(conninfo, path, tracking_table, already_done=already_done)
-        except migrate.MigrationVerificationError as e:
-            err_console.print(f"[red]✗[/red] {e}")
-            raise typer.Exit(1)
+        work_q.put((path, already_done))
 
-        if not result.executed:
-            console.print(f"[green]✓[/green] Recorded {path.name} as already applied (not executed)")
-            continue
-        for tbl in result.verified_tables:
-            console.print(f"  [green]✓[/green] table {tbl} exists")
-        console.print(f"[green]✓[/green] Applied {path.name}")
+    work_q.put(None)
+    thread.join()
+    bar.close()
+
+    processed = {name for name, _ in outcomes}
+    for path in targets:
+        if stop.is_set() and path.name not in processed:
+            outcomes.append((path.name, "not run (stopped after earlier failure)"))
+
+    table = Table(box=box.SIMPLE, show_header=True, header_style="bold")
+    table.add_column("File")
+    table.add_column("Result")
+    status_style = {
+        "applied": "[green]applied[/green]",
+        "recorded": "[green]recorded (already done)[/green]",
+        "skipped": "[yellow]skipped[/yellow]",
+        "failed": "[red]failed[/red]",
+    }
+    for name, status in outcomes:
+        table.add_row(name, status_style.get(status, status))
+    console.print(table)
+
+    if quit_requested:
+        console.print("Aborted.")
+        raise typer.Exit(1)
+    if failure is not None:
+        err_console.print(f"[red]✗[/red] {failure}")
+        raise typer.Exit(1)

@@ -156,11 +156,15 @@ or per-invocation with `--tracking-table`, which takes precedence over the
 pyproject.toml value.
 
 `--ask` prints each pending file and asks yes/no/already-done/quit before
-running it; without `--ask`, `apply` runs every pending file back to back.
-`--file <name>` applies a single file (still through the same
-verify-and-track path) instead of walking all pending ones. Pass `--yes` to
-skip the "about to run migrations against ..." confirmation prompt (e.g. in
-CI).
+running it. Answering yes queues the file on a background worker and moves
+straight to the next prompt — you can keep reviewing while earlier files are
+still executing, instead of waiting on each one before seeing the next. A
+`tqdm` progress bar tracks the queue; migrations still run one at a time, in
+file order. Without `--ask`, `apply` queues every pending file up front and
+shows the same progress bar. `--file <name>` applies a single file (still
+through the same verify-and-track path) instead of walking all pending ones.
+Pass `--yes` to skip the "about to run migrations against ..." confirmation
+prompt (e.g. in CI).
 
 After each file's DDL is applied, `apply` re-checks that every `CREATE TABLE`
 statement's target actually exists (via `to_regclass`) before recording the
