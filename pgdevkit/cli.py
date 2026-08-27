@@ -310,6 +310,9 @@ def migrate_apply(
         try:
             targets = migrate.pending_migrations(migrations_dir, conninfo, tracking_table)
         except migrate.TrackingTableMissing:
+            err_console.print(
+                f"[yellow]⚠[/yellow]  {tracking_table} not found — treating every migration as pending"
+            )
             targets = migrate.list_migration_files(migrations_dir)
 
     if not targets:
@@ -324,6 +327,17 @@ def migrate_apply(
     stop = threading.Event()
     outcomes: list[tuple[str, str]] = []
     bar = tqdm(total=len(targets), unit="migration", desc="Applying")
+    # tqdm isn't guaranteed thread-safe without an explicit lock, and both the worker
+    # thread and this (the main/--ask) thread call bar.update()/bar.write().
+    bar_lock = threading.Lock()
+
+    def bar_write(msg: str) -> None:
+        with bar_lock:
+            bar.write(msg)
+
+    def bar_step() -> None:
+        with bar_lock:
+            bar.update(1)
 
     def worker() -> None:
         nonlocal failure
@@ -334,18 +348,18 @@ def migrate_apply(
                 except Exception as e:  # noqa: BLE001
                     failure = e
                     stop.set()
-                    bar.write(f"FAILED {path.name}: {e}")
+                    bar_write(f"FAILED {path.name}: {e}")
                     outcomes.append((path.name, "failed"))
                 else:
                     if result.executed:
                         for tbl in result.verified_tables:
-                            bar.write(f"  table {tbl} exists")
-                        bar.write(f"Applied {path.name}")
+                            bar_write(f"  table {tbl} exists")
+                        bar_write(f"Applied {path.name}")
                         outcomes.append((path.name, "applied"))
                     else:
-                        bar.write(f"Recorded {path.name} as already applied (not executed)")
+                        bar_write(f"Recorded {path.name} as already applied (not executed)")
                         outcomes.append((path.name, "recorded"))
-            bar.update(1)
+            bar_step()
             work_q.task_done()
 
     thread = threading.Thread(target=worker, daemon=True)
@@ -357,23 +371,23 @@ def migrate_apply(
             break
         already_done = False
         if ask:
-            bar.write(f"\n=== {path.name} ===")
-            bar.write(path.read_text(encoding="utf-8"))
+            bar_write(f"\n=== {path.name} ===")
+            bar_write(path.read_text(encoding="utf-8"))
             answer = typer.prompt("[Y]es execute / [n]o skip / [a]lready done / [q]uit", default="y").strip().lower()
             if answer in ("q", "quit"):
                 quit_requested = True
                 break
             if answer in ("n", "no"):
-                bar.write(f"Skipped {path.name}")
+                bar_write(f"Skipped {path.name}")
                 outcomes.append((path.name, "skipped"))
-                bar.update(1)
+                bar_step()
                 continue
             if answer in ("a", "already", "already done"):
                 already_done = True
             elif answer not in ("", "y", "yes"):
-                bar.write(f"Skipped {path.name}")
+                bar_write(f"Skipped {path.name}")
                 outcomes.append((path.name, "skipped"))
-                bar.update(1)
+                bar_step()
                 continue
 
         work_q.put((path, already_done))
