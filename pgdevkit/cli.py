@@ -371,30 +371,34 @@ def migrate_apply(
             break
         already_done = False
         if ask:
-            # Hold the lock across the whole show-file+prompt step (not just each write) so the
-            # worker's bar_write() calls block until the question is answered instead of
-            # interleaving with the prompt or the migration text while the user is reading it.
-            with bar_lock:
-                bar.write(f"\n=== {path.name} ===")
-                bar.write(path.read_text(encoding="utf-8"))
-                answer = (
-                    typer.prompt("[Y]es execute / [n]o skip / [a]lready done / [q]uit", default="y")
-                    .strip()
-                    .lower()
-                )
-            if answer in ("q", "quit"):
-                quit_requested = True
-                break
-            if answer in ("n", "no"):
-                bar_write(f"Skipped {path.name}")
-                outcomes.append((path.name, "skipped"))
-                bar_step()
-                continue
-            if answer in ("a", "already", "already done"):
-                already_done = True
-            elif answer not in ("", "y", "yes"):
-                bar_write(f"Skipped {path.name}")
-                outcomes.append((path.name, "skipped"))
+            already_done = migrate.already_fully_applied(conninfo, path)
+            if already_done:
+                bar_write(f"Auto: {path.name} is already fully present in the database — marking as already done")
+            else:
+                # Hold the lock across the whole show-file+prompt step (not just each write) so
+                # the worker's bar_write() calls block until the question is answered instead
+                # of interleaving with the prompt or the migration text while it's being read.
+                with bar_lock:
+                    bar.write(f"\n=== {path.name} ===")
+                    bar.write(path.read_text(encoding="utf-8"))
+                    answer = (
+                        typer.prompt("[Y]es execute / [n]o skip / [a]lready done / [q]uit", default="y")
+                        .strip()
+                        .lower()
+                    )
+                if answer in ("q", "quit"):
+                    quit_requested = True
+                    break
+                if answer in ("n", "no"):
+                    bar_write(f"Skipped {path.name}")
+                    outcomes.append((path.name, "skipped"))
+                    bar_step()
+                    continue
+                if answer in ("a", "already", "already done"):
+                    already_done = True
+                elif answer not in ("", "y", "yes"):
+                    bar_write(f"Skipped {path.name}")
+                    outcomes.append((path.name, "skipped"))
                 bar_step()
                 continue
 

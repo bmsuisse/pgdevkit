@@ -197,6 +197,83 @@ def _created_table_names(stmts: list[str]) -> list[str]:
     return names
 
 
+_ADD_COLUMN_RE = re.compile(
+    rf"ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?([\w.\"]+)\s+ADD\s+COLUMN\s+"
+    rf"(?:IF\s+NOT\s+EXISTS\s+)?\"?({_IDENTIFIER})\"?",
+    re.IGNORECASE,
+)
+_CREATE_RELATION_RE = re.compile(
+    r"CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?([\w.\"]+)"
+    r"|CREATE\s+SEQUENCE\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w.\"]+)"
+    r"|CREATE\s+(?:MATERIALIZED\s+)?VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w.\"]+)",
+    re.IGNORECASE,
+)
+_CREATE_SCHEMA_RE = re.compile(r"CREATE\s+SCHEMA\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w\"]+)", re.IGNORECASE)
+
+
+def _idempotent_target(stmt: str) -> tuple[str, ...] | None:
+    """Classify a single statement as one of the create-if-missing DDL shapes this module
+    can check for "already applied" with no ambiguity: ("relation", name) for a table,
+    index, sequence or view; ("schema", name); or ("column", table, column) for an ADD
+    COLUMN. None if the statement isn't one of these shapes — including any CREATE OR
+    REPLACE, which is never safe to treat as a no-op just because the object exists, since
+    the migration could be replacing it with different content."""
+    stripped = _strip_line_comments(stmt).strip()
+    if re.search(r"\bOR\s+REPLACE\b", stripped, re.IGNORECASE):
+        return None
+
+    if re.match(r"CREATE\s+TABLE\b", stripped, re.IGNORECASE):
+        names = _created_table_names([stmt])
+        return ("relation", names[0]) if names else None
+
+    m = _CREATE_RELATION_RE.match(stripped)
+    if m:
+        name = next(g for g in m.groups() if g is not None)
+        return ("relation", name)
+
+    m = _CREATE_SCHEMA_RE.match(stripped)
+    if m:
+        return ("schema", m.group(1))
+
+    m = _ADD_COLUMN_RE.match(stripped)
+    if m:
+        return ("column", m.group(1), m.group(2))
+
+    return None
+
+
+def _target_exists(con: psycopg.Connection, target: tuple[str, ...]) -> bool:
+    kind = target[0]
+    if kind == "relation":
+        row = con.execute("select to_regclass(%s)", (target[1],)).fetchone()
+    elif kind == "schema":
+        row = con.execute("select to_regnamespace(%s)", (target[1],)).fetchone()
+    else:  # column
+        row = con.execute(
+            "select 1 from pg_attribute where attrelid = to_regclass(%s) "
+            "and attname = %s and not attisdropped",
+            (target[1], target[2]),
+        ).fetchone()
+    return bool(row and row[0])
+
+
+def already_fully_applied(conninfo: str, path: Path) -> bool:
+    """Whether every statement in this migration is a recognized create-if-missing shape
+    (table/index/sequence/view/schema, or add-column) AND its target already exists in the
+    database — i.e. re-running the migration would do nothing. Used by `--ask` to
+    auto-answer "already done" without prompting, so migrations that are trivially no-ops
+    don't interrupt review. A single unrecognized or not-yet-applied statement means
+    False — this never guesses."""
+    stmts = _split_sql(path.read_text(encoding="utf-8"))
+    if not stmts:
+        return False
+    targets = [_idempotent_target(s) for s in stmts]
+    if any(t is None for t in targets):
+        return False
+    with psycopg.connect(conninfo) as con:
+        return all(_target_exists(con, cast(tuple[str, ...], t)) for t in targets)
+
+
 def list_migration_files(migrations_dir: Path) -> list[Path]:
     return sorted(migrations_dir.glob("*.sql"))
 
