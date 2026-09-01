@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from pgdevkit.migrate import _created_table_names, _split_sql, _strip_line_comments, default_tracking_table
+from pgdevkit.migrate import (
+    _created_table_names,
+    _idempotent_target,
+    _split_sql,
+    _strip_line_comments,
+    default_tracking_table,
+)
 
 
 def test_created_table_names_ignores_create_table_mentioned_in_a_comment():
@@ -74,3 +80,55 @@ def test_default_tracking_table_searches_parent_directories(tmp_path):
 
 def test_default_tracking_table_falls_back_with_no_pyproject_at_all(tmp_path):
     assert default_tracking_table(tmp_path / "nonexistent") == "public.schema_migrations"
+
+
+def test_idempotent_target_recognizes_create_table_if_not_exists():
+    assert _idempotent_target("CREATE TABLE IF NOT EXISTS app.widgets (id int)") == ("relation", "app.widgets")
+
+
+def test_idempotent_target_recognizes_create_index():
+    assert _idempotent_target(
+        "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS widgets_name_idx ON app.widgets (name)"
+    ) == ("relation", "widgets_name_idx")
+
+
+def test_idempotent_target_recognizes_create_sequence():
+    assert _idempotent_target("CREATE SEQUENCE IF NOT EXISTS app.widgets_seq") == ("relation", "app.widgets_seq")
+
+
+def test_idempotent_target_recognizes_create_view():
+    assert _idempotent_target("CREATE VIEW IF NOT EXISTS app.widgets_v AS SELECT * FROM app.widgets") == (
+        "relation",
+        "app.widgets_v",
+    )
+
+
+def test_idempotent_target_recognizes_create_schema():
+    assert _idempotent_target("CREATE SCHEMA IF NOT EXISTS app") == ("schema", "app")
+
+
+def test_idempotent_target_recognizes_add_column():
+    assert _idempotent_target("ALTER TABLE app.widgets ADD COLUMN IF NOT EXISTS name text") == (
+        "column",
+        "app.widgets",
+        "name",
+    )
+
+
+def test_idempotent_target_recognizes_add_column_without_if_not_exists_guard():
+    assert _idempotent_target("ALTER TABLE app.widgets ADD COLUMN name text") == (
+        "column",
+        "app.widgets",
+        "name",
+    )
+
+
+def test_idempotent_target_ignores_create_or_replace():
+    # A view/function could be replaced with different content, so existence alone never
+    # means "already applied" for these.
+    assert _idempotent_target("CREATE OR REPLACE VIEW app.widgets_v AS SELECT 1") is None
+
+
+def test_idempotent_target_ignores_unrecognized_statements():
+    assert _idempotent_target("ALTER TABLE app.widgets DROP COLUMN name") is None
+    assert _idempotent_target("INSERT INTO app.widgets (id) VALUES (1)") is None
