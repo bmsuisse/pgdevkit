@@ -399,8 +399,8 @@ def migrate_apply(
                 elif answer not in ("", "y", "yes"):
                     bar_write(f"Skipped {path.name}")
                     outcomes.append((path.name, "skipped"))
-                bar_step()
-                continue
+                    bar_step()
+                    continue
 
         work_q.put((path, already_done))
 
