@@ -371,9 +371,17 @@ def migrate_apply(
             break
         already_done = False
         if ask:
-            bar_write(f"\n=== {path.name} ===")
-            bar_write(path.read_text(encoding="utf-8"))
-            answer = typer.prompt("[Y]es execute / [n]o skip / [a]lready done / [q]uit", default="y").strip().lower()
+            # Hold the lock across the whole show-file+prompt step (not just each write) so the
+            # worker's bar_write() calls block until the question is answered instead of
+            # interleaving with the prompt or the migration text while the user is reading it.
+            with bar_lock:
+                bar.write(f"\n=== {path.name} ===")
+                bar.write(path.read_text(encoding="utf-8"))
+                answer = (
+                    typer.prompt("[Y]es execute / [n]o skip / [a]lready done / [q]uit", default="y")
+                    .strip()
+                    .lower()
+                )
             if answer in ("q", "quit"):
                 quit_requested = True
                 break
