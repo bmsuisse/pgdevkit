@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import logging
 from pathlib import Path
@@ -39,12 +40,18 @@ _DO_COMPOSITE = re.compile(
 )
 
 
+def _iter_sql_files(scripts_dir: Path):
+    for root, dirs, files in os.walk(scripts_dir):
+        dirs[:] = [d for d in dirs if d not in IGNORED_DIR_NAMES]
+        for name in files:
+            if name.endswith(".sql"):
+                yield Path(root) / name
+
+
 def parse_directory(scripts_dir: Path, *, dialect: str | Dialect = "postgres") -> DatabaseSchema:
     resolved = resolve_dialect(dialect)
     db_schema = DatabaseSchema()
-    for sql_file in sorted(scripts_dir.rglob("*.sql")):
-        if IGNORED_DIR_NAMES.intersection(sql_file.relative_to(scripts_dir).parts[:-1]):
-            continue
+    for sql_file in sorted(_iter_sql_files(scripts_dir)):
         _parse_file(sql_file, db_schema, resolved)
     return db_schema
 
