@@ -15,6 +15,7 @@ from psycopg.sql import SQL, Identifier, Placeholder
 
 from ..db.complex_types import ComplexHelper
 from ..dialect import Dialect, POSTGRES
+from ..parser import IGNORED_DIR_NAMES
 
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlglot").setLevel(logging.ERROR)
@@ -121,7 +122,8 @@ def _get_sql_deps(sql: str, dialect: Dialect = POSTGRES) -> set[str]:
 def _iter_sql_files(database_dir: Path, dialect: Dialect = POSTGRES):
     """Yield (Path, sql_content) pairs in dependency-safe execution order."""
     files: list[Path] = []
-    for root, _, dbfiles in os.walk(database_dir):
+    for root, dirs, dbfiles in os.walk(database_dir):
+        dirs[:] = [d for d in dirs if d not in IGNORED_DIR_NAMES]
         if "_migration_scripts" in root or "migrations" in root:
             continue
         for file in dbfiles:
