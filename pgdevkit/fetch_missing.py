@@ -9,7 +9,7 @@ import psycopg
 
 from .diff import DiffKind, compute_diff
 from .introspect import introspect_db
-from .parser import parse_directory
+from .parser import IGNORED_DIR_NAMES, parse_directory
 
 _LAYER_PREFIX_RE = re.compile(r"^\d+_?")
 
@@ -41,7 +41,7 @@ def layer_folder_for(scripts_dir: Path, schema: str) -> Path:
     if no existing folder matches."""
     if scripts_dir.is_dir():
         for entry in scripts_dir.iterdir():
-            if not entry.is_dir() or entry.name in ("migrations", "_migration_scripts"):
+            if not entry.is_dir() or entry.name in ("migrations", "_migration_scripts") or entry.name in IGNORED_DIR_NAMES:
                 continue
             if _LAYER_PREFIX_RE.sub("", entry.name).lower() == schema.lower():
                 return entry

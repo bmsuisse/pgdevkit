@@ -15,6 +15,11 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
+# Tooling/scratch dirs that can end up inside a database/ tree (e.g. git
+# worktrees checked out under database/.worktree for isolated test DBs) but
+# never hold real schema content.
+IGNORED_DIR_NAMES = {".worktree", ".worktrees", ".claude", ".vscode", "node_modules"}
+
 # Regex to extract dollar-quoted body (Postgres-only construct)
 _DOLLAR_BODY = re.compile(r'\$(\w*)\$(.*?)\$\1\$', re.DOTALL | re.IGNORECASE)
 
@@ -35,6 +40,8 @@ def parse_directory(scripts_dir: Path, *, dialect: str | Dialect = "postgres") -
     resolved = resolve_dialect(dialect)
     db_schema = DatabaseSchema()
     for sql_file in sorted(scripts_dir.rglob("*.sql")):
+        if IGNORED_DIR_NAMES.intersection(sql_file.relative_to(scripts_dir).parts[:-1]):
+            continue
         _parse_file(sql_file, db_schema, resolved)
     return db_schema
 
