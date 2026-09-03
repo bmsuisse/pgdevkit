@@ -18,7 +18,10 @@ logger = logging.getLogger(__name__)
 # Tooling/scratch dirs that can end up inside a database/ tree (e.g. git
 # worktrees checked out under database/.worktree for isolated test DBs) but
 # never hold real schema content.
-IGNORED_DIR_NAMES = {".worktree", ".worktrees", ".claude", ".vscode", "node_modules"}
+IGNORED_DIR_NAMES = {
+    ".worktree", ".worktrees", ".claude", ".vscode", "node_modules",
+    "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+}
 
 # Regex to extract dollar-quoted body (Postgres-only construct)
 _DOLLAR_BODY = re.compile(r'\$(\w*)\$(.*?)\$\1\$', re.DOTALL | re.IGNORECASE)
