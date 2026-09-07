@@ -13,9 +13,11 @@ import sqlglot.expressions as exp
 from psycopg.rows import dict_row
 from psycopg.sql import SQL, Identifier, Placeholder
 
+from ..areas import area_allowed, parse_areas
 from ..db.complex_types import ComplexHelper
 from ..dialect import Dialect, POSTGRES
 from ..parser import IGNORED_DIR_NAMES
+from ..schemas import schema_allowed, sql_schemas
 
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlglot").setLevel(logging.ERROR)
@@ -119,8 +121,21 @@ def _get_sql_deps(sql: str, dialect: Dialect = POSTGRES) -> set[str]:
     return deps
 
 
-def _iter_sql_files(database_dir: Path, dialect: Dialect = POSTGRES):
-    """Yield (Path, sql_content) pairs in dependency-safe execution order."""
+def _iter_sql_files(
+    database_dir: Path,
+    dialect: Dialect = POSTGRES,
+    *,
+    areas: frozenset[str] | None = None,
+    exclude_areas: frozenset[str] | None = None,
+    schemas: frozenset[str] | None = None,
+    exclude_schemas: frozenset[str] | None = None,
+):
+    """Yield (Path, sql_content) pairs in dependency-safe execution order.
+
+    A file dropped by the area/schema filter is skipped entirely -- as if it
+    didn't exist -- so it never delivers a dependency another (in-scope)
+    file waits on; that's the same tradeoff `list_migration_files`/
+    `parse_directory` make for migrations/database code files."""
     files: list[Path] = []
     for root, dirs, dbfiles in os.walk(database_dir):
         dirs[:] = [d for d in dirs if d not in IGNORED_DIR_NAMES]
@@ -138,6 +153,12 @@ def _iter_sql_files(database_dir: Path, dialect: Dialect = POSTGRES):
 
     for file in sorted(files, key=lambda p: (_get_type_order(p), p.name)):
         content = file.read_text(encoding="utf-8")
+        if (areas or exclude_areas) and not area_allowed(parse_areas(content), only=areas, exclude=exclude_areas):
+            continue
+        if (schemas or exclude_schemas) and not schema_allowed(
+            sql_schemas(content, dialect), only=schemas, exclude=exclude_schemas
+        ):
+            continue
         deps = _get_sql_deps(content, dialect)
         if file.parent.name in _SCHEMA_QUALIFIED_TYPES:
             schema = _strip_layer_prefix(file.parent.parent.name)
@@ -242,6 +263,10 @@ async def apply_schema(
     force_reset: bool = False,
     *,
     dialect: Dialect = POSTGRES,
+    areas: frozenset[str] | None = None,
+    exclude_areas: frozenset[str] | None = None,
+    schemas: frozenset[str] | None = None,
+    exclude_schemas: frozenset[str] | None = None,
 ) -> None:
     """Apply every .sql file under database_dir (in dependency-safe order)
     and seed any matching .test_data.json files. Safe to call repeatedly.
@@ -249,7 +274,12 @@ async def apply_schema(
     `migrations/` subdirectories are never applied here — they're for
     one-time manual application against real (already-provisioned)
     databases, not for building a fresh schema. The base object files under
-    `database_dir` must reflect the current, final schema on their own."""
+    `database_dir` must reflect the current, final schema on their own.
+
+    `areas`/`exclude_areas` and `schemas`/`exclude_schemas` restrict which
+    files get applied, the same as `pgdevkit migrate`/`compare` — handy for
+    standing up a test DB scoped to one area or schema instead of the whole
+    project."""
     await con.set_autocommit(True)
     for extension in extensions:
         await con.execute(SQL("CREATE EXTENSION IF NOT EXISTS {e}").format(e=Identifier(extension)))
@@ -265,7 +295,14 @@ async def apply_schema(
             await _insert_test_data(json_file, f"{schema_name}.{table_stem}", force_reset, con, complex_helper)
 
     failures: list[tuple[Path, str]] = []
-    for file, sql in _iter_sql_files(database_dir, dialect):
+    for file, sql in _iter_sql_files(
+        database_dir,
+        dialect,
+        areas=areas,
+        exclude_areas=exclude_areas,
+        schemas=schemas,
+        exclude_schemas=exclude_schemas,
+    ):
         try:
             await _apply(file, sql)
         except Exception as e:  # noqa: BLE001

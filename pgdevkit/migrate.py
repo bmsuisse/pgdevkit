@@ -19,6 +19,7 @@ from psycopg import errors as pg_errors
 from psycopg import sql as pg_sql
 
 from .areas import filter_by_area
+from .schemas import filter_by_schema
 
 _IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_]*"
 _DEFAULT_TRACKING_TABLE = "public.schema_migrations"
@@ -281,9 +282,12 @@ def list_migration_files(
     *,
     areas: frozenset[str] | None = None,
     exclude_areas: frozenset[str] | None = None,
+    schemas: frozenset[str] | None = None,
+    exclude_schemas: frozenset[str] | None = None,
 ) -> list[Path]:
     files = sorted(migrations_dir.glob("*.sql"))
-    return filter_by_area(files, only=areas, exclude=exclude_areas)
+    files = filter_by_area(files, only=areas, exclude=exclude_areas)
+    return filter_by_schema(files, only=schemas, exclude=exclude_schemas)
 
 
 def applied_migrations(conninfo: str, tracking_table: str) -> dict[str, tuple[datetime, str]]:
@@ -306,9 +310,13 @@ def pending_migrations(
     *,
     areas: frozenset[str] | None = None,
     exclude_areas: frozenset[str] | None = None,
+    schemas: frozenset[str] | None = None,
+    exclude_schemas: frozenset[str] | None = None,
 ) -> list[Path]:
     applied = applied_migrations(conninfo, tracking_table)
-    files = list_migration_files(migrations_dir, areas=areas, exclude_areas=exclude_areas)
+    files = list_migration_files(
+        migrations_dir, areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas
+    )
     return [p for p in files if p.name not in applied]
 
 
