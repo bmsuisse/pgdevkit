@@ -65,6 +65,12 @@ def compare(
     if not scripts_dir.is_dir():
         err_console.print(f"[red]Error:[/red] {scripts_dir} is not a directory")
         raise typer.Exit(2)
+    if report_extra_db and (area or exclude_area):
+        console.print(
+            "[yellow]⚠[/yellow]  --report-extra-db with --area/--exclude-area will report every DB object "
+            "outside the filtered area(s) as \"missing in scripts\", since the live database has no concept "
+            "of areas — only the scripts side is filtered."
+        )
 
     try:
         conninfo = build_conninfo(
@@ -123,11 +129,13 @@ def fetch_missing(
     entra_user: str | None = typer.Option(None, "--entra-user", help="Azure Entra user (triggers token auth)"),
     write: bool = typer.Option(False, "--write", help="Write the reconstructed .sql files (default: dry run)"),
     only: list[str] = typer.Option([], "--only", help="Only fetch schema.name (repeatable); default is everything"),
-    area: list[str] = _AREA_OPTION,
-    exclude_area: list[str] = _EXCLUDE_AREA_OPTION,
 ) -> None:
     """Find tables/views/functions that exist in the database but aren't
-    tracked under scripts_dir, and reverse-engineer their DDL into new files."""
+    tracked under scripts_dir, and reverse-engineer their DDL into new files.
+
+    No --area/--exclude-area here (unlike compare/migrate): this diffs the
+    full live database against scripts, so filtering the scripts side by
+    area would misreport objects tracked under other areas as missing."""
     if not scripts_dir.is_dir():
         err_console.print(f"[red]Error:[/red] {scripts_dir} is not a directory")
         raise typer.Exit(2)
@@ -135,9 +143,7 @@ def fetch_missing(
     conninfo = build_conninfo(url, entra_user)
 
     with console.status("Comparing database/ against the live schema..."):
-        missing = find_missing_objects(
-            scripts_dir, conninfo, areas=_as_area_set(area), exclude_areas=_as_area_set(exclude_area)
-        )
+        missing = find_missing_objects(scripts_dir, conninfo)
 
     if only:
         wanted = set(only)

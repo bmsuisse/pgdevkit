@@ -76,8 +76,7 @@ first real statement); a `-- area:` comment later in the file doesn't count.
 A file with no directive is untagged, and untagged files are treated as
 shared/common.
 
-`pgdb compare`, `pgdb fetch-missing`, `pgdb migrate check`, and
-`pgdb migrate apply` all accept:
+`pgdb compare`, `pgdb migrate check`, and `pgdb migrate apply` all accept:
 
 - `--area NAME` (repeatable) — restrict to files declaring one of the given
   areas, **plus every untagged file** (untagged files always stay in scope).
@@ -93,12 +92,27 @@ pgdb migrate apply path/to/database/_migration_scripts --url ... --area billing
 pgdb compare path/to/database/ --url ... --exclude-area reporting
 ```
 
+`compare`'s default report (no `--report-extra-db`) only checks that the
+filtered scripts exist correctly in the DB, so it composes safely with area
+filtering. Passing `--report-extra-db` together with an area filter also
+reports every DB object outside the filtered area(s) as "missing in
+scripts" — since the live database has no concept of areas, only the
+scripts side is filtered — so treat that combination's "missing in scripts"
+results with that in mind (the CLI prints a warning when you combine them).
+
+`pgdb fetch-missing` deliberately has **no** `--area`/`--exclude-area`: it
+diffs the full database against scripts to find genuinely untracked
+objects, so narrowing the scripts side by area would make every object
+tracked only under a different area look "missing" too — and `--write`
+would then reconstruct a duplicate file for something that already exists.
+
 `pgdevkit.areas` exposes the same logic for scripting:
 `parse_areas`/`file_areas` read a file's declared areas, and
 `area_allowed`/`filter_by_area` apply the `only`/`exclude` semantics above.
-`pgdevkit.migrate.list_migration_files`/`pending_migrations`,
-`pgdevkit.parser.parse_directory`, and `pgdevkit.fetch_missing.find_missing_objects`
-all take the same `areas`/`exclude_areas` keyword arguments.
+`pgdevkit.migrate.list_migration_files`/`pending_migrations` and
+`pgdevkit.parser.parse_directory` take the same `areas`/`exclude_areas`
+keyword arguments (`pgdevkit.fetch_missing.find_missing_objects` doesn't,
+for the reason above).
 
 ## `pgdb testdb`
 

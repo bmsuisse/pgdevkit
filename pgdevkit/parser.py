@@ -8,7 +8,7 @@ from pathlib import Path
 import sqlglot
 import sqlglot.expressions as exp
 
-from .areas import filter_by_area
+from .areas import area_allowed, parse_areas
 from .dialect import Dialect, POSTGRES, resolve_dialect
 from .models import (
     ColumnDef, ConstraintDef, CompositeTypeDef, DatabaseSchema,
@@ -58,14 +58,21 @@ def parse_directory(
 ) -> DatabaseSchema:
     resolved = resolve_dialect(dialect)
     db_schema = DatabaseSchema()
-    files = filter_by_area(sorted(_iter_sql_files(scripts_dir)), only=areas, exclude=exclude_areas)
-    for sql_file in files:
-        _parse_file(sql_file, db_schema, resolved)
+    for sql_file in sorted(_iter_sql_files(scripts_dir)):
+        # Read once and reuse for both the area check and parsing, rather than
+        # filtering the file list up front (which would need its own read).
+        content = sql_file.read_text(encoding="utf-8")
+        if (areas or exclude_areas) and not area_allowed(parse_areas(content), only=areas, exclude=exclude_areas):
+            continue
+        _parse_file(sql_file, db_schema, resolved, content=content)
     return db_schema
 
 
-def _parse_file(path: Path, db_schema: DatabaseSchema, dialect: Dialect = POSTGRES) -> None:
-    content = path.read_text(encoding="utf-8")
+def _parse_file(
+    path: Path, db_schema: DatabaseSchema, dialect: Dialect = POSTGRES, content: str | None = None
+) -> None:
+    if content is None:
+        content = path.read_text(encoding="utf-8")
     try:
         exprs = sqlglot.parse(content, dialect=dialect.sqlglot_name, error_level=sqlglot.ErrorLevel.WARN)
     except Exception as e:
