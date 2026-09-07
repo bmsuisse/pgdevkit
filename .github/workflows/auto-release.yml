@@ -1,0 +1,56 @@
+# Auto-tags and cuts a GitHub Release whenever pyproject.toml's version changes
+# on main and the Python Test workflow has passed for that commit. Publishing
+# a Release (types: [published]) is exactly what python-publish.yml already
+# listens for, so this is the only piece needed to make merging to main (with
+# a version bump) publish to PyPI, with no separate manual release step.
+
+name: Auto Release
+
+on:
+  workflow_run:
+    workflows: ["Python Test"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Read version from pyproject.toml
+        id: version
+        run: |
+          version=$(grep -m1 '^version = ' pyproject.toml | sed -E 's/version = "([^"]+)"/\1/')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if this version was already released
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create tag and GitHub release
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${{ steps.version.outputs.version }}" \
+            --title "v${{ steps.version.outputs.version }}" \
+            --target "${{ github.event.workflow_run.head_sha }}" \
+            --generate-notes

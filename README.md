@@ -294,3 +294,18 @@ async with pool.connection() as con:
     widget = await pg_retrieve(con, Widget, {"id": 1})
     await pg_upsert(con, Widget(id=1, name="thing"), Widget)
 ```
+
+## Releasing
+
+Bump `version` in `pyproject.toml` as part of your PR, same as any other
+change. Once that PR merges to `main` and the `Python Test` workflow passes
+for that commit, `.github/workflows/auto-release.yml` automatically tags it
+`vX.Y.Z` and cuts a GitHub Release (skipping if that version was already
+released, e.g. a merge that didn't touch the version) — no manual release
+step needed. Publishing a Release is what `.github/workflows/python-publish.yml`
+already listens for, so the new release then builds and publishes to PyPI
+via trusted (OIDC) publishing automatically.
+
+`workflow_dispatch` on `python-publish.yml` still works as a manual
+fallback if you ever need to re-publish a version without going through a
+fresh tag/release.
