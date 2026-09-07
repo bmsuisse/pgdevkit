@@ -300,21 +300,17 @@ async with pool.connection() as con:
 Bump `version` in `pyproject.toml` as part of your PR, same as any other
 change. Once that PR merges to `main` and the `Python Test` workflow passes
 for that commit, `.github/workflows/auto-release.yml` automatically tags it
-`vX.Y.Z` and cuts a GitHub Release (skipping if that version was already
-released, e.g. a merge that didn't touch the version) — no manual release
-step needed. Publishing a Release is what `.github/workflows/python-publish.yml`
-already listens for, so the new release then builds and publishes to PyPI
-via trusted (OIDC) publishing automatically.
+`vX.Y.Z`, cuts a GitHub Release (skipping if that version was already
+released, e.g. a merge that didn't touch the version), and publishes to
+PyPI via trusted (OIDC) publishing — no manual release step, and no extra
+secret to configure. It calls `python-publish.yml`'s `deploy` job directly
+(`workflow_call`) rather than relying on the release it just created to
+trigger that workflow on its own — GitHub Actions doesn't fire other
+workflows' triggers for events performed with the automatic `GITHUB_TOKEN`,
+so a manually-created-via-Action release wouldn't otherwise cascade into a
+publish; calling the job directly sidesteps that instead of working around
+it with a PAT.
 
-`workflow_dispatch` on `python-publish.yml` still works as a manual
-fallback if you ever need to re-publish a version without going through a
-fresh tag/release.
-
-**One-time setup:** `auto-release.yml` needs a `RELEASE_TOKEN` repository
-secret — a PAT (classic, `repo` scope, or fine-grained with this repo's
-Contents: Read and write) belonging to someone with write access. This is
-required because GitHub Actions doesn't fire other workflows' triggers
-(`release: published` included) for a release created with the automatic
-`GITHUB_TOKEN`, to prevent recursive runs — a release created with a PAT is
-attributed to a real actor instead, so it triggers `python-publish.yml`
-normally. Add it under Settings → Secrets and variables → Actions.
+`workflow_dispatch` (or an actual GitHub UI release) on `python-publish.yml`
+still works as a manual fallback if you ever need to re-publish a version
+without going through `auto-release.yml`.
