@@ -15,7 +15,7 @@ from psycopg.sql import SQL, Identifier, Placeholder
 
 from ..areas import area_allowed, parse_areas
 from ..db.complex_types import ComplexHelper
-from ..dialect import Dialect, POSTGRES
+from ..dialect import Dialect, POSTGRES, SYSTEM_SCHEMAS
 from ..parser import IGNORED_DIR_NAMES
 from ..schemas import schema_allowed, sql_schemas
 
@@ -67,16 +67,14 @@ _SCHEMA_QUALIFIED_TYPES = {
 }
 
 
-# Schemas that hold system catalog views/tables, never a file this project
-# manages -- a reference to one is never a real cross-file dependency to
-# wait for. Matters most for T-SQL, where "IF NOT EXISTS (SELECT ... FROM
-# sys.schemas/sys.tables/sys.objects ...) BEGIN CREATE ... END" is the
-# idiomatic idempotency-guard pattern (T-SQL has no native "CREATE TABLE IF
-# NOT EXISTS"/"CREATE SCHEMA IF NOT EXISTS"), so without this exclusion
-# nearly every T-SQL file would pick up a spurious, never-resolvable
-# dependency on "sys.*" and get shuffled into the delayed-retry path, whose
-# reverse-order resolution can then apply files out of their intended order.
-_SYSTEM_SCHEMAS = {"pg_catalog", "information_schema", "sys"}
+# SYSTEM_SCHEMAS (see dialect.py) matters most here for T-SQL, where
+# "IF NOT EXISTS (SELECT ... FROM sys.schemas/sys.tables/sys.objects ...)
+# BEGIN CREATE ... END" is the idiomatic idempotency-guard pattern (T-SQL has
+# no native "CREATE TABLE IF NOT EXISTS"/"CREATE SCHEMA IF NOT EXISTS"), so
+# without this exclusion nearly every T-SQL file would pick up a spurious,
+# never-resolvable dependency on "sys.*" and get shuffled into the
+# delayed-retry path, whose reverse-order resolution can then apply files
+# out of their intended order.
 
 _DECLARE_RE = re.compile(
     r"CREATE\s+(?:OR\s+REPLACE\s+)?(?:TABLE|VIEW|FUNCTION|PROCEDURE|TYPE|SCHEMA)\s+(\w+\.\w+)", re.IGNORECASE
@@ -91,7 +89,7 @@ def _get_sql_deps_regex_fallback(sql: str) -> set[str]:
     is fine."""
     declares = set(_DECLARE_RE.findall(sql))
     deps = set(_DEPEND_RE.findall(sql))
-    deps = {d for d in deps if d.split(".", 1)[0].lower() not in _SYSTEM_SCHEMAS}
+    deps = {d for d in deps if d.split(".", 1)[0].lower() not in SYSTEM_SCHEMAS}
     return deps - declares
 
 
@@ -111,7 +109,7 @@ def _get_sql_deps(sql: str, dialect: Dialect = POSTGRES) -> set[str]:
         for t in e.find_all(exp.Table):
             db_node = t.args.get("db")
             if t.args.get("this") is not None and db_node is not None:
-                if db_node.name.lower() in _SYSTEM_SCHEMAS:
+                if db_node.name.lower() in SYSTEM_SCHEMAS:
                     continue
                 # exp.table_name(), not str(t): str() includes " AS alias" for
                 # an aliased reference (e.g. "FROM editing.visit v"), which

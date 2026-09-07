@@ -23,12 +23,7 @@ from pathlib import Path
 import sqlglot
 import sqlglot.expressions as exp
 
-from .dialect import Dialect, POSTGRES
-
-# Schemas that hold system catalog views/tables, never a file this project
-# manages -- a reference to one (e.g. an idempotency guard querying
-# information_schema/pg_catalog/sys) is never a real schema membership signal.
-_SYSTEM_SCHEMAS = {"pg_catalog", "information_schema", "sys"}
+from .dialect import Dialect, POSTGRES, SYSTEM_SCHEMAS
 
 _CREATE_SCHEMA_RE = re.compile(
     r"CREATE\s+SCHEMA\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:AUTHORIZATION\s+)?\"?(\w+)\"?", re.IGNORECASE
@@ -44,7 +39,7 @@ def _regex_fallback(sql: str) -> frozenset[str]:
     from an `only` filter."""
     schemas = set(_CREATE_SCHEMA_RE.findall(sql))
     schemas.update(m.group(1) for m in _QUALIFIED_REF_RE.finditer(sql))
-    return frozenset(s for s in schemas if s.lower() not in _SYSTEM_SCHEMAS)
+    return frozenset(s for s in schemas if s.lower() not in SYSTEM_SCHEMAS)
 
 
 def sql_schemas(content: str, dialect: Dialect = POSTGRES) -> frozenset[str]:
@@ -66,12 +61,15 @@ def sql_schemas(content: str, dialect: Dialect = POSTGRES) -> frozenset[str]:
             # whose "name" is the whole literal string, not a real
             # identifier -- e.g. a quoted "CREATE SCHEMA app". Guard against
             # treating that as a schema-qualified (or default-schema) table
-            # reference by requiring the name to actually look like one.
-            if not re.fullmatch(r"\w+", t.name or ""):
+            # reference by requiring a *non-empty* name to actually look like
+            # one -- but still accept an empty name, which is the legitimate
+            # shape sqlglot gives a bare `CREATE SCHEMA x` (whose schema
+            # name ends up in `db`, not `this`).
+            if t.name and not re.fullmatch(r"\w+", t.name):
                 continue
             db_node = t.args.get("db")
             name = db_node.name if db_node else dialect.default_schema
-            if name.lower() not in _SYSTEM_SCHEMAS:
+            if name.lower() not in SYSTEM_SCHEMAS:
                 schemas.add(name)
 
     if not schemas:

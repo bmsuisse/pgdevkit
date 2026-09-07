@@ -43,6 +43,16 @@ _MSSQL_TYPE_SYNONYMS = {
 }
 
 
+# Schemas that hold system catalog views/tables, never a file any project
+# using pgdevkit manages -- a reference to one (e.g. an idempotency guard
+# querying it, or a `SELECT ... FROM information_schema/pg_catalog/sys ...`)
+# is never a real schema-membership or cross-file-dependency signal. Shared
+# by `schemas.py` (schema-reference filtering) and `testdb/schema.py`
+# (dependency-safe apply ordering), which both walk the same sqlglot Table
+# nodes for a related-but-different purpose.
+SYSTEM_SCHEMAS = {"pg_catalog", "information_schema", "sys"}
+
+
 @dataclass(frozen=True)
 class Dialect:
     """A thin wrapper around a sqlglot dialect name plus the handful of

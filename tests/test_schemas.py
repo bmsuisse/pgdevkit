@@ -54,6 +54,14 @@ class TestSqlSchemas:
         sql = "IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'app') BEGIN EXEC('CREATE SCHEMA app'); END"
         assert sql_schemas(sql, MSSQL) == frozenset({"app"})
 
+    def test_create_schema_alongside_another_real_table_reference(self):
+        # Regression test: a bare `CREATE SCHEMA x` parses to a Table node
+        # with an empty name (its schema name lives in `db`, not `this`) --
+        # the guard against sqlglot's EXEC(...) literal misparse (which has
+        # a *non-empty*, sentence-shaped name) must not also reject this.
+        sql = "CREATE SCHEMA analytics;\nSELECT 1 FROM public.tenants;\n"
+        assert sql_schemas(sql) == frozenset({"analytics", "public"})
+
     def test_unparseable_content_falls_back_to_regex(self):
         # Deliberately malformed SQL that still contains a schema-qualified
         # reference sqlglot can't make sense of as a whole statement.
