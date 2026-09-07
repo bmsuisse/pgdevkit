@@ -23,6 +23,17 @@ app = typer.Typer(name="pgdb", help="PostgreSQL database schema tools")
 console = Console()
 err_console = Console(stderr=True)
 
+_AREA_OPTION = typer.Option(
+    [], "--area", help="Restrict to files declaring this area (repeatable); untagged files always stay in scope"
+)
+_EXCLUDE_AREA_OPTION = typer.Option(
+    [], "--exclude-area", help="Skip files declaring this area (repeatable); untagged files are never excluded"
+)
+
+
+def _as_area_set(values: list[str]) -> frozenset[str] | None:
+    return frozenset(values) if values else None
+
 testdb_app = typer.Typer(name="testdb", help="Manage the shared local Postgres test container")
 app.add_typer(testdb_app, name="testdb")
 
@@ -46,12 +57,20 @@ def compare(
     ),
     report_extra_db: bool = typer.Option(False, "--report-extra-db", help="Report objects in DB but not in scripts"),
     dialect: str = typer.Option("postgres", "--dialect", help="postgres (default) or mssql"),
+    area: list[str] = _AREA_OPTION,
+    exclude_area: list[str] = _EXCLUDE_AREA_OPTION,
     scripts_dir: Path = typer.Argument(..., help="Directory containing SQL scripts"),
 ) -> None:
     """Compare SQL scripts to a live database and report differences."""
     if not scripts_dir.is_dir():
         err_console.print(f"[red]Error:[/red] {scripts_dir} is not a directory")
         raise typer.Exit(2)
+    if report_extra_db and (area or exclude_area):
+        console.print(
+            "[yellow]⚠[/yellow]  --report-extra-db with --area/--exclude-area will report every DB object "
+            "outside the filtered area(s) as \"missing in scripts\", since the live database has no concept "
+            "of areas — only the scripts side is filtered."
+        )
 
     try:
         conninfo = build_conninfo(
@@ -71,7 +90,9 @@ def compare(
         raise typer.Exit(2)
 
     with console.status("Parsing SQL scripts..."):
-        scripts_schema = parse_directory(scripts_dir, dialect=backend.dialect)
+        scripts_schema = parse_directory(
+            scripts_dir, dialect=backend.dialect, areas=_as_area_set(area), exclude_areas=_as_area_set(exclude_area)
+        )
 
     with console.status("Introspecting database..."):
         db_schema = backend.introspect(conninfo)
@@ -110,7 +131,11 @@ def fetch_missing(
     only: list[str] = typer.Option([], "--only", help="Only fetch schema.name (repeatable); default is everything"),
 ) -> None:
     """Find tables/views/functions that exist in the database but aren't
-    tracked under scripts_dir, and reverse-engineer their DDL into new files."""
+    tracked under scripts_dir, and reverse-engineer their DDL into new files.
+
+    No --area/--exclude-area here (unlike compare/migrate): this diffs the
+    full live database against scripts, so filtering the scripts side by
+    area would misreport objects tracked under other areas as missing."""
     if not scripts_dir.is_dir():
         err_console.print(f"[red]Error:[/red] {scripts_dir} is not a directory")
         raise typer.Exit(2)
@@ -245,6 +270,8 @@ def migrate_check(
         help="schema.table recording applied migrations "
         "(default: tool.pgdevkit.migrations_table in pyproject.toml, else public.schema_migrations)",
     ),
+    area: list[str] = _AREA_OPTION,
+    exclude_area: list[str] = _EXCLUDE_AREA_OPTION,
 ) -> None:
     """List which migration files under migrations_dir are applied vs. pending."""
     if not migrations_dir.is_dir():
@@ -253,7 +280,9 @@ def migrate_check(
 
     conninfo = build_conninfo(url, entra_user)
     tracking_table = tracking_table or migrate.default_tracking_table(migrations_dir)
-    local_files = migrate.list_migration_files(migrations_dir)
+    local_files = migrate.list_migration_files(
+        migrations_dir, areas=_as_area_set(area), exclude_areas=_as_area_set(exclude_area)
+    )
     try:
         applied = migrate.applied_migrations(conninfo, tracking_table)
     except migrate.TrackingTableMissing:
@@ -292,6 +321,8 @@ def migrate_apply(
     ),
     ask: bool = typer.Option(False, "--ask", help="Show and confirm each migration before running it"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirm-target prompt"),
+    area: list[str] = _AREA_OPTION,
+    exclude_area: list[str] = _EXCLUDE_AREA_OPTION,
 ) -> None:
     """Apply pending migration files, in filename order, tracking each in tracking_table."""
     if not migrations_dir.is_dir():
@@ -300,6 +331,7 @@ def migrate_apply(
 
     conninfo = build_conninfo(url, entra_user)
     tracking_table = tracking_table or migrate.default_tracking_table(migrations_dir)
+    areas, exclude_areas = _as_area_set(area), _as_area_set(exclude_area)
     target_desc = url.rsplit("@", 1)[-1] if "@" in url else url
     if not yes:
         typer.confirm(f"About to run migrations against {target_desc}. Continue?", abort=True)
@@ -308,12 +340,14 @@ def migrate_apply(
         targets = [migrations_dir / file]
     else:
         try:
-            targets = migrate.pending_migrations(migrations_dir, conninfo, tracking_table)
+            targets = migrate.pending_migrations(
+                migrations_dir, conninfo, tracking_table, areas=areas, exclude_areas=exclude_areas
+            )
         except migrate.TrackingTableMissing:
             err_console.print(
                 f"[yellow]⚠[/yellow]  {tracking_table} not found — treating every migration as pending"
             )
-            targets = migrate.list_migration_files(migrations_dir)
+            targets = migrate.list_migration_files(migrations_dir, areas=areas, exclude_areas=exclude_areas)
 
     if not targets:
         console.print("No pending migrations.")

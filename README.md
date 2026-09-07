@@ -58,6 +58,62 @@ which parses/introspects/diffs like any other column type; see
 handled on the CRUD side (write-side serialization only, no auto-parsing on
 read — `mssql-python` doesn't distinguish `json` columns from `nvarchar`).
 
+### Area tagging and filtering
+
+Any migration file or `database/` code file can declare one or more areas by
+starting with a `-- area:` comment:
+
+```sql
+-- area: billing
+CREATE TABLE billing.invoices (id int primary key);
+```
+
+A file can declare more than one area, either comma-separated on one line
+(`-- area: billing, reporting`) or across several `-- area:` lines — the
+declared areas union. The directive is only recognized in the file's leading
+comment block (blank lines and `--` comments at the very top, stopping at the
+first real statement); a `-- area:` comment later in the file doesn't count.
+A file with no directive is untagged, and untagged files are treated as
+shared/common.
+
+`pgdb compare`, `pgdb migrate check`, and `pgdb migrate apply` all accept:
+
+- `--area NAME` (repeatable) — restrict to files declaring one of the given
+  areas, **plus every untagged file** (untagged files always stay in scope).
+- `--exclude-area NAME` (repeatable) — drop files declaring one of the given
+  areas; untagged files are never dropped by this.
+
+Both can be combined; a file matching both an included and an excluded area
+is excluded. Passing neither option applies no filtering (the default,
+unchanged behavior).
+
+```bash
+pgdb migrate apply path/to/database/_migration_scripts --url ... --area billing
+pgdb compare path/to/database/ --url ... --exclude-area reporting
+```
+
+`compare`'s default report (no `--report-extra-db`) only checks that the
+filtered scripts exist correctly in the DB, so it composes safely with area
+filtering. Passing `--report-extra-db` together with an area filter also
+reports every DB object outside the filtered area(s) as "missing in
+scripts" — since the live database has no concept of areas, only the
+scripts side is filtered — so treat that combination's "missing in scripts"
+results with that in mind (the CLI prints a warning when you combine them).
+
+`pgdb fetch-missing` deliberately has **no** `--area`/`--exclude-area`: it
+diffs the full database against scripts to find genuinely untracked
+objects, so narrowing the scripts side by area would make every object
+tracked only under a different area look "missing" too — and `--write`
+would then reconstruct a duplicate file for something that already exists.
+
+`pgdevkit.areas` exposes the same logic for scripting:
+`parse_areas`/`file_areas` read a file's declared areas, and
+`area_allowed`/`filter_by_area` apply the `only`/`exclude` semantics above.
+`pgdevkit.migrate.list_migration_files`/`pending_migrations` and
+`pgdevkit.parser.parse_directory` take the same `areas`/`exclude_areas`
+keyword arguments (`pgdevkit.fetch_missing.find_missing_objects` doesn't,
+for the reason above).
+
 ## `pgdb testdb`
 
 Manages a single shared, Podman-backed Postgres container for local tests

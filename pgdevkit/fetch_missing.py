@@ -50,7 +50,12 @@ def layer_folder_for(scripts_dir: Path, schema: str) -> Path:
 
 def find_missing_objects(scripts_dir: Path, conninfo: str) -> list[MissingObject]:
     """Tables, views, and functions that exist in the live database but
-    aren't tracked as .sql files under scripts_dir."""
+    aren't tracked as .sql files under scripts_dir.
+
+    Deliberately not area-filterable: this diffs the *full* database against
+    scripts with report_extra_db=True, so narrowing the scripts side to one
+    area would make every object tracked only under a different area look
+    "missing" too — and --write would reconstruct a duplicate file for it."""
     scripts = parse_directory(scripts_dir)
     db = introspect_db(conninfo)
     diffs = compute_diff(scripts, db, report_extra_db=True)
