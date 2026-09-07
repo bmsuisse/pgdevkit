@@ -309,3 +309,12 @@ via trusted (OIDC) publishing automatically.
 `workflow_dispatch` on `python-publish.yml` still works as a manual
 fallback if you ever need to re-publish a version without going through a
 fresh tag/release.
+
+**One-time setup:** `auto-release.yml` needs a `RELEASE_TOKEN` repository
+secret — a PAT (classic, `repo` scope, or fine-grained with this repo's
+Contents: Read and write) belonging to someone with write access. This is
+required because GitHub Actions doesn't fire other workflows' triggers
+(`release: published` included) for a release created with the automatic
+`GITHUB_TOKEN`, to prevent recursive runs — a release created with a PAT is
+attributed to a real actor instead, so it triggers `python-publish.yml`
+normally. Add it under Settings → Secrets and variables → Actions.

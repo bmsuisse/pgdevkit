@@ -3,6 +3,13 @@
 # a Release (types: [published]) is exactly what python-publish.yml already
 # listens for, so this is the only piece needed to make merging to main (with
 # a version bump) publish to PyPI, with no separate manual release step.
+#
+# The release-creation step deliberately uses the RELEASE_TOKEN secret (a
+# PAT), not the default GITHUB_TOKEN: GitHub Actions does not fire other
+# workflows' triggers (release: published included) for events performed
+# with the automatic GITHUB_TOKEN, to prevent recursive runs. A release
+# created with a PAT is attributed to a real actor instead, so it triggers
+# python-publish.yml normally. See README "Releasing" for one-time setup.
 
 name: Auto Release
 
@@ -48,8 +55,12 @@ jobs:
       - name: Create tag and GitHub release
         if: steps.check.outputs.exists == 'false'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::RELEASE_TOKEN repo secret is not set (needed so this release triggers python-publish.yml -- see README 'Releasing')."
+            exit 1
+          fi
           gh release create "v${{ steps.version.outputs.version }}" \
             --title "v${{ steps.version.outputs.version }}" \
             --target "${{ github.event.workflow_run.head_sha }}" \
