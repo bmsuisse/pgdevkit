@@ -8,6 +8,7 @@ from pathlib import Path
 import sqlglot
 import sqlglot.expressions as exp
 
+from .areas import filter_by_area
 from .dialect import Dialect, POSTGRES, resolve_dialect
 from .models import (
     ColumnDef, ConstraintDef, CompositeTypeDef, DatabaseSchema,
@@ -48,10 +49,17 @@ def _iter_sql_files(scripts_dir: Path):
                 yield Path(root) / name
 
 
-def parse_directory(scripts_dir: Path, *, dialect: str | Dialect = "postgres") -> DatabaseSchema:
+def parse_directory(
+    scripts_dir: Path,
+    *,
+    dialect: str | Dialect = "postgres",
+    areas: frozenset[str] | None = None,
+    exclude_areas: frozenset[str] | None = None,
+) -> DatabaseSchema:
     resolved = resolve_dialect(dialect)
     db_schema = DatabaseSchema()
-    for sql_file in sorted(_iter_sql_files(scripts_dir)):
+    files = filter_by_area(sorted(_iter_sql_files(scripts_dir)), only=areas, exclude=exclude_areas)
+    for sql_file in files:
         _parse_file(sql_file, db_schema, resolved)
     return db_schema
 

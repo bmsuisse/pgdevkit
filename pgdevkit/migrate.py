@@ -18,6 +18,8 @@ import sqlglot
 from psycopg import errors as pg_errors
 from psycopg import sql as pg_sql
 
+from .areas import filter_by_area
+
 _IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_]*"
 _DEFAULT_TRACKING_TABLE = "public.schema_migrations"
 
@@ -274,8 +276,14 @@ def already_fully_applied(conninfo: str, path: Path) -> bool:
         return all(_target_exists(con, cast(tuple[str, ...], t)) for t in targets)
 
 
-def list_migration_files(migrations_dir: Path) -> list[Path]:
-    return sorted(migrations_dir.glob("*.sql"))
+def list_migration_files(
+    migrations_dir: Path,
+    *,
+    areas: frozenset[str] | None = None,
+    exclude_areas: frozenset[str] | None = None,
+) -> list[Path]:
+    files = sorted(migrations_dir.glob("*.sql"))
+    return filter_by_area(files, only=areas, exclude=exclude_areas)
 
 
 def applied_migrations(conninfo: str, tracking_table: str) -> dict[str, tuple[datetime, str]]:
@@ -291,9 +299,17 @@ def applied_migrations(conninfo: str, tracking_table: str) -> dict[str, tuple[da
         return {r[0]: (r[1], r[2]) for r in rows}
 
 
-def pending_migrations(migrations_dir: Path, conninfo: str, tracking_table: str) -> list[Path]:
+def pending_migrations(
+    migrations_dir: Path,
+    conninfo: str,
+    tracking_table: str,
+    *,
+    areas: frozenset[str] | None = None,
+    exclude_areas: frozenset[str] | None = None,
+) -> list[Path]:
     applied = applied_migrations(conninfo, tracking_table)
-    return [p for p in list_migration_files(migrations_dir) if p.name not in applied]
+    files = list_migration_files(migrations_dir, areas=areas, exclude_areas=exclude_areas)
+    return [p for p in files if p.name not in applied]
 
 
 def record_applied(conninfo: str, tracking_table: str, filename: str) -> bool:

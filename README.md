@@ -58,6 +58,48 @@ which parses/introspects/diffs like any other column type; see
 handled on the CRUD side (write-side serialization only, no auto-parsing on
 read — `mssql-python` doesn't distinguish `json` columns from `nvarchar`).
 
+### Area tagging and filtering
+
+Any migration file or `database/` code file can declare one or more areas by
+starting with a `-- area:` comment:
+
+```sql
+-- area: billing
+CREATE TABLE billing.invoices (id int primary key);
+```
+
+A file can declare more than one area, either comma-separated on one line
+(`-- area: billing, reporting`) or across several `-- area:` lines — the
+declared areas union. The directive is only recognized in the file's leading
+comment block (blank lines and `--` comments at the very top, stopping at the
+first real statement); a `-- area:` comment later in the file doesn't count.
+A file with no directive is untagged, and untagged files are treated as
+shared/common.
+
+`pgdb compare`, `pgdb fetch-missing`, `pgdb migrate check`, and
+`pgdb migrate apply` all accept:
+
+- `--area NAME` (repeatable) — restrict to files declaring one of the given
+  areas, **plus every untagged file** (untagged files always stay in scope).
+- `--exclude-area NAME` (repeatable) — drop files declaring one of the given
+  areas; untagged files are never dropped by this.
+
+Both can be combined; a file matching both an included and an excluded area
+is excluded. Passing neither option applies no filtering (the default,
+unchanged behavior).
+
+```bash
+pgdb migrate apply path/to/database/_migration_scripts --url ... --area billing
+pgdb compare path/to/database/ --url ... --exclude-area reporting
+```
+
+`pgdevkit.areas` exposes the same logic for scripting:
+`parse_areas`/`file_areas` read a file's declared areas, and
+`area_allowed`/`filter_by_area` apply the `only`/`exclude` semantics above.
+`pgdevkit.migrate.list_migration_files`/`pending_migrations`,
+`pgdevkit.parser.parse_directory`, and `pgdevkit.fetch_missing.find_missing_objects`
+all take the same `areas`/`exclude_areas` keyword arguments.
+
 ## `pgdb testdb`
 
 Manages a single shared, Podman-backed Postgres container for local tests
