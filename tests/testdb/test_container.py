@@ -49,6 +49,36 @@ def test_ensure_container_skips_everything_when_skip_env_set(monkeypatch):
     ensure_container()  # must return without checking availability or calling the Docker API
 
 
+class _FakeContainers:
+    def __init__(self):
+        self.run_kwargs: dict | None = None
+
+    def run(self, image, **kwargs):
+        self.run_kwargs = kwargs
+
+
+class _FakeClient:
+    def __init__(self):
+        self.containers = _FakeContainers()
+
+
+def test_create_container_forces_utc_timezone():
+    """Test Postgres must run with timezone=UTC regardless of the container
+    image's/host's own locale default -- production connects with session
+    timezone=UTC, so any ::date cast of a timestamptz column would otherwise
+    silently disagree between test and prod for rows near local midnight."""
+    client = _FakeClient()
+
+    _create_container(client)
+
+    assert client.containers.run_kwargs is not None
+    assert "-c" in client.containers.run_kwargs["command"]
+    timezone_flag_index = client.containers.run_kwargs["command"].index("timezone=UTC")
+    assert client.containers.run_kwargs["command"][timezone_flag_index - 1] == "-c"
+    assert client.containers.run_kwargs["environment"]["TZ"] == "UTC"
+    assert client.containers.run_kwargs["environment"]["PGTZ"] == "UTC"
+
+
 def _admin_dsn() -> str:
     return constants.conninfo("postgres", connect_timeout=5)
 
@@ -84,3 +114,13 @@ def test_create_container_falls_back_to_start_when_name_in_use():
         with con.cursor() as cur:
             cur.execute("SELECT 1")
             assert cur.fetchone() == (1,)
+
+
+@requires_podman
+def test_ensure_container_runs_with_utc_timezone():
+    ensure_container()
+
+    with psycopg.connect(_admin_dsn()) as con:
+        with con.cursor() as cur:
+            cur.execute("SHOW timezone")
+            assert cur.fetchone() == ("UTC",)
