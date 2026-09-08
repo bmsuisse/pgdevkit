@@ -11,6 +11,13 @@ PORT = int(os.environ.get("PGDEVKIT_TESTDB_PORT", "54322"))
 USER = os.environ.get("PGDEVKIT_TESTDB_USER", "postgres")
 PASSWORD = os.environ.get("PGDEVKIT_TESTDB_PASSWORD", "testpwd")
 PG_SPEED_FLAGS = ["-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off"]
+# Production connects with session timezone=UTC; the container image's own default
+# (baked into its base OS, not something pgdevkit ever set) can differ, silently
+# making any ::date cast of a timestamptz column disagree between test and prod for
+# rows near local midnight. Forcing UTC here -- both as the server's own timezone GUC
+# and as PGTZ/TZ for any client library that consults the environment instead -- keeps
+# test parity with prod instead of depending on the host/image's locale.
+PG_STARTUP_FLAGS = [*PG_SPEED_FLAGS, "-c", "timezone=UTC"]
 
 
 def conninfo(dbname: str, *, connect_timeout: int | None = None) -> str:

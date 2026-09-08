@@ -36,8 +36,13 @@ def _create_container(client: docker.DockerClient) -> None:
             environment={
                 "POSTGRES_USER": constants.USER,
                 "POSTGRES_PASSWORD": constants.PASSWORD,
+                # Belt-and-suspenders alongside the server's own -c timezone=UTC below:
+                # some client libraries/tools inside the container consult TZ/PGTZ
+                # directly instead of asking Postgres for its configured timezone.
+                "TZ": "UTC",
+                "PGTZ": "UTC",
             },
-            command=["postgres", *constants.PG_SPEED_FLAGS],
+            command=["postgres", *constants.PG_STARTUP_FLAGS],
         )
     except docker.errors.APIError as e:
         if getattr(e, "status_code", None) == 409 or "already in use" in str(e):
