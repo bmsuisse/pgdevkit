@@ -41,6 +41,17 @@ _EXCLUDE_SCHEMA_OPTION = typer.Option(
     help="Skip files referencing this DB schema (repeatable); "
     "files with no detectable schema reference are never excluded",
 )
+_TESTDB_ENV_OPTION = typer.Option(
+    "local_test",
+    "--env",
+    help="Environment to apply: skips any <name>.<other-env>.sql file (e.g. grants.prod.sql); untagged files always apply",
+)
+_MIGRATE_ENV_OPTION = typer.Option(
+    None,
+    "--env",
+    help="Restrict to files tagged for this environment (e.g. <name>.prod.sql); untagged files always apply; "
+    "omit to apply every file regardless of its env tag",
+)
 
 
 def _as_set(values: list[str]) -> frozenset[str] | None:
@@ -209,6 +220,7 @@ def fetch_missing(
 
 @testdb_app.command("up")
 def testdb_up(
+    env: str = _TESTDB_ENV_OPTION,
     area: list[str] = _AREA_OPTION,
     exclude_area: list[str] = _EXCLUDE_AREA_OPTION,
     schema: list[str] = _SCHEMA_OPTION,
@@ -216,7 +228,7 @@ def testdb_up(
 ) -> None:
     """Ensure the container is running, the workspace DB exists, and schema is applied."""
     testdb.ensure_testdb(
-        areas=_as_set(area), exclude_areas=_as_set(exclude_area), schemas=_as_set(schema),
+        env=env, areas=_as_set(area), exclude_areas=_as_set(exclude_area), schemas=_as_set(schema),
         exclude_schemas=_as_set(exclude_schema),
     )
     info = testdb.status()
@@ -225,6 +237,7 @@ def testdb_up(
 
 @testdb_app.command("reset")
 def testdb_reset(
+    env: str = _TESTDB_ENV_OPTION,
     area: list[str] = _AREA_OPTION,
     exclude_area: list[str] = _EXCLUDE_AREA_OPTION,
     schema: list[str] = _SCHEMA_OPTION,
@@ -232,7 +245,7 @@ def testdb_reset(
 ) -> None:
     """Drop and recreate only this workspace's database, then reapply schema + seed data."""
     testdb.reset_testdb(
-        areas=_as_set(area), exclude_areas=_as_set(exclude_area), schemas=_as_set(schema),
+        env=env, areas=_as_set(area), exclude_areas=_as_set(exclude_area), schemas=_as_set(schema),
         exclude_schemas=_as_set(exclude_schema),
     )
     info = testdb.status()
@@ -310,6 +323,7 @@ def migrate_check(
     exclude_area: list[str] = _EXCLUDE_AREA_OPTION,
     schema: list[str] = _SCHEMA_OPTION,
     exclude_schema: list[str] = _EXCLUDE_SCHEMA_OPTION,
+    env: str | None = _MIGRATE_ENV_OPTION,
 ) -> None:
     """List which migration files under migrations_dir are applied vs. pending."""
     if not migrations_dir.is_dir():
@@ -324,6 +338,7 @@ def migrate_check(
         exclude_areas=_as_set(exclude_area),
         schemas=_as_set(schema),
         exclude_schemas=_as_set(exclude_schema),
+        env=env,
     )
     try:
         applied = migrate.applied_migrations(conninfo, tracking_table)
@@ -367,6 +382,7 @@ def migrate_apply(
     exclude_area: list[str] = _EXCLUDE_AREA_OPTION,
     schema: list[str] = _SCHEMA_OPTION,
     exclude_schema: list[str] = _EXCLUDE_SCHEMA_OPTION,
+    env: str | None = _MIGRATE_ENV_OPTION,
 ) -> None:
     """Apply pending migration files, in filename order, tracking each in tracking_table."""
     if not migrations_dir.is_dir():
@@ -393,6 +409,7 @@ def migrate_apply(
                 exclude_areas=exclude_areas,
                 schemas=schemas,
                 exclude_schemas=exclude_schemas,
+                env=env,
             )
         except migrate.TrackingTableMissing:
             err_console.print(
@@ -400,7 +417,7 @@ def migrate_apply(
             )
             targets = migrate.list_migration_files(
                 migrations_dir, areas=areas, exclude_areas=exclude_areas, schemas=schemas,
-                exclude_schemas=exclude_schemas,
+                exclude_schemas=exclude_schemas, env=env,
             )
 
     if not targets:

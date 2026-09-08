@@ -16,6 +16,7 @@ from psycopg.sql import SQL, Identifier, Placeholder
 from ..areas import area_allowed, parse_areas
 from ..db.complex_types import ComplexHelper
 from ..dialect import Dialect, POSTGRES, SYSTEM_SCHEMAS
+from ..envtag import env_allowed, strip_env_suffix
 from ..parser import IGNORED_DIR_NAMES
 from ..schemas import schema_allowed, sql_schemas
 
@@ -40,7 +41,7 @@ _TYPE_ORDER = {
 
 
 def _get_type_order(path: Path) -> int:
-    filename = re.sub(r"^\d+(\.\d+)?", "", path.name).removeprefix("_").removesuffix(".sql")
+    filename = re.sub(r"^\d+(\.\d+)?", "", strip_env_suffix(path)).removeprefix("_")
     if filename in _TYPE_ORDER:
         return _TYPE_ORDER[filename]
     if path.parent.name in _TYPE_ORDER:
@@ -123,12 +124,16 @@ def _iter_sql_files(
     database_dir: Path,
     dialect: Dialect = POSTGRES,
     *,
+    env: str = "local_test",
     areas: frozenset[str] | None = None,
     exclude_areas: frozenset[str] | None = None,
     schemas: frozenset[str] | None = None,
     exclude_schemas: frozenset[str] | None = None,
 ):
     """Yield (Path, sql_content) pairs in dependency-safe execution order.
+
+    A file tagged for another environment (see pgdevkit.envtag) is dropped
+    during the initial file walk, before dependency ordering even sees it.
 
     A file dropped by the area/schema filter is skipped entirely -- as if it
     didn't exist -- so it never delivers a dependency another (in-scope)
@@ -142,8 +147,9 @@ def _iter_sql_files(
         for file in dbfiles:
             if file in ("all.sql", "100_permissions.sql"):
                 continue
-            if file.endswith(".sql") and ".prod" not in file:
-                files.append(Path(root) / file)
+            path = Path(root) / file
+            if file.endswith(".sql") and env_allowed(path, env):
+                files.append(path)
 
     delivered: set[str] = set()
     delayed: list[tuple[str | None, Path, str]] = []
@@ -160,7 +166,7 @@ def _iter_sql_files(
         deps = _get_sql_deps(content, dialect)
         if file.parent.name in _SCHEMA_QUALIFIED_TYPES:
             schema = _strip_layer_prefix(file.parent.parent.name)
-            full_name = f"{schema}.{_strip_layer_prefix(file.stem)}"
+            full_name = f"{schema}.{_strip_layer_prefix(strip_env_suffix(file))}"
             deps.discard(full_name)  # the file's own CREATE target is not a real dependency
             all_declared.add(full_name)
             if not deps or all(d in delivered for d in deps):
@@ -261,6 +267,7 @@ async def apply_schema(
     force_reset: bool = False,
     *,
     dialect: Dialect = POSTGRES,
+    env: str = "local_test",
     areas: frozenset[str] | None = None,
     exclude_areas: frozenset[str] | None = None,
     schemas: frozenset[str] | None = None,
@@ -268,6 +275,9 @@ async def apply_schema(
 ) -> None:
     """Apply every .sql file under database_dir (in dependency-safe order)
     and seed any matching .test_data.json files. Safe to call repeatedly.
+
+    A file tagged for another environment (e.g. `grants.prod.sql` when
+    `env="local_test"`) is skipped — see pgdevkit.envtag.
 
     `migrations/` subdirectories are never applied here — they're for
     one-time manual application against real (already-provisioned)
@@ -286,16 +296,19 @@ async def apply_schema(
 
     async def _apply(file: Path, sql: str) -> None:
         await con.execute(cast(Any, sql))
-        json_file = file.with_suffix(".test_data.json")
+        table_stem = strip_env_suffix(file)
+        json_file = file.parent / f"{table_stem}.test_data.json"
         if json_file.exists():
             schema_name = _strip_layer_prefix(file.parent.parent.name)
-            table_stem = _strip_layer_prefix(file.stem)
-            await _insert_test_data(json_file, f"{schema_name}.{table_stem}", force_reset, con, complex_helper)
+            await _insert_test_data(
+                json_file, f"{schema_name}.{_strip_layer_prefix(table_stem)}", force_reset, con, complex_helper
+            )
 
     failures: list[tuple[Path, str]] = []
     for file, sql in _iter_sql_files(
         database_dir,
         dialect,
+        env=env,
         areas=areas,
         exclude_areas=exclude_areas,
         schemas=schemas,

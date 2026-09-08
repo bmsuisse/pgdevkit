@@ -73,6 +73,7 @@ async def _apply(
     db_name: str,
     force_reset: bool,
     *,
+    env: str = "local_test",
     areas: frozenset[str] | None = None,
     exclude_areas: frozenset[str] | None = None,
     schemas: frozenset[str] | None = None,
@@ -84,6 +85,7 @@ async def _apply(
             config.root / config.database_dir,
             extensions=config.extensions,
             force_reset=force_reset,
+            env=env,
             areas=areas,
             exclude_areas=exclude_areas,
             schemas=schemas,
@@ -95,6 +97,7 @@ def ensure_testdb(
     project_root: Path | None = None,
     force_reset: bool = False,
     *,
+    env: str = "local_test",
     areas: frozenset[str] | None = None,
     exclude_areas: frozenset[str] | None = None,
     schemas: frozenset[str] | None = None,
@@ -105,6 +108,9 @@ def ensure_testdb(
     vars for this workspace (or the mssql equivalent's env vars, per
     `config.engine`).
 
+    `env` selects which environment-tagged files apply (see pgdevkit.envtag,
+    e.g. a `grants.prod.sql` is skipped unless env="prod").
+
     `areas`/`exclude_areas` and `schemas`/`exclude_schemas` restrict which
     database/ files get applied -- e.g. for a test DB scoped to one area or
     schema. Neither filters what gets *dropped* by force_reset/clean, only
@@ -113,7 +119,7 @@ def ensure_testdb(
     if config.engine == "mssql":
         return _mssql_api().ensure_testdb(
             config, db_name, force_reset,
-            areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
+            env=env, areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
         )
 
     ensure_container()
@@ -124,7 +130,7 @@ def ensure_testdb(
         await _ensure_database(db_name)
         await _apply(
             config, db_name, force_reset,
-            areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
+            env=env, areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
         )
 
     asyncio.run(_run())
@@ -134,6 +140,7 @@ def ensure_testdb(
 def reset_testdb(
     project_root: Path | None = None,
     *,
+    env: str = "local_test",
     areas: frozenset[str] | None = None,
     exclude_areas: frozenset[str] | None = None,
     schemas: frozenset[str] | None = None,
@@ -143,7 +150,7 @@ def reset_testdb(
     schema and seed data."""
     return ensure_testdb(
         project_root, force_reset=True,
-        areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
+        env=env, areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
     )
 
 

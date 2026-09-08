@@ -115,6 +115,43 @@ async def test_apply_schema_seeds_composite_enum_and_jsonb_columns(schema_test_d
 
 
 @requires_podman
+async def test_apply_schema_skips_env_tagged_file_for_a_different_env(schema_test_db):
+    # prod_only.prod.sql is tagged for "prod" -- with the default env
+    # ("local_test"), it must not be applied.
+    async with await psycopg.AsyncConnection.connect(_db_dsn(), autocommit=True) as con:
+        await apply_schema(con, FIXTURES)
+        async with con.cursor() as cur:
+            await cur.execute("SELECT to_regclass('app.prod_only')")
+            (regclass,) = await cur.fetchone()
+    assert regclass is None
+
+
+@requires_podman
+async def test_apply_schema_applies_env_tagged_file_for_the_matching_env(schema_test_db):
+    async with await psycopg.AsyncConnection.connect(_db_dsn(), autocommit=True) as con:
+        await apply_schema(con, FIXTURES, env="prod")
+        async with con.cursor() as cur:
+            await cur.execute("SELECT to_regclass('app.prod_only')")
+            (regclass,) = await cur.fetchone()
+    assert regclass is not None
+
+
+@requires_podman
+async def test_apply_schema_init_file_applies_regardless_of_env(schema_test_db):
+    # widget.init.sql adds init_flag to app.widget -- "init" is a reserved
+    # suffix, never an environment tag, so this must apply under any env.
+    async with await psycopg.AsyncConnection.connect(_db_dsn(), autocommit=True) as con:
+        await apply_schema(con, FIXTURES, env="staging")
+        async with con.cursor() as cur:
+            await cur.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = 'app' AND table_name = 'widget' AND column_name = 'init_flag'"
+            )
+            row = await cur.fetchone()
+    assert row is not None
+
+
+@requires_podman
 async def test_apply_schema_never_applies_migrations_dir(schema_test_db):
     # migrations/ is for one-time manual application against real databases,
     # not for building a fresh schema — the base table file is the only

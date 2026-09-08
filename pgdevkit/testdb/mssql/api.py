@@ -9,6 +9,7 @@ import mssql_python
 
 from ...db.mssql_sql import ident, json_encode_value
 from ...dialect import MSSQL
+from ...envtag import strip_env_suffix
 from .. import query
 from ..config import ProjectConfig
 from ..schema import _iter_sql_files, _strip_layer_prefix
@@ -106,6 +107,7 @@ async def _apply(
     db_name: str,
     force_reset: bool,
     *,
+    env: str = "local_test",
     areas: frozenset[str] | None = None,
     exclude_areas: frozenset[str] | None = None,
     schemas: frozenset[str] | None = None,
@@ -121,7 +123,7 @@ async def _apply(
             return
         for file, sql in _iter_sql_files(
             database_dir, MSSQL,
-            areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
+            env=env, areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
         ):
             for batch in query.split_tsql_batches(sql):
 
@@ -129,11 +131,13 @@ async def _apply(
                     conn.cursor().execute(batch)
 
                 await asyncio.to_thread(_exec)
-            json_file = file.with_suffix(".test_data.json")
+            table_stem = strip_env_suffix(file)
+            json_file = file.parent / f"{table_stem}.test_data.json"
             if json_file.exists():
                 schema_name = _strip_layer_prefix(file.parent.parent.name)
-                table_stem = _strip_layer_prefix(file.stem)
-                await _insert_test_data(json_file, f"{schema_name}.{table_stem}", force_reset, conn)
+                await _insert_test_data(
+                    json_file, f"{schema_name}.{_strip_layer_prefix(table_stem)}", force_reset, conn
+                )
     finally:
         await asyncio.to_thread(conn.close)
 
@@ -143,6 +147,7 @@ def ensure_testdb(
     db_name: str,
     force_reset: bool,
     *,
+    env: str = "local_test",
     areas: frozenset[str] | None = None,
     exclude_areas: frozenset[str] | None = None,
     schemas: frozenset[str] | None = None,
@@ -156,7 +161,7 @@ def ensure_testdb(
         await _ensure_database(db_name)
         await _apply(
             config, db_name, force_reset,
-            areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
+            env=env, areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
         )
 
     asyncio.run(_run())
