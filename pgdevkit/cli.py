@@ -29,9 +29,21 @@ _AREA_OPTION = typer.Option(
 _EXCLUDE_AREA_OPTION = typer.Option(
     [], "--exclude-area", help="Skip files declaring this area (repeatable); untagged files are never excluded"
 )
+_SCHEMA_OPTION = typer.Option(
+    [],
+    "--schema",
+    help="Restrict to files referencing this DB schema (repeatable); "
+    "files with no detectable schema reference always stay in scope",
+)
+_EXCLUDE_SCHEMA_OPTION = typer.Option(
+    [],
+    "--exclude-schema",
+    help="Skip files referencing this DB schema (repeatable); "
+    "files with no detectable schema reference are never excluded",
+)
 
 
-def _as_area_set(values: list[str]) -> frozenset[str] | None:
+def _as_set(values: list[str]) -> frozenset[str] | None:
     return frozenset(values) if values else None
 
 testdb_app = typer.Typer(name="testdb", help="Manage the shared local Postgres test container")
@@ -59,17 +71,20 @@ def compare(
     dialect: str = typer.Option("postgres", "--dialect", help="postgres (default) or mssql"),
     area: list[str] = _AREA_OPTION,
     exclude_area: list[str] = _EXCLUDE_AREA_OPTION,
+    schema: list[str] = _SCHEMA_OPTION,
+    exclude_schema: list[str] = _EXCLUDE_SCHEMA_OPTION,
     scripts_dir: Path = typer.Argument(..., help="Directory containing SQL scripts"),
 ) -> None:
     """Compare SQL scripts to a live database and report differences."""
     if not scripts_dir.is_dir():
         err_console.print(f"[red]Error:[/red] {scripts_dir} is not a directory")
         raise typer.Exit(2)
-    if report_extra_db and (area or exclude_area):
+    if report_extra_db and (area or exclude_area or schema or exclude_schema):
         console.print(
-            "[yellow]⚠[/yellow]  --report-extra-db with --area/--exclude-area will report every DB object "
-            "outside the filtered area(s) as \"missing in scripts\", since the live database has no concept "
-            "of areas — only the scripts side is filtered."
+            "[yellow]⚠[/yellow]  --report-extra-db with --area/--exclude-area/--schema/--exclude-schema will "
+            "report every DB object outside the filtered area(s)/schema(s) as \"missing in scripts\", since the "
+            "live database has no concept of areas — and isn't itself filtered by --schema either — only the "
+            "scripts side is filtered."
         )
 
     try:
@@ -91,7 +106,12 @@ def compare(
 
     with console.status("Parsing SQL scripts..."):
         scripts_schema = parse_directory(
-            scripts_dir, dialect=backend.dialect, areas=_as_area_set(area), exclude_areas=_as_area_set(exclude_area)
+            scripts_dir,
+            dialect=backend.dialect,
+            areas=_as_set(area),
+            exclude_areas=_as_set(exclude_area),
+            schemas=_as_set(schema),
+            exclude_schemas=_as_set(exclude_schema),
         )
 
     with console.status("Introspecting database..."):
@@ -188,17 +208,33 @@ def fetch_missing(
 
 
 @testdb_app.command("up")
-def testdb_up() -> None:
+def testdb_up(
+    area: list[str] = _AREA_OPTION,
+    exclude_area: list[str] = _EXCLUDE_AREA_OPTION,
+    schema: list[str] = _SCHEMA_OPTION,
+    exclude_schema: list[str] = _EXCLUDE_SCHEMA_OPTION,
+) -> None:
     """Ensure the container is running, the workspace DB exists, and schema is applied."""
-    testdb.ensure_testdb()
+    testdb.ensure_testdb(
+        areas=_as_set(area), exclude_areas=_as_set(exclude_area), schemas=_as_set(schema),
+        exclude_schemas=_as_set(exclude_schema),
+    )
     info = testdb.status()
     console.print(f"[green]Test DB ready:[/green] {info['database']} ({info['dsn']})")
 
 
 @testdb_app.command("reset")
-def testdb_reset() -> None:
+def testdb_reset(
+    area: list[str] = _AREA_OPTION,
+    exclude_area: list[str] = _EXCLUDE_AREA_OPTION,
+    schema: list[str] = _SCHEMA_OPTION,
+    exclude_schema: list[str] = _EXCLUDE_SCHEMA_OPTION,
+) -> None:
     """Drop and recreate only this workspace's database, then reapply schema + seed data."""
-    testdb.reset_testdb()
+    testdb.reset_testdb(
+        areas=_as_set(area), exclude_areas=_as_set(exclude_area), schemas=_as_set(schema),
+        exclude_schemas=_as_set(exclude_schema),
+    )
     info = testdb.status()
     console.print(f"[green]Test DB reset:[/green] {info['database']}")
 
@@ -272,6 +308,8 @@ def migrate_check(
     ),
     area: list[str] = _AREA_OPTION,
     exclude_area: list[str] = _EXCLUDE_AREA_OPTION,
+    schema: list[str] = _SCHEMA_OPTION,
+    exclude_schema: list[str] = _EXCLUDE_SCHEMA_OPTION,
 ) -> None:
     """List which migration files under migrations_dir are applied vs. pending."""
     if not migrations_dir.is_dir():
@@ -281,7 +319,11 @@ def migrate_check(
     conninfo = build_conninfo(url, entra_user)
     tracking_table = tracking_table or migrate.default_tracking_table(migrations_dir)
     local_files = migrate.list_migration_files(
-        migrations_dir, areas=_as_area_set(area), exclude_areas=_as_area_set(exclude_area)
+        migrations_dir,
+        areas=_as_set(area),
+        exclude_areas=_as_set(exclude_area),
+        schemas=_as_set(schema),
+        exclude_schemas=_as_set(exclude_schema),
     )
     try:
         applied = migrate.applied_migrations(conninfo, tracking_table)
@@ -323,6 +365,8 @@ def migrate_apply(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirm-target prompt"),
     area: list[str] = _AREA_OPTION,
     exclude_area: list[str] = _EXCLUDE_AREA_OPTION,
+    schema: list[str] = _SCHEMA_OPTION,
+    exclude_schema: list[str] = _EXCLUDE_SCHEMA_OPTION,
 ) -> None:
     """Apply pending migration files, in filename order, tracking each in tracking_table."""
     if not migrations_dir.is_dir():
@@ -331,7 +375,8 @@ def migrate_apply(
 
     conninfo = build_conninfo(url, entra_user)
     tracking_table = tracking_table or migrate.default_tracking_table(migrations_dir)
-    areas, exclude_areas = _as_area_set(area), _as_area_set(exclude_area)
+    areas, exclude_areas = _as_set(area), _as_set(exclude_area)
+    schemas, exclude_schemas = _as_set(schema), _as_set(exclude_schema)
     target_desc = url.rsplit("@", 1)[-1] if "@" in url else url
     if not yes:
         typer.confirm(f"About to run migrations against {target_desc}. Continue?", abort=True)
@@ -341,13 +386,22 @@ def migrate_apply(
     else:
         try:
             targets = migrate.pending_migrations(
-                migrations_dir, conninfo, tracking_table, areas=areas, exclude_areas=exclude_areas
+                migrations_dir,
+                conninfo,
+                tracking_table,
+                areas=areas,
+                exclude_areas=exclude_areas,
+                schemas=schemas,
+                exclude_schemas=exclude_schemas,
             )
         except migrate.TrackingTableMissing:
             err_console.print(
                 f"[yellow]⚠[/yellow]  {tracking_table} not found — treating every migration as pending"
             )
-            targets = migrate.list_migration_files(migrations_dir, areas=areas, exclude_areas=exclude_areas)
+            targets = migrate.list_migration_files(
+                migrations_dir, areas=areas, exclude_areas=exclude_areas, schemas=schemas,
+                exclude_schemas=exclude_schemas,
+            )
 
     if not targets:
         console.print("No pending migrations.")

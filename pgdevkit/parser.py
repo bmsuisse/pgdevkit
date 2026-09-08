@@ -10,6 +10,7 @@ import sqlglot.expressions as exp
 
 from .areas import area_allowed, parse_areas
 from .dialect import Dialect, POSTGRES, resolve_dialect
+from .schemas import schema_allowed, sql_schemas
 from .models import (
     ColumnDef, ConstraintDef, CompositeTypeDef, DatabaseSchema,
     EnumDef, FunctionDef, IndexDef, TableDef, ViewDef,
@@ -55,14 +56,20 @@ def parse_directory(
     dialect: str | Dialect = "postgres",
     areas: frozenset[str] | None = None,
     exclude_areas: frozenset[str] | None = None,
+    schemas: frozenset[str] | None = None,
+    exclude_schemas: frozenset[str] | None = None,
 ) -> DatabaseSchema:
     resolved = resolve_dialect(dialect)
     db_schema = DatabaseSchema()
     for sql_file in sorted(_iter_sql_files(scripts_dir)):
-        # Read once and reuse for both the area check and parsing, rather than
-        # filtering the file list up front (which would need its own read).
+        # Read once and reuse for the area/schema checks and parsing, rather
+        # than filtering the file list up front (which would need its own read).
         content = sql_file.read_text(encoding="utf-8")
         if (areas or exclude_areas) and not area_allowed(parse_areas(content), only=areas, exclude=exclude_areas):
+            continue
+        if (schemas or exclude_schemas) and not schema_allowed(
+            sql_schemas(content, resolved), only=schemas, exclude=exclude_schemas
+        ):
             continue
         _parse_file(sql_file, db_schema, resolved, content=content)
     return db_schema

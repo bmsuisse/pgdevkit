@@ -101,7 +101,16 @@ async def _insert_test_data(json_file: Path, table: str, force_reset: bool, conn
     await asyncio.to_thread(_run)
 
 
-async def _apply(config: ProjectConfig, db_name: str, force_reset: bool) -> None:
+async def _apply(
+    config: ProjectConfig,
+    db_name: str,
+    force_reset: bool,
+    *,
+    areas: frozenset[str] | None = None,
+    exclude_areas: frozenset[str] | None = None,
+    schemas: frozenset[str] | None = None,
+    exclude_schemas: frozenset[str] | None = None,
+) -> None:
     def _connect() -> Any:
         return mssql_python.connect(_db_dsn(db_name), autocommit=True)
 
@@ -110,7 +119,10 @@ async def _apply(config: ProjectConfig, db_name: str, force_reset: bool) -> None
         database_dir = config.root / config.database_dir
         if not database_dir.is_dir():
             return
-        for file, sql in _iter_sql_files(database_dir, MSSQL):
+        for file, sql in _iter_sql_files(
+            database_dir, MSSQL,
+            areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
+        ):
             for batch in query.split_tsql_batches(sql):
 
                 def _exec(batch: str = batch) -> None:
@@ -126,14 +138,26 @@ async def _apply(config: ProjectConfig, db_name: str, force_reset: bool) -> None
         await asyncio.to_thread(conn.close)
 
 
-def ensure_testdb(config: ProjectConfig, db_name: str, force_reset: bool) -> dict[str, str]:
+def ensure_testdb(
+    config: ProjectConfig,
+    db_name: str,
+    force_reset: bool,
+    *,
+    areas: frozenset[str] | None = None,
+    exclude_areas: frozenset[str] | None = None,
+    schemas: frozenset[str] | None = None,
+    exclude_schemas: frozenset[str] | None = None,
+) -> dict[str, str]:
     ensure_mssql_container()
 
     async def _run() -> None:
         if force_reset:
             await _drop_database(db_name)
         await _ensure_database(db_name)
-        await _apply(config, db_name, force_reset)
+        await _apply(
+            config, db_name, force_reset,
+            areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
+        )
 
     asyncio.run(_run())
     return _env_for(config, db_name)

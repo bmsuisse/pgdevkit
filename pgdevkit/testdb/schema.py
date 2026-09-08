@@ -13,9 +13,11 @@ import sqlglot.expressions as exp
 from psycopg.rows import dict_row
 from psycopg.sql import SQL, Identifier, Placeholder
 
+from ..areas import area_allowed, parse_areas
 from ..db.complex_types import ComplexHelper
-from ..dialect import Dialect, POSTGRES
+from ..dialect import Dialect, POSTGRES, SYSTEM_SCHEMAS
 from ..parser import IGNORED_DIR_NAMES
+from ..schemas import schema_allowed, sql_schemas
 
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlglot").setLevel(logging.ERROR)
@@ -65,16 +67,14 @@ _SCHEMA_QUALIFIED_TYPES = {
 }
 
 
-# Schemas that hold system catalog views/tables, never a file this project
-# manages -- a reference to one is never a real cross-file dependency to
-# wait for. Matters most for T-SQL, where "IF NOT EXISTS (SELECT ... FROM
-# sys.schemas/sys.tables/sys.objects ...) BEGIN CREATE ... END" is the
-# idiomatic idempotency-guard pattern (T-SQL has no native "CREATE TABLE IF
-# NOT EXISTS"/"CREATE SCHEMA IF NOT EXISTS"), so without this exclusion
-# nearly every T-SQL file would pick up a spurious, never-resolvable
-# dependency on "sys.*" and get shuffled into the delayed-retry path, whose
-# reverse-order resolution can then apply files out of their intended order.
-_SYSTEM_SCHEMAS = {"pg_catalog", "information_schema", "sys"}
+# SYSTEM_SCHEMAS (see dialect.py) matters most here for T-SQL, where
+# "IF NOT EXISTS (SELECT ... FROM sys.schemas/sys.tables/sys.objects ...)
+# BEGIN CREATE ... END" is the idiomatic idempotency-guard pattern (T-SQL has
+# no native "CREATE TABLE IF NOT EXISTS"/"CREATE SCHEMA IF NOT EXISTS"), so
+# without this exclusion nearly every T-SQL file would pick up a spurious,
+# never-resolvable dependency on "sys.*" and get shuffled into the
+# delayed-retry path, whose reverse-order resolution can then apply files
+# out of their intended order.
 
 _DECLARE_RE = re.compile(
     r"CREATE\s+(?:OR\s+REPLACE\s+)?(?:TABLE|VIEW|FUNCTION|PROCEDURE|TYPE|SCHEMA)\s+(\w+\.\w+)", re.IGNORECASE
@@ -89,7 +89,7 @@ def _get_sql_deps_regex_fallback(sql: str) -> set[str]:
     is fine."""
     declares = set(_DECLARE_RE.findall(sql))
     deps = set(_DEPEND_RE.findall(sql))
-    deps = {d for d in deps if d.split(".", 1)[0].lower() not in _SYSTEM_SCHEMAS}
+    deps = {d for d in deps if d.split(".", 1)[0].lower() not in SYSTEM_SCHEMAS}
     return deps - declares
 
 
@@ -109,7 +109,7 @@ def _get_sql_deps(sql: str, dialect: Dialect = POSTGRES) -> set[str]:
         for t in e.find_all(exp.Table):
             db_node = t.args.get("db")
             if t.args.get("this") is not None and db_node is not None:
-                if db_node.name.lower() in _SYSTEM_SCHEMAS:
+                if db_node.name.lower() in SYSTEM_SCHEMAS:
                     continue
                 # exp.table_name(), not str(t): str() includes " AS alias" for
                 # an aliased reference (e.g. "FROM editing.visit v"), which
@@ -119,8 +119,21 @@ def _get_sql_deps(sql: str, dialect: Dialect = POSTGRES) -> set[str]:
     return deps
 
 
-def _iter_sql_files(database_dir: Path, dialect: Dialect = POSTGRES):
-    """Yield (Path, sql_content) pairs in dependency-safe execution order."""
+def _iter_sql_files(
+    database_dir: Path,
+    dialect: Dialect = POSTGRES,
+    *,
+    areas: frozenset[str] | None = None,
+    exclude_areas: frozenset[str] | None = None,
+    schemas: frozenset[str] | None = None,
+    exclude_schemas: frozenset[str] | None = None,
+):
+    """Yield (Path, sql_content) pairs in dependency-safe execution order.
+
+    A file dropped by the area/schema filter is skipped entirely -- as if it
+    didn't exist -- so it never delivers a dependency another (in-scope)
+    file waits on; that's the same tradeoff `list_migration_files`/
+    `parse_directory` make for migrations/database code files."""
     files: list[Path] = []
     for root, dirs, dbfiles in os.walk(database_dir):
         dirs[:] = [d for d in dirs if d not in IGNORED_DIR_NAMES]
@@ -138,6 +151,12 @@ def _iter_sql_files(database_dir: Path, dialect: Dialect = POSTGRES):
 
     for file in sorted(files, key=lambda p: (_get_type_order(p), p.name)):
         content = file.read_text(encoding="utf-8")
+        if (areas or exclude_areas) and not area_allowed(parse_areas(content), only=areas, exclude=exclude_areas):
+            continue
+        if (schemas or exclude_schemas) and not schema_allowed(
+            sql_schemas(content, dialect), only=schemas, exclude=exclude_schemas
+        ):
+            continue
         deps = _get_sql_deps(content, dialect)
         if file.parent.name in _SCHEMA_QUALIFIED_TYPES:
             schema = _strip_layer_prefix(file.parent.parent.name)
@@ -242,6 +261,10 @@ async def apply_schema(
     force_reset: bool = False,
     *,
     dialect: Dialect = POSTGRES,
+    areas: frozenset[str] | None = None,
+    exclude_areas: frozenset[str] | None = None,
+    schemas: frozenset[str] | None = None,
+    exclude_schemas: frozenset[str] | None = None,
 ) -> None:
     """Apply every .sql file under database_dir (in dependency-safe order)
     and seed any matching .test_data.json files. Safe to call repeatedly.
@@ -249,7 +272,12 @@ async def apply_schema(
     `migrations/` subdirectories are never applied here — they're for
     one-time manual application against real (already-provisioned)
     databases, not for building a fresh schema. The base object files under
-    `database_dir` must reflect the current, final schema on their own."""
+    `database_dir` must reflect the current, final schema on their own.
+
+    `areas`/`exclude_areas` and `schemas`/`exclude_schemas` restrict which
+    files get applied, the same as `pgdevkit migrate`/`compare` — handy for
+    standing up a test DB scoped to one area or schema instead of the whole
+    project."""
     await con.set_autocommit(True)
     for extension in extensions:
         await con.execute(SQL("CREATE EXTENSION IF NOT EXISTS {e}").format(e=Identifier(extension)))
@@ -265,7 +293,14 @@ async def apply_schema(
             await _insert_test_data(json_file, f"{schema_name}.{table_stem}", force_reset, con, complex_helper)
 
     failures: list[tuple[Path, str]] = []
-    for file, sql in _iter_sql_files(database_dir, dialect):
+    for file, sql in _iter_sql_files(
+        database_dir,
+        dialect,
+        areas=areas,
+        exclude_areas=exclude_areas,
+        schemas=schemas,
+        exclude_schemas=exclude_schemas,
+    ):
         try:
             await _apply(file, sql)
         except Exception as e:  # noqa: BLE001
