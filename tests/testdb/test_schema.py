@@ -4,6 +4,7 @@ from pathlib import Path
 
 import psycopg
 import pytest
+from psycopg.conninfo import make_conninfo
 
 from pgdevkit.testdb import constants
 from pgdevkit.testdb.container import ensure_container
@@ -95,6 +96,33 @@ async def test_apply_schema_resolves_view_to_view_dependency(schema_test_db):
             await cur.execute("SELECT id, name FROM app.a_wrapper_view ORDER BY id")
             rows = await cur.fetchall()
     assert rows == [(1, "sprocket")]
+
+
+@requires_podman
+async def test_apply_schema_applies_permissions_after_a_delayed_table(schema_test_db):
+    # permissions/grants.sql (a blanket "grant select on all tables in schema app")
+    # has no SQL dependencies of its own -- app.event, whose own filename
+    # ("event.sql") sorts alphabetically before its FK target's filename
+    # ("event_kind.sql"), always falls to the delayed-retry pass instead of
+    # resolving on the first attempt. Without holding permissions files back
+    # unconditionally, a blanket GRANT (a one-time snapshot of whatever exists
+    # when it runs) would apply before app.event exists and never cover it.
+    # Confirms _iter_sql_files() always yields permissions-type files last,
+    # genuinely after the whole tree (delayed retries included) has converged.
+    async with await psycopg.AsyncConnection.connect(_db_dsn(), autocommit=True) as con:
+        await apply_schema(con, FIXTURES)  # must not raise
+
+    # permissions/grants.sql creates this login role itself -- a fixed,
+    # non-secret password, matching pgdevkit's own testdb container convention.
+    reader_dsn = make_conninfo(
+        host=constants.HOST, port=str(constants.PORT), dbname=TEST_DB,
+        user="pgdevkit_test_reader", password="testpwd",
+    )
+    async with await psycopg.AsyncConnection.connect(reader_dsn, autocommit=True) as con:
+        async with con.cursor() as cur:
+            await cur.execute("SELECT count(*) FROM app.event")  # must not raise InsufficientPrivilege
+            (count,) = await cur.fetchone()
+    assert count == 0
 
 
 @requires_podman

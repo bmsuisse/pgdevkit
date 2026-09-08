@@ -132,6 +132,19 @@ def _iter_sql_files(
 ):
     """Yield (Path, sql_content) pairs in dependency-safe execution order.
 
+    Every `permissions`-type file (see `_TYPE_ORDER`) is held back
+    unconditionally and yielded only after every other file -- including
+    anything resolved via the delayed-retry loop below -- has actually been
+    delivered. A blanket "grant ... on all tables in schema X" has no real
+    per-object dependency of its own to track, but it still must apply
+    *after* every table/view it's meant to cover; a table whose own creation
+    got deferred to the retry loop (e.g. an FK to a same-type file that
+    happens to sort later) would otherwise silently miss that grant, since
+    a schema-wide GRANT is a one-time snapshot of whatever exists when it
+    runs. Nothing ever legitimately depends on a permissions file (it
+    creates no table/view/schema of its own), so holding every one back is
+    always safe.
+
     A file tagged for another environment (see pgdevkit.envtag) is dropped
     during the initial file walk, before dependency ordering even sees it.
 
@@ -154,6 +167,7 @@ def _iter_sql_files(
     delivered: set[str] = set()
     delayed: list[tuple[str | None, Path, str]] = []
     all_declared: set[str] = set()
+    permissions_files: list[tuple[Path, str]] = []
 
     for file in sorted(files, key=lambda p: (_get_type_order(p), p.name)):
         content = file.read_text(encoding="utf-8")
@@ -162,6 +176,9 @@ def _iter_sql_files(
         if (schemas or exclude_schemas) and not schema_allowed(
             sql_schemas(content, dialect), only=schemas, exclude=exclude_schemas
         ):
+            continue
+        if _get_type_order(file) == _TYPE_ORDER["permissions"]:
+            permissions_files.append((file, content))
             continue
         deps = _get_sql_deps(content, dialect)
         if file.parent.name in _SCHEMA_QUALIFIED_TYPES:
@@ -195,6 +212,8 @@ def _iter_sql_files(
                 progressed = True
         if not progressed:
             raise ValueError(f"Circular or missing SQL dependencies: {[f[1] for f in delayed]}")
+
+    yield from permissions_files
 
 
 async def _insert_test_data(
@@ -275,6 +294,10 @@ async def apply_schema(
 ) -> None:
     """Apply every .sql file under database_dir (in dependency-safe order)
     and seed any matching .test_data.json files. Safe to call repeatedly.
+
+    Every `permissions`-type file (see `_TYPE_ORDER`) is guaranteed to apply
+    after every table/view it's meant to cover, including anything resolved
+    via delayed-retry -- see `_iter_sql_files()`'s docstring.
 
     A file tagged for another environment (e.g. `grants.prod.sql` when
     `env="local_test"`) is skipped — see pgdevkit.envtag.
