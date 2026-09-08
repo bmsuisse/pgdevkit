@@ -4,6 +4,7 @@ from pathlib import Path
 
 import psycopg
 import pytest
+from psycopg.conninfo import make_conninfo
 
 from pgdevkit.testdb import constants
 from pgdevkit.testdb.container import ensure_container
@@ -95,6 +96,33 @@ async def test_apply_schema_resolves_view_to_view_dependency(schema_test_db):
             await cur.execute("SELECT id, name FROM app.a_wrapper_view ORDER BY id")
             rows = await cur.fetchall()
     assert rows == [(1, "sprocket")]
+
+
+@requires_podman
+async def test_apply_schema_reapplies_permissions_for_a_delayed_table(schema_test_db):
+    # permissions/grants.sql (a blanket "grant select on all tables in schema app")
+    # has no SQL dependencies of its own, so it always applies in the first pass, at
+    # its sorted position -- before app.event, whose own filename ("event.sql")
+    # sorts alphabetically before its FK target's filename ("event_kind.sql") and
+    # so always falls to the delayed-retry pass, landing (chronologically) after
+    # permissions/grants.sql already ran. A blanket GRANT is a one-time snapshot: on
+    # its own it would never cover app.event. Confirms apply_schema() closes this by
+    # re-running every permissions-type file again after the whole tree (delayed
+    # retries included) has converged.
+    async with await psycopg.AsyncConnection.connect(_db_dsn(), autocommit=True) as con:
+        await apply_schema(con, FIXTURES)  # must not raise
+
+    # permissions/grants.sql creates this login role itself -- a fixed,
+    # non-secret password, matching pgdevkit's own testdb container convention.
+    reader_dsn = make_conninfo(
+        host=constants.HOST, port=str(constants.PORT), dbname=TEST_DB,
+        user="pgdevkit_test_reader", password="testpwd",
+    )
+    async with await psycopg.AsyncConnection.connect(reader_dsn, autocommit=True) as con:
+        async with con.cursor() as cur:
+            await cur.execute("SELECT count(*) FROM app.event")  # must not raise InsufficientPrivilege
+            (count,) = await cur.fetchone()
+    assert count == 0
 
 
 @requires_podman

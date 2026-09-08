@@ -276,6 +276,14 @@ async def apply_schema(
     """Apply every .sql file under database_dir (in dependency-safe order)
     and seed any matching .test_data.json files. Safe to call repeatedly.
 
+    Every `permissions`-type file (see `_TYPE_ORDER`) is applied a second time
+    after the whole tree has been applied (delayed-retry included) — a blanket
+    "grant ... on all tables in schema X" only covers what exists at the moment
+    it runs, and a table whose own creation got deferred to the delayed-retry
+    path (an FK to a same-type file that happens to sort later) would otherwise
+    silently miss it. GRANT is idempotent, so the second pass is a no-op for
+    anything that already had the grant.
+
     A file tagged for another environment (e.g. `grants.prod.sql` when
     `env="local_test"`) is skipped — see pgdevkit.envtag.
 
@@ -305,6 +313,7 @@ async def apply_schema(
             )
 
     failures: list[tuple[Path, str]] = []
+    permissions_files: list[tuple[Path, str]] = []
     for file, sql in _iter_sql_files(
         database_dir,
         dialect,
@@ -314,6 +323,8 @@ async def apply_schema(
         schemas=schemas,
         exclude_schemas=exclude_schemas,
     ):
+        if _get_type_order(file) == _TYPE_ORDER["permissions"]:
+            permissions_files.append((file, sql))
         try:
             await _apply(file, sql)
         except Exception as e:  # noqa: BLE001
@@ -338,3 +349,19 @@ async def apply_schema(
             assert last_error is not None
             raise last_error
         failures = still_failing
+
+    # A "permissions"-type file (e.g. `grant select, insert, update, delete on all
+    # tables in schema editing to app_role;`) has no SQL dependencies of its own —
+    # GRANT statements aren't parsed as depending on the tables they name — so it
+    # always applies in the very first pass above, at its sorted position. But a
+    # *table* with an unresolved dependency at that point (e.g. an FK to a table
+    # in a different layer directory whose filename happens to sort later) gets
+    # deferred to the delayed-retry loop inside _iter_sql_files() and only
+    # actually exists *after* the permissions file already ran — so a blanket
+    # "grant ... on all tables in schema X", being a one-time snapshot, silently
+    # never covers it. Re-running every permissions file now, after the full
+    # apply above (delayed retries included) has converged and every object
+    # genuinely exists, closes that gap. GRANT is idempotent, so this is a no-op
+    # for anything that already had the grant from the first pass.
+    for file, sql in permissions_files:
+        await _apply(file, sql)
