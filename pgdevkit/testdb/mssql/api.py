@@ -102,7 +102,17 @@ async def _insert_test_data(json_file: Path, table: str, force_reset: bool, conn
     await asyncio.to_thread(_run)
 
 
-async def _apply(config: ProjectConfig, db_name: str, force_reset: bool, env: str) -> None:
+async def _apply(
+    config: ProjectConfig,
+    db_name: str,
+    force_reset: bool,
+    *,
+    env: str = "local_test",
+    areas: frozenset[str] | None = None,
+    exclude_areas: frozenset[str] | None = None,
+    schemas: frozenset[str] | None = None,
+    exclude_schemas: frozenset[str] | None = None,
+) -> None:
     def _connect() -> Any:
         return mssql_python.connect(_db_dsn(db_name), autocommit=True)
 
@@ -111,30 +121,48 @@ async def _apply(config: ProjectConfig, db_name: str, force_reset: bool, env: st
         database_dir = config.root / config.database_dir
         if not database_dir.is_dir():
             return
-        for file, sql in _iter_sql_files(database_dir, MSSQL, env):
+        for file, sql in _iter_sql_files(
+            database_dir, MSSQL,
+            env=env, areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
+        ):
             for batch in query.split_tsql_batches(sql):
 
                 def _exec(batch: str = batch) -> None:
                     conn.cursor().execute(batch)
 
                 await asyncio.to_thread(_exec)
-            json_file = file.with_suffix(".test_data.json")
+            table_stem = strip_env_suffix(file)
+            json_file = file.parent / f"{table_stem}.test_data.json"
             if json_file.exists():
                 schema_name = _strip_layer_prefix(file.parent.parent.name)
-                table_stem = _strip_layer_prefix(strip_env_suffix(file))
-                await _insert_test_data(json_file, f"{schema_name}.{table_stem}", force_reset, conn)
+                await _insert_test_data(
+                    json_file, f"{schema_name}.{_strip_layer_prefix(table_stem)}", force_reset, conn
+                )
     finally:
         await asyncio.to_thread(conn.close)
 
 
-def ensure_testdb(config: ProjectConfig, db_name: str, force_reset: bool, env: str = "local_test") -> dict[str, str]:
+def ensure_testdb(
+    config: ProjectConfig,
+    db_name: str,
+    force_reset: bool,
+    *,
+    env: str = "local_test",
+    areas: frozenset[str] | None = None,
+    exclude_areas: frozenset[str] | None = None,
+    schemas: frozenset[str] | None = None,
+    exclude_schemas: frozenset[str] | None = None,
+) -> dict[str, str]:
     ensure_mssql_container()
 
     async def _run() -> None:
         if force_reset:
             await _drop_database(db_name)
         await _ensure_database(db_name)
-        await _apply(config, db_name, force_reset, env)
+        await _apply(
+            config, db_name, force_reset,
+            env=env, areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
+        )
 
     asyncio.run(_run())
     return _env_for(config, db_name)

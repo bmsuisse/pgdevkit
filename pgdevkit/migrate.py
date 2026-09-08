@@ -20,6 +20,8 @@ from psycopg import sql as pg_sql
 
 from .areas import filter_by_area
 from .envtag import env_allowed
+from .schemas import filter_by_schema
+from .sql_text import strip_line_comments
 
 _IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_]*"
 _DEFAULT_TRACKING_TABLE = "public.schema_migrations"
@@ -125,61 +127,12 @@ def _split_sql(sql: str) -> list[str]:
     return stmts
 
 
-def _strip_line_comments(sql: str) -> str:
-    """Drop '--' line comments, respecting string literals and $$...$$ blocks."""
-    buf: list[str] = []
-    i = 0
-    in_string = False
-    in_line_comment = False
-    dollar_tag: str | None = None
-
-    while i < len(sql):
-        c = sql[i]
-        if in_line_comment:
-            if c == "\n":
-                in_line_comment = False
-                buf.append(c)
-        elif dollar_tag is not None:
-            buf.append(c)
-            if c == "$" and sql[i:i + len(dollar_tag)] == dollar_tag:
-                buf.extend(list(dollar_tag[1:]))
-                i += len(dollar_tag)
-                dollar_tag = None
-                continue
-        elif in_string:
-            if c == "'" and i + 1 < len(sql) and sql[i + 1] == "'":
-                buf.append(c)
-                buf.append(sql[i + 1])
-                i += 2
-                continue
-            elif c == "'":
-                in_string = False
-            buf.append(c)
-        elif c == "-" and i + 1 < len(sql) and sql[i + 1] == "-":
-            in_line_comment = True
-        elif c == "$":
-            m = re.match(r"\$([A-Za-z0-9_]*)\$", sql[i:])
-            if m:
-                dollar_tag = m.group(0)
-                buf.extend(list(dollar_tag))
-                i += len(dollar_tag)
-                continue
-            buf.append(c)
-        elif c == "'":
-            in_string = True
-            buf.append(c)
-        else:
-            buf.append(c)
-        i += 1
-    return "".join(buf)
-
-
 def _created_table_names(stmts: list[str]) -> list[str]:
     """Names of tables any CREATE TABLE statement targets, parsed via sqlglot (falls back to
     regex on comment-stripped text for statements sqlglot's postgres dialect can't parse)."""
     names: list[str] = []
     for stmt in stmts:
-        stripped = _strip_line_comments(stmt)
+        stripped = strip_line_comments(stmt)
         if not re.search(r"CREATE\s+TABLE", stripped, re.IGNORECASE):
             continue  # skip sqlglot entirely for statements that can't be a CREATE TABLE
         try:
@@ -221,7 +174,7 @@ def _idempotent_target(stmt: str) -> tuple[str, ...] | None:
     COLUMN. None if the statement isn't one of these shapes — including any CREATE OR
     REPLACE, which is never safe to treat as a no-op just because the object exists, since
     the migration could be replacing it with different content."""
-    stripped = _strip_line_comments(stmt).strip()
+    stripped = strip_line_comments(stmt).strip()
     if re.search(r"\bOR\s+REPLACE\b", stripped, re.IGNORECASE):
         return None
 
@@ -282,15 +235,18 @@ def list_migration_files(
     *,
     areas: frozenset[str] | None = None,
     exclude_areas: frozenset[str] | None = None,
+    schemas: frozenset[str] | None = None,
+    exclude_schemas: frozenset[str] | None = None,
     env: str | None = None,
 ) -> list[Path]:
     """Migration files under migrations_dir, restricted by area (see
-    `.areas`) and by environment tag (see `.envtag`) — e.g. a
-    `2026-07-10_backfill.prod.sql` is only included when `env="prod"`.
-    `env=None` (the default) applies no environment filtering at all, so
-    every file is a candidate regardless of its tag."""
+    `.areas`), by schema (see `.schemas`), and by environment tag (see
+    `.envtag`) — e.g. a `2026-07-10_backfill.prod.sql` is only included when
+    `env="prod"`. `env=None` (the default) applies no environment filtering
+    at all, so every file is a candidate regardless of its tag."""
     files = sorted(migrations_dir.glob("*.sql"))
     files = filter_by_area(files, only=areas, exclude=exclude_areas)
+    files = filter_by_schema(files, only=schemas, exclude=exclude_schemas)
     return [f for f in files if env_allowed(f, env)]
 
 
@@ -314,10 +270,19 @@ def pending_migrations(
     *,
     areas: frozenset[str] | None = None,
     exclude_areas: frozenset[str] | None = None,
+    schemas: frozenset[str] | None = None,
+    exclude_schemas: frozenset[str] | None = None,
     env: str | None = None,
 ) -> list[Path]:
     applied = applied_migrations(conninfo, tracking_table)
-    files = list_migration_files(migrations_dir, areas=areas, exclude_areas=exclude_areas, env=env)
+    files = list_migration_files(
+        migrations_dir,
+        areas=areas,
+        exclude_areas=exclude_areas,
+        schemas=schemas,
+        exclude_schemas=exclude_schemas,
+        env=env,
+    )
     return [p for p in files if p.name not in applied]
 
 

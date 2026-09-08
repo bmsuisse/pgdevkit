@@ -4,9 +4,9 @@ from pgdevkit.migrate import (
     _created_table_names,
     _idempotent_target,
     _split_sql,
-    _strip_line_comments,
     default_tracking_table,
 )
+from pgdevkit.sql_text import strip_line_comments
 
 
 def test_created_table_names_ignores_create_table_mentioned_in_a_comment():
@@ -52,7 +52,7 @@ def test_created_table_names_falls_back_to_regex_for_unparseable_statements():
 
 def test_strip_line_comments_preserves_string_literals_containing_dashes():
     sql = "SELECT '--not-a-comment' AS x -- a real comment\nFROM t;"
-    stripped = _strip_line_comments(sql)
+    stripped = strip_line_comments(sql)
     assert "--not-a-comment" in stripped
     assert "a real comment" not in stripped
 

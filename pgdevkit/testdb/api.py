@@ -68,7 +68,17 @@ async def _drop_database(db_name: str) -> None:
         await con.execute(SQL("DROP DATABASE IF EXISTS {}").format(Identifier(db_name)))
 
 
-async def _apply(config: ProjectConfig, db_name: str, force_reset: bool, env: str) -> None:
+async def _apply(
+    config: ProjectConfig,
+    db_name: str,
+    force_reset: bool,
+    *,
+    env: str = "local_test",
+    areas: frozenset[str] | None = None,
+    exclude_areas: frozenset[str] | None = None,
+    schemas: frozenset[str] | None = None,
+    exclude_schemas: frozenset[str] | None = None,
+) -> None:
     async with await psycopg.AsyncConnection.connect(_db_dsn(db_name), autocommit=True) as con:
         await apply_schema(
             con,
@@ -76,11 +86,22 @@ async def _apply(config: ProjectConfig, db_name: str, force_reset: bool, env: st
             extensions=config.extensions,
             force_reset=force_reset,
             env=env,
+            areas=areas,
+            exclude_areas=exclude_areas,
+            schemas=schemas,
+            exclude_schemas=exclude_schemas,
         )
 
 
 def ensure_testdb(
-    project_root: Path | None = None, force_reset: bool = False, env: str = "local_test"
+    project_root: Path | None = None,
+    force_reset: bool = False,
+    *,
+    env: str = "local_test",
+    areas: frozenset[str] | None = None,
+    exclude_areas: frozenset[str] | None = None,
+    schemas: frozenset[str] | None = None,
+    exclude_schemas: frozenset[str] | None = None,
 ) -> dict[str, str]:
     """Ensure the shared container is running, this workspace's database
     exists, and its schema is applied. Returns the {PREFIX}POSTGRES_* env
@@ -88,10 +109,18 @@ def ensure_testdb(
     `config.engine`).
 
     `env` selects which environment-tagged files apply (see pgdevkit.envtag,
-    e.g. a `grants.prod.sql` is skipped unless env="prod")."""
+    e.g. a `grants.prod.sql` is skipped unless env="prod").
+
+    `areas`/`exclude_areas` and `schemas`/`exclude_schemas` restrict which
+    database/ files get applied -- e.g. for a test DB scoped to one area or
+    schema. Neither filters what gets *dropped* by force_reset/clean, only
+    what gets (re)applied."""
     config, db_name = _resolve(project_root)
     if config.engine == "mssql":
-        return _mssql_api().ensure_testdb(config, db_name, force_reset, env)
+        return _mssql_api().ensure_testdb(
+            config, db_name, force_reset,
+            env=env, areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
+        )
 
     ensure_container()
 
@@ -99,16 +128,30 @@ def ensure_testdb(
         if force_reset:
             await _drop_database(db_name)
         await _ensure_database(db_name)
-        await _apply(config, db_name, force_reset, env)
+        await _apply(
+            config, db_name, force_reset,
+            env=env, areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
+        )
 
     asyncio.run(_run())
     return _env_for(config, db_name)
 
 
-def reset_testdb(project_root: Path | None = None, env: str = "local_test") -> dict[str, str]:
+def reset_testdb(
+    project_root: Path | None = None,
+    *,
+    env: str = "local_test",
+    areas: frozenset[str] | None = None,
+    exclude_areas: frozenset[str] | None = None,
+    schemas: frozenset[str] | None = None,
+    exclude_schemas: frozenset[str] | None = None,
+) -> dict[str, str]:
     """Drop and recreate only this workspace's database, then reapply
     schema and seed data."""
-    return ensure_testdb(project_root, force_reset=True, env=env)
+    return ensure_testdb(
+        project_root, force_reset=True,
+        env=env, areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
+    )
 
 
 def clean_testdb(project_root: Path | None = None, all: bool = False) -> None:
