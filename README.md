@@ -114,6 +114,32 @@ would then reconstruct a duplicate file for something that already exists.
 keyword arguments (`pgdevkit.fetch_missing.find_missing_objects` doesn't,
 for the reason above).
 
+## Environment-tagged files (`<name>.<env>.sql`)
+
+A file whose name ends `.<env>.sql` (e.g. `grants.prod.sql`,
+`seed.staging.sql`) is only in scope when targeting that environment; a
+plain `<name>.sql` file is untagged and always in scope, regardless of
+environment. `.init.sql` (see `docs/database-layout.md`) is reserved and is
+never treated as an environment tag.
+
+- `pgdb testdb up`/`pgdb testdb reset` accept `--env` (default
+  `local_test`) — so an untagged `grants.sql` always applies, but
+  `grants.prod.sql` is skipped unless run with `--env prod`.
+- `pgdb migrate check`/`pgdb migrate apply` accept `--env` too, but it's
+  optional with **no** default: omit it and every file is a candidate
+  regardless of its tag (unchanged, today's behavior); pass it to restrict
+  to files tagged for that environment plus untagged ones.
+
+```bash
+pgdb testdb up --env prod   # apply prod-tagged files too, against the local test container
+pgdb migrate apply path/to/database/_migration_scripts --url ... --env prod
+```
+
+`pgdevkit.envtag` exposes the same logic for scripting: `file_env` reads a
+file's tag, `env_allowed` applies the filtering semantics above, and
+`strip_env_suffix` returns a tagged file's logical name (e.g.
+`grants.prod.sql` -> `"grants"`).
+
 ## `pgdb testdb`
 
 Manages a single shared, Podman-backed Postgres container for local tests
@@ -142,7 +168,8 @@ def ensure_test_postgres():
         os.environ[k] = v
 ```
 
-CLI: `pgdb testdb up|reset|run-sql|status|shell|clean`.
+CLI: `pgdb testdb up|reset|run-sql|status|shell|clean`. `up`/`reset` accept
+`--env` (default `local_test`) — see "Environment-tagged files" above.
 
 Container connection defaults (`localhost:54322`, `postgres`/`testpwd`) can
 be overridden with `PGDEVKIT_TESTDB_HOST`, `PGDEVKIT_TESTDB_PORT`,

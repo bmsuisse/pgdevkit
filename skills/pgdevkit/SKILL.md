@@ -253,7 +253,7 @@ sqlfmt --check db/queries/  # CI check
 
 ## The `database/` folder & backfilling untracked objects
 
-See [docs/database-layout.md](../../docs/database-layout.md) for the full convention: layer directories, object-type subfolders and their apply order, file-naming rules (`.test_data.json`, `.init.sql`, `.prod`), and how migrations are organised.
+See [docs/database-layout.md](../../docs/database-layout.md) for the full convention: layer directories, object-type subfolders and their apply order, file-naming rules (`.test_data.json`, `.init.sql`, `.<env>.sql`), and how migrations are organised.
 
 If a table, view, or function was created directly on the database and never got a `.sql` file:
 
@@ -285,6 +285,6 @@ Reports drift between the `database/` `.sql` files and the actual schema — tab
 - [ ] All parameters use `%(name)s` style with a dict argument
 - [ ] Results mapped to a Pydantic model; table-mapped models extend `PostgresTableModel`
 - [ ] No `LATERAL JOIN` — use a CTE that groups/aggregates first, then joins it
-- [ ] `.prod` files are production-only and skipped by `pgdb testdb`
+- [ ] `.<env>.sql` files (e.g. `.prod.sql`) are skipped by `pgdb testdb` unless it's run with a matching `--env`
 - [ ] Every table (and non-obvious column) has a `COMMENT ON`, placed in the object's own `.sql` file
 - [ ] Untracked DB objects backfilled via `pgdb fetch-missing`, not left undocumented
