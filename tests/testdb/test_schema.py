@@ -99,16 +99,16 @@ async def test_apply_schema_resolves_view_to_view_dependency(schema_test_db):
 
 
 @requires_podman
-async def test_apply_schema_reapplies_permissions_for_a_delayed_table(schema_test_db):
+async def test_apply_schema_applies_permissions_after_a_delayed_table(schema_test_db):
     # permissions/grants.sql (a blanket "grant select on all tables in schema app")
-    # has no SQL dependencies of its own, so it always applies in the first pass, at
-    # its sorted position -- before app.event, whose own filename ("event.sql")
-    # sorts alphabetically before its FK target's filename ("event_kind.sql") and
-    # so always falls to the delayed-retry pass, landing (chronologically) after
-    # permissions/grants.sql already ran. A blanket GRANT is a one-time snapshot: on
-    # its own it would never cover app.event. Confirms apply_schema() closes this by
-    # re-running every permissions-type file again after the whole tree (delayed
-    # retries included) has converged.
+    # has no SQL dependencies of its own -- app.event, whose own filename
+    # ("event.sql") sorts alphabetically before its FK target's filename
+    # ("event_kind.sql"), always falls to the delayed-retry pass instead of
+    # resolving on the first attempt. Without holding permissions files back
+    # unconditionally, a blanket GRANT (a one-time snapshot of whatever exists
+    # when it runs) would apply before app.event exists and never cover it.
+    # Confirms _iter_sql_files() always yields permissions-type files last,
+    # genuinely after the whole tree (delayed retries included) has converged.
     async with await psycopg.AsyncConnection.connect(_db_dsn(), autocommit=True) as con:
         await apply_schema(con, FIXTURES)  # must not raise
 

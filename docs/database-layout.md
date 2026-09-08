@@ -63,17 +63,16 @@ both together.
 One object per file: `tables/user.sql`, `views/all_edits.sql`,
 `types/measurement_unit.sql`.
 
-**`permissions` files apply twice.** A blanket `GRANT ... ON ALL TABLES IN
-SCHEMA x TO role;` only covers what exists at the moment it runs — but a
-table with a cross-file dependency that isn't resolved on the first pass
-(e.g. an FK to a table in another layer directory whose filename happens to
-sort later) can end up created *after* every `permissions` file already ran,
-via `pgdb testdb`'s delayed-retry resolution. So every `permissions` file is
-re-applied a second time, once the whole tree (delayed retries included) has
-fully converged — closing that gap. GRANT is idempotent, so the second pass
-is a no-op for anything the first pass already covered; write `permissions`
-files as if they always ran last, since — after this second pass — they
-effectively do.
+**`permissions` files always apply last, genuinely.** A blanket `GRANT ...
+ON ALL TABLES IN SCHEMA x TO role;` only covers what exists at the moment it
+runs — so if a table with a cross-file dependency that isn't resolved on the
+first pass (e.g. an FK to a table in another layer directory whose filename
+happens to sort later) got created *after* a `permissions` file, that grant
+would silently never cover it. `pgdb testdb` holds every `permissions` file
+back unconditionally and applies it only once the whole rest of the tree
+(delayed-retry resolution included) has actually finished — so write
+`permissions` files as if every table/view they reference is guaranteed to
+already exist, because it is.
 
 ---
 

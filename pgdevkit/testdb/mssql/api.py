@@ -12,7 +12,7 @@ from ...dialect import MSSQL
 from ...envtag import strip_env_suffix
 from .. import query
 from ..config import ProjectConfig
-from ..schema import _TYPE_ORDER, _get_type_order, _iter_sql_files, _strip_layer_prefix
+from ..schema import _iter_sql_files, _strip_layer_prefix
 from . import constants
 from .container import ensure_mssql_container
 
@@ -121,8 +121,10 @@ async def _apply(
         database_dir = config.root / config.database_dir
         if not database_dir.is_dir():
             return
-
-        async def _apply_file(file: Path, sql: str) -> None:
+        for file, sql in _iter_sql_files(
+            database_dir, MSSQL,
+            env=env, areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
+        ):
             for batch in query.split_tsql_batches(sql):
 
                 def _exec(batch: str = batch) -> None:
@@ -136,24 +138,6 @@ async def _apply(
                 await _insert_test_data(
                     json_file, f"{schema_name}.{_strip_layer_prefix(table_stem)}", force_reset, conn
                 )
-
-        permissions_files: list[tuple[Path, str]] = []
-        for file, sql in _iter_sql_files(
-            database_dir, MSSQL,
-            env=env, areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
-        ):
-            if _get_type_order(file) == _TYPE_ORDER["permissions"]:
-                permissions_files.append((file, sql))
-            await _apply_file(file, sql)
-
-        # Same fix as the Postgres path (see apply_schema()'s docstring/comment in
-        # ..schema): a permissions-type file has no SQL dependencies of its own, so
-        # it always applies at its sorted position in the pass above -- even before
-        # a table whose own creation got deferred by a same-type file elsewhere. Re-
-        # running permissions files now, after everything genuinely exists, closes
-        # that gap; GRANT is idempotent.
-        for file, sql in permissions_files:
-            await _apply_file(file, sql)
     finally:
         await asyncio.to_thread(conn.close)
 
