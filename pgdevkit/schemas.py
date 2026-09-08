@@ -24,6 +24,7 @@ import sqlglot
 import sqlglot.expressions as exp
 
 from .dialect import Dialect, POSTGRES, SYSTEM_SCHEMAS
+from .sql_text import strip_line_comments
 
 _CREATE_SCHEMA_RE = re.compile(
     r"CREATE\s+SCHEMA\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:AUTHORIZATION\s+)?\"?(\w+)\"?", re.IGNORECASE
@@ -32,13 +33,18 @@ _QUALIFIED_REF_RE = re.compile(r"\b(\w+)\.\w+")
 
 
 def _regex_fallback(sql: str) -> frozenset[str]:
-    """Crude schema scan used when sqlglot can't parse `sql` at all. Errs
-    toward over-matching (any `schema.name`-shaped token) rather than
-    under-matching -- a false positive here only keeps a file in scope for
-    one extra schema filter, where a false negative would silently drop it
-    from an `only` filter."""
-    schemas = set(_CREATE_SCHEMA_RE.findall(sql))
-    schemas.update(m.group(1) for m in _QUALIFIED_REF_RE.finditer(sql))
+    """Crude schema scan used when sqlglot can't parse `sql` at all, or found
+    no reference. Errs toward over-matching (any `schema.name`-shaped token)
+    rather than under-matching -- a false positive here only keeps a file in
+    scope for one extra schema filter, where a false negative would silently
+    drop it from an `only` filter. Comments are stripped first so a schema
+    merely *mentioned* in one (e.g. "-- see billing.invoice for context")
+    isn't mistaken for a real reference; string literals are left as-is
+    (matching one inside a literal is the same over-matching tradeoff as
+    above, not worth the complexity of also blanking them out)."""
+    stripped = strip_line_comments(sql)
+    schemas = set(_CREATE_SCHEMA_RE.findall(stripped))
+    schemas.update(m.group(1) for m in _QUALIFIED_REF_RE.finditer(stripped))
     return frozenset(s for s in schemas if s.lower() not in SYSTEM_SCHEMAS)
 
 
@@ -61,11 +67,13 @@ def sql_schemas(content: str, dialect: Dialect = POSTGRES) -> frozenset[str]:
             # whose "name" is the whole literal string, not a real
             # identifier -- e.g. a quoted "CREATE SCHEMA app". Guard against
             # treating that as a schema-qualified (or default-schema) table
-            # reference by requiring a *non-empty* name to actually look like
-            # one -- but still accept an empty name, which is the legitimate
-            # shape sqlglot gives a bare `CREATE SCHEMA x` (whose schema
-            # name ends up in `db`, not `this`).
-            if t.name and not re.fullmatch(r"\w+", t.name):
+            # reference by rejecting a name containing whitespace -- a real
+            # identifier, quoted or not (even one with hyphens or other
+            # punctuation), never has any, while embedded SQL text always
+            # does. Still accepts an empty name, the legitimate shape
+            # sqlglot gives a bare `CREATE SCHEMA x` (whose schema name ends
+            # up in `db`, not `this`).
+            if t.name and re.search(r"\s", t.name):
                 continue
             db_node = t.args.get("db")
             name = db_node.name if db_node else dialect.default_schema

@@ -68,6 +68,24 @@ class TestSqlSchemas:
         sql = "!!! not sql billing.invoice !!!"
         assert sql_schemas(sql) == frozenset({"billing"})
 
+    def test_quoted_identifier_with_punctuation_still_detected(self):
+        # Regression test: the EXEC(...)-misparse guard used to require the
+        # whole table name to be `\w+`, which also rejected a legitimate
+        # quoted identifier containing a hyphen -- silently dropping the
+        # schema for any file using one.
+        sql = 'CREATE TABLE billing."my-table" (id int);'
+        assert sql_schemas(sql) == frozenset({"billing"})
+
+    def test_schema_mentioned_only_in_a_comment_is_not_detected(self):
+        # Regression test: sqlglot finds no real reference here, so this
+        # falls back to the regex scan -- which must not match "billing.
+        # invoice" inside the comment as if it were a real reference. The
+        # module's own contract (a file with no detectable reference is
+        # never excluded, and never excuses a required inclusion) depends on
+        # this file coming back as truly undetectable, not falsely "billing".
+        sql = "-- see billing.invoice for context\nSELECT 1;\n"
+        assert sql_schemas(sql) == frozenset()
+
 
 class TestFileSchemas:
     def test_reads_from_disk(self, tmp_path: Path):
