@@ -29,6 +29,17 @@ _AREA_OPTION = typer.Option(
 _EXCLUDE_AREA_OPTION = typer.Option(
     [], "--exclude-area", help="Skip files declaring this area (repeatable); untagged files are never excluded"
 )
+_TESTDB_ENV_OPTION = typer.Option(
+    "local_test",
+    "--env",
+    help="Environment to apply: skips any <name>.<other-env>.sql file (e.g. grants.prod.sql); untagged files always apply",
+)
+_MIGRATE_ENV_OPTION = typer.Option(
+    None,
+    "--env",
+    help="Restrict to files tagged for this environment (e.g. <name>.prod.sql); untagged files always apply; "
+    "omit to apply every file regardless of its env tag",
+)
 
 
 def _as_area_set(values: list[str]) -> frozenset[str] | None:
@@ -188,17 +199,17 @@ def fetch_missing(
 
 
 @testdb_app.command("up")
-def testdb_up() -> None:
+def testdb_up(env: str = _TESTDB_ENV_OPTION) -> None:
     """Ensure the container is running, the workspace DB exists, and schema is applied."""
-    testdb.ensure_testdb()
+    testdb.ensure_testdb(env=env)
     info = testdb.status()
     console.print(f"[green]Test DB ready:[/green] {info['database']} ({info['dsn']})")
 
 
 @testdb_app.command("reset")
-def testdb_reset() -> None:
+def testdb_reset(env: str = _TESTDB_ENV_OPTION) -> None:
     """Drop and recreate only this workspace's database, then reapply schema + seed data."""
-    testdb.reset_testdb()
+    testdb.reset_testdb(env=env)
     info = testdb.status()
     console.print(f"[green]Test DB reset:[/green] {info['database']}")
 
@@ -272,6 +283,7 @@ def migrate_check(
     ),
     area: list[str] = _AREA_OPTION,
     exclude_area: list[str] = _EXCLUDE_AREA_OPTION,
+    env: str | None = _MIGRATE_ENV_OPTION,
 ) -> None:
     """List which migration files under migrations_dir are applied vs. pending."""
     if not migrations_dir.is_dir():
@@ -281,7 +293,7 @@ def migrate_check(
     conninfo = build_conninfo(url, entra_user)
     tracking_table = tracking_table or migrate.default_tracking_table(migrations_dir)
     local_files = migrate.list_migration_files(
-        migrations_dir, areas=_as_area_set(area), exclude_areas=_as_area_set(exclude_area)
+        migrations_dir, areas=_as_area_set(area), exclude_areas=_as_area_set(exclude_area), env=env
     )
     try:
         applied = migrate.applied_migrations(conninfo, tracking_table)
@@ -323,6 +335,7 @@ def migrate_apply(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirm-target prompt"),
     area: list[str] = _AREA_OPTION,
     exclude_area: list[str] = _EXCLUDE_AREA_OPTION,
+    env: str | None = _MIGRATE_ENV_OPTION,
 ) -> None:
     """Apply pending migration files, in filename order, tracking each in tracking_table."""
     if not migrations_dir.is_dir():
@@ -341,13 +354,15 @@ def migrate_apply(
     else:
         try:
             targets = migrate.pending_migrations(
-                migrations_dir, conninfo, tracking_table, areas=areas, exclude_areas=exclude_areas
+                migrations_dir, conninfo, tracking_table, areas=areas, exclude_areas=exclude_areas, env=env
             )
         except migrate.TrackingTableMissing:
             err_console.print(
                 f"[yellow]⚠[/yellow]  {tracking_table} not found — treating every migration as pending"
             )
-            targets = migrate.list_migration_files(migrations_dir, areas=areas, exclude_areas=exclude_areas)
+            targets = migrate.list_migration_files(
+                migrations_dir, areas=areas, exclude_areas=exclude_areas, env=env
+            )
 
     if not targets:
         console.print("No pending migrations.")

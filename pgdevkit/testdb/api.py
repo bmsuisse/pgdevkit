@@ -68,24 +68,30 @@ async def _drop_database(db_name: str) -> None:
         await con.execute(SQL("DROP DATABASE IF EXISTS {}").format(Identifier(db_name)))
 
 
-async def _apply(config: ProjectConfig, db_name: str, force_reset: bool) -> None:
+async def _apply(config: ProjectConfig, db_name: str, force_reset: bool, env: str) -> None:
     async with await psycopg.AsyncConnection.connect(_db_dsn(db_name), autocommit=True) as con:
         await apply_schema(
             con,
             config.root / config.database_dir,
             extensions=config.extensions,
             force_reset=force_reset,
+            env=env,
         )
 
 
-def ensure_testdb(project_root: Path | None = None, force_reset: bool = False) -> dict[str, str]:
+def ensure_testdb(
+    project_root: Path | None = None, force_reset: bool = False, env: str = "local_test"
+) -> dict[str, str]:
     """Ensure the shared container is running, this workspace's database
     exists, and its schema is applied. Returns the {PREFIX}POSTGRES_* env
     vars for this workspace (or the mssql equivalent's env vars, per
-    `config.engine`)."""
+    `config.engine`).
+
+    `env` selects which environment-tagged files apply (see pgdevkit.envtag,
+    e.g. a `grants.prod.sql` is skipped unless env="prod")."""
     config, db_name = _resolve(project_root)
     if config.engine == "mssql":
-        return _mssql_api().ensure_testdb(config, db_name, force_reset)
+        return _mssql_api().ensure_testdb(config, db_name, force_reset, env)
 
     ensure_container()
 
@@ -93,16 +99,16 @@ def ensure_testdb(project_root: Path | None = None, force_reset: bool = False) -
         if force_reset:
             await _drop_database(db_name)
         await _ensure_database(db_name)
-        await _apply(config, db_name, force_reset)
+        await _apply(config, db_name, force_reset, env)
 
     asyncio.run(_run())
     return _env_for(config, db_name)
 
 
-def reset_testdb(project_root: Path | None = None) -> dict[str, str]:
+def reset_testdb(project_root: Path | None = None, env: str = "local_test") -> dict[str, str]:
     """Drop and recreate only this workspace's database, then reapply
     schema and seed data."""
-    return ensure_testdb(project_root, force_reset=True)
+    return ensure_testdb(project_root, force_reset=True, env=env)
 
 
 def clean_testdb(project_root: Path | None = None, all: bool = False) -> None:

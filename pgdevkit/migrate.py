@@ -19,6 +19,7 @@ from psycopg import errors as pg_errors
 from psycopg import sql as pg_sql
 
 from .areas import filter_by_area
+from .envtag import env_allowed
 
 _IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_]*"
 _DEFAULT_TRACKING_TABLE = "public.schema_migrations"
@@ -281,9 +282,16 @@ def list_migration_files(
     *,
     areas: frozenset[str] | None = None,
     exclude_areas: frozenset[str] | None = None,
+    env: str | None = None,
 ) -> list[Path]:
+    """Migration files under migrations_dir, restricted by area (see
+    `.areas`) and by environment tag (see `.envtag`) — e.g. a
+    `2026-07-10_backfill.prod.sql` is only included when `env="prod"`.
+    `env=None` (the default) applies no environment filtering at all, so
+    every file is a candidate regardless of its tag."""
     files = sorted(migrations_dir.glob("*.sql"))
-    return filter_by_area(files, only=areas, exclude=exclude_areas)
+    files = filter_by_area(files, only=areas, exclude=exclude_areas)
+    return [f for f in files if env_allowed(f, env)]
 
 
 def applied_migrations(conninfo: str, tracking_table: str) -> dict[str, tuple[datetime, str]]:
@@ -306,9 +314,10 @@ def pending_migrations(
     *,
     areas: frozenset[str] | None = None,
     exclude_areas: frozenset[str] | None = None,
+    env: str | None = None,
 ) -> list[Path]:
     applied = applied_migrations(conninfo, tracking_table)
-    files = list_migration_files(migrations_dir, areas=areas, exclude_areas=exclude_areas)
+    files = list_migration_files(migrations_dir, areas=areas, exclude_areas=exclude_areas, env=env)
     return [p for p in files if p.name not in applied]
 
 

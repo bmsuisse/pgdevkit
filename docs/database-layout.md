@@ -71,9 +71,17 @@ One object per file: `tables/user.sql`, `views/all_edits.sql`,
 |---|---|
 | `<name>.sql` | The object's live definition (`CREATE TABLE`, `CREATE OR REPLACE VIEW`, ...) |
 | `<name>.test_data.json` | Seed rows for a table — a JSON array of row objects, loaded after the table is created |
-| `<name>.init.sql` | One-time setup for an object (e.g. a backfill), run once, kept separate from the reusable definition |
-| `<name>.prod.sql` / `.prod` anywhere in the name | Production-only (real permission grants, real user accounts) — skipped by `pgdb testdb` |
+| `<name>.init.sql` | One-time setup for an object (e.g. a backfill), run once, kept separate from the reusable definition — `init` is reserved and is never treated as an environment tag |
+| `<name>.<env>.sql` | Only applied when targeting environment `<env>` (any name you like — `prod`, `staging`, ...); a file with no such suffix is untagged and always applies, regardless of environment |
 | `all.sql` | Generated concatenation of the whole tree — not hand-edited, not committed |
+
+`pgdb testdb up`/`pgdb testdb reset` apply the `--env` they're given (default
+`local_test`) — so an untagged `grants.sql` always applies, but
+`grants.prod.sql` is skipped unless you pass `--env prod`. `pgdb migrate
+check`/`pgdb migrate apply` accept the same `--env`, but it's optional with no
+default: omit it and every file is a candidate regardless of its tag (today's
+behavior); pass it to restrict to files tagged for that environment plus
+untagged ones.
 
 ---
 
@@ -156,5 +164,5 @@ leading sort number.
 - [ ] Object-type folder (`tables`, `views`, ...) matches the apply-order table above — that's what governs ordering, not the layer's leading number
 - [ ] One-off changes go in `migrations/`, dated, never edited after applying
 - [ ] The live `.sql` file is updated in the same change as any migration touching that object
-- [ ] `.prod` files are production-only and skipped by `pgdb testdb`
+- [ ] `.<env>.sql` files (e.g. `.prod.sql`) are skipped by `pgdb testdb` unless it's run with a matching `--env`
 - [ ] Every table (and non-obvious column) has a `COMMENT ON`, placed in the object's own `.sql` file

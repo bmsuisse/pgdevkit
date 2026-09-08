@@ -15,6 +15,7 @@ from psycopg.sql import SQL, Identifier, Placeholder
 
 from ..db.complex_types import ComplexHelper
 from ..dialect import Dialect, POSTGRES
+from ..envtag import env_allowed, strip_env_suffix
 from ..parser import IGNORED_DIR_NAMES
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ _TYPE_ORDER = {
 
 
 def _get_type_order(path: Path) -> int:
-    filename = re.sub(r"^\d+(\.\d+)?", "", path.name).removeprefix("_").removesuffix(".sql")
+    filename = re.sub(r"^\d+(\.\d+)?", "", strip_env_suffix(path)).removeprefix("_")
     if filename in _TYPE_ORDER:
         return _TYPE_ORDER[filename]
     if path.parent.name in _TYPE_ORDER:
@@ -119,7 +120,7 @@ def _get_sql_deps(sql: str, dialect: Dialect = POSTGRES) -> set[str]:
     return deps
 
 
-def _iter_sql_files(database_dir: Path, dialect: Dialect = POSTGRES):
+def _iter_sql_files(database_dir: Path, dialect: Dialect = POSTGRES, env: str = "local_test"):
     """Yield (Path, sql_content) pairs in dependency-safe execution order."""
     files: list[Path] = []
     for root, dirs, dbfiles in os.walk(database_dir):
@@ -129,8 +130,9 @@ def _iter_sql_files(database_dir: Path, dialect: Dialect = POSTGRES):
         for file in dbfiles:
             if file in ("all.sql", "100_permissions.sql"):
                 continue
-            if file.endswith(".sql") and ".prod" not in file:
-                files.append(Path(root) / file)
+            path = Path(root) / file
+            if file.endswith(".sql") and env_allowed(path, env):
+                files.append(path)
 
     delivered: set[str] = set()
     delayed: list[tuple[str | None, Path, str]] = []
@@ -141,7 +143,7 @@ def _iter_sql_files(database_dir: Path, dialect: Dialect = POSTGRES):
         deps = _get_sql_deps(content, dialect)
         if file.parent.name in _SCHEMA_QUALIFIED_TYPES:
             schema = _strip_layer_prefix(file.parent.parent.name)
-            full_name = f"{schema}.{_strip_layer_prefix(file.stem)}"
+            full_name = f"{schema}.{_strip_layer_prefix(strip_env_suffix(file))}"
             deps.discard(full_name)  # the file's own CREATE target is not a real dependency
             all_declared.add(full_name)
             if not deps or all(d in delivered for d in deps):
@@ -242,9 +244,13 @@ async def apply_schema(
     force_reset: bool = False,
     *,
     dialect: Dialect = POSTGRES,
+    env: str = "local_test",
 ) -> None:
     """Apply every .sql file under database_dir (in dependency-safe order)
     and seed any matching .test_data.json files. Safe to call repeatedly.
+
+    A file tagged for another environment (e.g. `grants.prod.sql` when
+    `env="local_test"`) is skipped — see pgdevkit.envtag.
 
     `migrations/` subdirectories are never applied here — they're for
     one-time manual application against real (already-provisioned)
@@ -261,11 +267,11 @@ async def apply_schema(
         json_file = file.with_suffix(".test_data.json")
         if json_file.exists():
             schema_name = _strip_layer_prefix(file.parent.parent.name)
-            table_stem = _strip_layer_prefix(file.stem)
+            table_stem = _strip_layer_prefix(strip_env_suffix(file))
             await _insert_test_data(json_file, f"{schema_name}.{table_stem}", force_reset, con, complex_helper)
 
     failures: list[tuple[Path, str]] = []
-    for file, sql in _iter_sql_files(database_dir, dialect):
+    for file, sql in _iter_sql_files(database_dir, dialect, env):
         try:
             await _apply(file, sql)
         except Exception as e:  # noqa: BLE001

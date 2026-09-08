@@ -9,6 +9,7 @@ import mssql_python
 
 from ...db.mssql_sql import ident, json_encode_value
 from ...dialect import MSSQL
+from ...envtag import strip_env_suffix
 from .. import query
 from ..config import ProjectConfig
 from ..schema import _iter_sql_files, _strip_layer_prefix
@@ -101,7 +102,7 @@ async def _insert_test_data(json_file: Path, table: str, force_reset: bool, conn
     await asyncio.to_thread(_run)
 
 
-async def _apply(config: ProjectConfig, db_name: str, force_reset: bool) -> None:
+async def _apply(config: ProjectConfig, db_name: str, force_reset: bool, env: str) -> None:
     def _connect() -> Any:
         return mssql_python.connect(_db_dsn(db_name), autocommit=True)
 
@@ -110,7 +111,7 @@ async def _apply(config: ProjectConfig, db_name: str, force_reset: bool) -> None
         database_dir = config.root / config.database_dir
         if not database_dir.is_dir():
             return
-        for file, sql in _iter_sql_files(database_dir, MSSQL):
+        for file, sql in _iter_sql_files(database_dir, MSSQL, env):
             for batch in query.split_tsql_batches(sql):
 
                 def _exec(batch: str = batch) -> None:
@@ -120,20 +121,20 @@ async def _apply(config: ProjectConfig, db_name: str, force_reset: bool) -> None
             json_file = file.with_suffix(".test_data.json")
             if json_file.exists():
                 schema_name = _strip_layer_prefix(file.parent.parent.name)
-                table_stem = _strip_layer_prefix(file.stem)
+                table_stem = _strip_layer_prefix(strip_env_suffix(file))
                 await _insert_test_data(json_file, f"{schema_name}.{table_stem}", force_reset, conn)
     finally:
         await asyncio.to_thread(conn.close)
 
 
-def ensure_testdb(config: ProjectConfig, db_name: str, force_reset: bool) -> dict[str, str]:
+def ensure_testdb(config: ProjectConfig, db_name: str, force_reset: bool, env: str = "local_test") -> dict[str, str]:
     ensure_mssql_container()
 
     async def _run() -> None:
         if force_reset:
             await _drop_database(db_name)
         await _ensure_database(db_name)
-        await _apply(config, db_name, force_reset)
+        await _apply(config, db_name, force_reset, env)
 
     asyncio.run(_run())
     return _env_for(config, db_name)
