@@ -9,7 +9,14 @@ import psycopg
 import pytest
 
 from pgdevkit.testdb import constants
-from pgdevkit.testdb.api import clean_testdb, ensure_testdb, find_orphaned_dbs, reset_testdb, status
+from pgdevkit.testdb.api import (
+    clean_testdb,
+    ensure_testdb,
+    find_orphaned_dbs,
+    reset_testdb,
+    status,
+    workspace_db_names,
+)
 from pgdevkit.testdb.config import load_config
 from pgdevkit.testdb.naming import slugify
 from tests.testdb.conftest import requires_podman
@@ -204,3 +211,34 @@ def test_find_orphaned_dbs_respects_extra_db_suffixes(
         assert find_orphaned_dbs(repo) == [stray_db]
     finally:
         clean_testdb(repo, all=True)
+
+
+def test_workspace_db_names_is_just_the_main_db_with_no_extra_suffixes(
+    project_factory: Callable[..., Path],
+):
+    project = project_factory("wdntest", "main")
+    assert workspace_db_names(project) == {status(project)["database"]}
+
+
+def test_workspace_db_names_includes_configured_extra_db_suffixes(
+    project_factory: Callable[..., Path],
+):
+    project = project_factory("wdntest2", "main")
+    pyproject = project / "pyproject.toml"
+    pyproject.write_text(
+        pyproject.read_text(encoding="utf-8").rstrip("\n") + '\nextra_db_suffixes = ["_sibling"]\n',
+        encoding="utf-8",
+    )
+    main_db = status(project)["database"]
+    assert workspace_db_names(project) == {main_db, f"{main_db}_sibling"}
+
+
+def test_workspace_db_names_differs_from_a_sibling_worktrees_branch(
+    worktree_project_factory: Callable[..., tuple[Path, Callable[[str], Path]]],
+):
+    repo, add_worktree = worktree_project_factory("wdntest3")
+    feature = add_worktree("feature")
+
+    assert workspace_db_names(repo) == {status(repo)["database"]}
+    assert workspace_db_names(feature) == {status(feature)["database"]}
+    assert workspace_db_names(repo) != workspace_db_names(feature)

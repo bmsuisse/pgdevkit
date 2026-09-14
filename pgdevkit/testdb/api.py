@@ -189,6 +189,20 @@ def find_orphaned_dbs(project_root: Path | None = None) -> list[str]:
     return asyncio.run(_find_orphaned_dbs(config))
 
 
+def workspace_db_names(project_root: Path | None = None) -> frozenset[str]:
+    """Every DB name this exact workspace (the branch currently checked out
+    at `project_root`) owns: its main workspace DB plus one
+    `<main>{suffix}` sibling per configured `extra_db_suffixes` entry. The
+    single-workspace analog of what `find_orphaned_dbs` computes across
+    every *live* worktree -- for a caller that wants "which DBs belong to
+    this one worktree right now" (e.g. to drop them before removing the
+    worktree itself), as opposed to a whole-project orphan sweep. Engine
+    (postgres/mssql) doesn't affect naming, so this doesn't dispatch on it."""
+    config = load_config(project_root)
+    branch = current_branch(config.root)
+    return frozenset(expected_db_names(config, [branch]))
+
+
 def clean_testdb(project_root: Path | None = None, all: bool = False, orphaned: bool = False) -> None:
     """Drop this workspace's database. With all=True, drop every database
     belonging to this project (matched by its name-slug prefix), across

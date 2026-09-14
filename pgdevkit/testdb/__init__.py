@@ -7,6 +7,7 @@ from .api import (
     run_sql,
     shell_argv,
     status,
+    workspace_db_names,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "run_sql",
     "shell_argv",
     "status",
+    "workspace_db_names",
 ]
