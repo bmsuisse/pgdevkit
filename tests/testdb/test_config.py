@@ -69,3 +69,26 @@ def test_extensions_must_be_a_list(tmp_path: Path):
     )
     with pytest.raises(TypeError, match="extensions"):
         load_config(tmp_path)
+
+
+def test_extra_db_suffixes_defaults_empty(tmp_path: Path):
+    project = tmp_path / "myproj"
+    project.mkdir()
+    config = load_config(project)
+    assert config.extra_db_suffixes == ()
+
+
+def test_reads_extra_db_suffixes(tmp_path: Path):
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.pgdevkit]\nname = "ccmt"\nextra_db_suffixes = ["_onetrade"]\n', encoding="utf-8"
+    )
+    config = load_config(tmp_path)
+    assert config.extra_db_suffixes == ("_onetrade",)
+
+
+def test_extra_db_suffixes_must_be_a_list(tmp_path: Path):
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.pgdevkit]\nname = "x"\nextra_db_suffixes = "_onetrade"\n', encoding="utf-8"
+    )
+    with pytest.raises(TypeError, match="extra_db_suffixes"):
+        load_config(tmp_path)

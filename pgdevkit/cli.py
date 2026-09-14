@@ -302,10 +302,31 @@ def testdb_shell() -> None:
 @testdb_app.command("clean")
 def testdb_clean(
     all: bool = typer.Option(False, "--all", help="Drop every database belonging to this project"),
+    orphaned: bool = typer.Option(
+        False,
+        "--orphaned",
+        help="Drop only databases whose git worktree no longer exists (see `testdb list-orphaned`)",
+    ),
 ) -> None:
-    """Drop this workspace's database (or every database of this project with --all)."""
-    testdb.clean_testdb(all=all)
+    """Drop this workspace's database (or every database of this project with --all,
+    or only its orphaned ones with --orphaned)."""
+    if all and orphaned:
+        err_console.print("[red]Error:[/red] pass at most one of --all, --orphaned")
+        raise typer.Exit(2)
+    testdb.clean_testdb(all=all, orphaned=orphaned)
     console.print("[green]Cleaned.[/green]")
+
+
+@testdb_app.command("list-orphaned")
+def testdb_list_orphaned() -> None:
+    """List this project's databases whose git worktree no longer exists,
+    without dropping them."""
+    names = testdb.find_orphaned_dbs()
+    if not names:
+        console.print("No orphaned databases.")
+        return
+    for name in names:
+        console.print(name)
 
 
 @migrate_app.command("check")

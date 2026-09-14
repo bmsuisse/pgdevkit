@@ -200,8 +200,8 @@ def ensure_test_postgres():
         os.environ[k] = v
 ```
 
-CLI: `pgdb testdb up|reset|run-sql|status|shell|clean`. `up`/`reset` accept
-`--env` (default `local_test`) — see "Environment-tagged files" above.
+CLI: `pgdb testdb up|reset|run-sql|status|shell|clean|list-orphaned`. `up`/`reset`
+accept `--env` (default `local_test`) — see "Environment-tagged files" above.
 
 `up`/`reset` accept `--area`/`--exclude-area` and `--schema`/`--exclude-schema`
 (see "Area and schema filtering" above) to scope which `database/` files get
@@ -209,6 +209,27 @@ applied — e.g. `pgdb testdb up --schema billing` for a test DB with only the
 `billing` schema's tables/views/functions, without waiting on the rest of the
 project's schema to apply. `ensure_testdb`/`reset_testdb` take the same
 keyword arguments when called from Python (e.g. from a pytest fixture).
+
+Every git worktree/branch of a project gets its own database, named after
+`project_name` + branch (see `pgdevkit.testdb.naming.workspace_db_name`).
+Removing a worktree (or deleting its directory without `git worktree
+remove`) doesn't drop its database — `pgdb testdb list-orphaned` lists
+this project's databases whose worktree no longer exists, and
+`pgdb testdb clean --orphaned` drops them (as opposed to `--all`, which
+drops every database of this project regardless of whether its worktree is
+still live). The same is available from Python as
+`pgdevkit.testdb.find_orphaned_dbs()` and
+`pgdevkit.testdb.clean_testdb(orphaned=True)`.
+
+If your project's own test setup also creates a sibling database per
+worktree (e.g. `<main_db>_myservice` for a mock service used only by that
+project's tests), add its literal suffix so orphan detection knows it
+belongs to a live worktree too:
+
+```toml
+[tool.pgdevkit]
+extra_db_suffixes = ["_myservice"]
+```
 
 Container connection defaults (`localhost:54322`, `postgres`/`testpwd`) can
 be overridden with `PGDEVKIT_TESTDB_HOST`, `PGDEVKIT_TESTDB_PORT`,
