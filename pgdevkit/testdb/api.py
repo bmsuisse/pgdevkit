@@ -9,7 +9,14 @@ from psycopg.sql import SQL, Identifier
 from . import constants, query
 from .config import ProjectConfig, load_config
 from .container import ensure_container
-from .naming import current_branch, slugify, workspace_db_name
+from .naming import (
+    current_branch,
+    escape_like_prefix,
+    expected_db_names,
+    live_worktree_branches,
+    slugify,
+    workspace_db_name,
+)
 from .schema import apply_schema
 
 
@@ -66,6 +73,16 @@ async def _drop_database(db_name: str) -> None:
             {"db": db_name},
         )
         await con.execute(SQL("DROP DATABASE IF EXISTS {}").format(Identifier(db_name)))
+
+
+async def _dbs_with_prefix(prefix: str) -> list[str]:
+    escaped_prefix = escape_like_prefix(prefix)
+    async with await psycopg.AsyncConnection.connect(_admin_dsn(), autocommit=True) as con:
+        result = await con.execute(
+            "SELECT datname FROM pg_database WHERE datname LIKE %(pattern)s ESCAPE '\\'",
+            {"pattern": f"{escaped_prefix}%"},
+        )
+        return [row[0] for row in await result.fetchall()]
 
 
 async def _apply(
@@ -154,27 +171,45 @@ def reset_testdb(
     )
 
 
-def clean_testdb(project_root: Path | None = None, all: bool = False) -> None:
+async def _find_orphaned_dbs(config: ProjectConfig) -> list[str]:
+    prefix = f"{slugify(config.name)}_"
+    actual = await _dbs_with_prefix(prefix)
+    expected = expected_db_names(config, live_worktree_branches(config.root))
+    return sorted(set(actual) - expected)
+
+
+def find_orphaned_dbs(project_root: Path | None = None) -> list[str]:
+    """Databases belonging to this project (matched by its name-slug prefix)
+    that don't belong to any currently live git worktree of this repo --
+    i.e. their branch's worktree was removed (or never existed) without
+    also dropping its database."""
+    config, _ = _resolve(project_root)
+    if config.engine == "mssql":
+        return _mssql_api().find_orphaned_dbs(config)
+    return asyncio.run(_find_orphaned_dbs(config))
+
+
+def clean_testdb(project_root: Path | None = None, all: bool = False, orphaned: bool = False) -> None:
     """Drop this workspace's database. With all=True, drop every database
     belonging to this project (matched by its name-slug prefix), across
-    every worktree/branch."""
+    every worktree/branch. With orphaned=True, drop only those without a
+    currently live git worktree (see `find_orphaned_dbs`). At most one of
+    all/orphaned may be set."""
+    if all and orphaned:
+        raise ValueError("clean_testdb: pass at most one of all=True, orphaned=True")
+
     config, db_name = _resolve(project_root)
     if config.engine == "mssql":
-        _mssql_api().clean_testdb(config, db_name, all)
+        _mssql_api().clean_testdb(config, db_name, all, orphaned)
         return
 
     async def _run() -> None:
-        if not all:
-            await _drop_database(db_name)
-            return
-        prefix = f"{slugify(config.name)}_"
-        escaped_prefix = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        async with await psycopg.AsyncConnection.connect(_admin_dsn(), autocommit=True) as con:
-            result = await con.execute(
-                "SELECT datname FROM pg_database WHERE datname LIKE %(pattern)s ESCAPE '\\'",
-                {"pattern": f"{escaped_prefix}%"},
-            )
-            names = [row[0] for row in await result.fetchall()]
+        if orphaned:
+            names = await _find_orphaned_dbs(config)
+        elif all:
+            names = await _dbs_with_prefix(f"{slugify(config.name)}_")
+        else:
+            names = [db_name]
         for name in names:
             await _drop_database(name)
 

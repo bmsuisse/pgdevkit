@@ -14,6 +14,7 @@ class ProjectConfig:
     database_dir: str = "database"
     env_prefix: str = ""
     extensions: tuple[str, ...] = ()
+    extra_db_suffixes: tuple[str, ...] = ()
     engine: str = "postgres"
     root: Path = field(default_factory=Path)
 
@@ -48,6 +49,17 @@ def load_config(start: Path | None = None) -> ProjectConfig:
             f"[tool.pgdevkit].extensions in {pyproject} must be a list, got {type(extensions).__name__}"
         )
 
+    # Lets a repo that layers an extra, literally-suffixed sibling database
+    # on top of its main workspace DB (e.g. a mock-service DB used only by
+    # that repo's own test setup) teach `find_orphaned_dbs`/`clean_testdb`
+    # about it, without pgdevkit needing to know why that suffix exists.
+    extra_db_suffixes = section.get("extra_db_suffixes", [])
+    if not isinstance(extra_db_suffixes, list):
+        raise TypeError(
+            f"[tool.pgdevkit].extra_db_suffixes in {pyproject} must be a list, "
+            f"got {type(extra_db_suffixes).__name__}"
+        )
+
     # PGDEVKIT_TESTDB_ENGINE lets CI/ad-hoc runs flip engines without
     # editing pyproject.toml; the toml value is the durable, per-project
     # default (a project's database/ tree is written in one dialect, so
@@ -59,6 +71,7 @@ def load_config(start: Path | None = None) -> ProjectConfig:
         database_dir=section.get("database_dir", "database"),
         env_prefix=section.get("env_prefix", ""),
         extensions=tuple(extensions),
+        extra_db_suffixes=tuple(extra_db_suffixes),
         engine=engine,
         root=root,
     )

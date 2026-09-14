@@ -74,3 +74,23 @@ def project_factory(tmp_path: Path) -> Callable[..., Path]:
         return _make_project(tmp_path, name, branch, engine)
 
     return _factory
+
+
+@pytest.fixture
+def worktree_project_factory(tmp_path: Path) -> Callable[..., tuple[Path, Callable[[str], Path]]]:
+    """Build a real project repo (with a `[tool.pgdevkit]` pyproject.toml,
+    like `project_factory`) plus a `add_worktree(branch)` helper that adds a
+    linked `git worktree` of that same repo -- for tests that need more than
+    one *live* worktree of one repo, e.g. orphaned-DB detection."""
+
+    def _factory(name: str, main_branch: str = "main", engine: str = "postgres") -> tuple[Path, Callable[[str], Path]]:
+        repo = _make_project(tmp_path, name, main_branch, engine)
+
+        def _add_worktree(branch: str) -> Path:
+            path = tmp_path / f"{name}-{branch}"
+            subprocess.run(["git", "worktree", "add", "-q", str(path), "-b", branch], cwd=repo, check=True)
+            return path
+
+        return repo, _add_worktree
+
+    return _factory

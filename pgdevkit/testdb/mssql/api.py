@@ -168,26 +168,46 @@ def ensure_testdb(
     return _env_for(config, db_name)
 
 
-def clean_testdb(config: ProjectConfig, db_name: str, all: bool) -> None:
+async def _dbs_with_prefix(prefix: str) -> list[str]:
+    from ..naming import escape_like_prefix
+
+    escaped_prefix = escape_like_prefix(prefix)
+
+    def _list_names() -> list[str]:
+        conn = mssql_python.connect(_admin_dsn(), autocommit=True)
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT name FROM sys.databases WHERE name LIKE ? ESCAPE '\\'", [f"{escaped_prefix}%"])
+            return [row[0] for row in cur.fetchall()]
+        finally:
+            conn.close()
+
+    return await asyncio.to_thread(_list_names)
+
+
+async def _find_orphaned_dbs(config: ProjectConfig) -> list[str]:
+    from ..naming import expected_db_names, live_worktree_branches, slugify
+
+    prefix = f"{slugify(config.name)}_"
+    actual = await _dbs_with_prefix(prefix)
+    expected = expected_db_names(config, live_worktree_branches(config.root))
+    return sorted(set(actual) - expected)
+
+
+def find_orphaned_dbs(config: ProjectConfig) -> list[str]:
+    return asyncio.run(_find_orphaned_dbs(config))
+
+
+def clean_testdb(config: ProjectConfig, db_name: str, all: bool, orphaned: bool = False) -> None:
     from ..naming import slugify
 
     async def _run() -> None:
-        if not all:
-            await _drop_database(db_name)
-            return
-        prefix = f"{slugify(config.name)}_"
-        escaped_prefix = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-        def _list_names() -> list[str]:
-            conn = mssql_python.connect(_admin_dsn(), autocommit=True)
-            try:
-                cur = conn.cursor()
-                cur.execute("SELECT name FROM sys.databases WHERE name LIKE ? ESCAPE '\\'", [f"{escaped_prefix}%"])
-                return [row[0] for row in cur.fetchall()]
-            finally:
-                conn.close()
-
-        names = await asyncio.to_thread(_list_names)
+        if orphaned:
+            names = await _find_orphaned_dbs(config)
+        elif all:
+            names = await _dbs_with_prefix(f"{slugify(config.name)}_")
+        else:
+            names = [db_name]
         for name in names:
             await _drop_database(name)
 

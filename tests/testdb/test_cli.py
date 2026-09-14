@@ -105,3 +105,27 @@ def test_testdb_clean(project_factory: Callable[[str, str], Path], monkeypatch):
     runner.invoke(app, ["testdb", "up"])
     result = runner.invoke(app, ["testdb", "clean"])
     assert result.exit_code == 0, result.output
+
+
+@requires_podman
+def test_testdb_list_orphaned_reports_none_for_a_single_live_worktree(
+    project_factory: Callable[[str, str], Path], monkeypatch
+):
+    project = project_factory("clitest7", "main")
+    monkeypatch.chdir(project)
+    try:
+        runner.invoke(app, ["testdb", "up"])
+        result = runner.invoke(app, ["testdb", "list-orphaned"])
+        assert result.exit_code == 0, result.output
+        assert "No orphaned databases." in result.output
+    finally:
+        clean_testdb(project)
+
+
+def test_testdb_clean_rejects_all_and_orphaned_together(
+    project_factory: Callable[[str, str], Path], monkeypatch
+):
+    project = project_factory("clitest8", "main")
+    monkeypatch.chdir(project)
+    result = runner.invoke(app, ["testdb", "clean", "--all", "--orphaned"])
+    assert result.exit_code == 2
