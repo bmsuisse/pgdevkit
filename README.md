@@ -231,6 +231,13 @@ belongs to a live worktree too:
 extra_db_suffixes = ["_myservice"]
 ```
 
+`pgdevkit.testdb.workspace_db_names(project_root=None)` is the
+single-workspace analog of `find_orphaned_dbs()`: it returns the exact set
+of DB names (main + any `extra_db_suffixes`) owned by the branch currently
+checked out at `project_root`, without touching Postgres or diffing against
+other worktrees. Useful for a caller that's about to remove one specific
+worktree and wants to know exactly which DB(s) go with it.
+
 Container connection defaults (`localhost:54322`, `postgres`/`testpwd`) can
 be overridden with `PGDEVKIT_TESTDB_HOST`, `PGDEVKIT_TESTDB_PORT`,
 `PGDEVKIT_TESTDB_USER`, `PGDEVKIT_TESTDB_PASSWORD`. Before touching the
