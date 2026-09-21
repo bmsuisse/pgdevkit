@@ -53,6 +53,14 @@ def test_current_branch_reads_the_checked_out_branch(tmp_path: Path):
     assert current_branch(tmp_path) == "my-feature"
 
 
+def test_current_branch_env_override_skips_git_entirely(tmp_path: Path, monkeypatch):
+    # Not a git repo at all -- the override must short-circuit before the
+    # `git rev-parse` subprocess call, which would otherwise raise.
+    monkeypatch.setenv("PGDEVKIT_TESTDB_BRANCH", "ci-job-42")
+
+    assert current_branch(tmp_path) == "ci-job-42"
+
+
 def _init_repo(repo: Path, initial_branch: str) -> None:
     repo.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)

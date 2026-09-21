@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -25,7 +26,15 @@ def slugify(value: str) -> str:
 
 
 def current_branch(cwd: Path | None = None) -> str:
-    """Return the branch checked out in the git worktree rooted at cwd."""
+    """Return the branch checked out in the git worktree rooted at cwd.
+
+    PGDEVKIT_TESTDB_BRANCH overrides this when set -- lets concurrent CI
+    checkouts (which all otherwise resolve to detached-HEAD "HEAD") get
+    distinct database names on a shared test-DB container.
+    """
+    override = os.environ.get("PGDEVKIT_TESTDB_BRANCH")
+    if override:
+        return override
     result = subprocess.run(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"],
         cwd=cwd,
