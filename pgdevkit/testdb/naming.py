@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -25,7 +26,26 @@ def slugify(value: str) -> str:
 
 
 def current_branch(cwd: Path | None = None) -> str:
-    """Return the branch checked out in the git worktree rooted at cwd."""
+    """Return the branch checked out in the git worktree rooted at cwd.
+
+    PGDEVKIT_TESTDB_BRANCH overrides this when set. CI checkouts are
+    typically independent, non-worktree clones that each land in a detached
+    HEAD, so `git rev-parse --abbrev-ref HEAD` returns the literal "HEAD" in
+    every one of them; on a persistent/self-hosted runner where several such
+    checkouts can run concurrently against the same shared test-DB
+    container, that collapses every job onto the identical
+    workspace_db_name and they stomp each other's database. Set this to
+    something unique per job (e.g. a CI job id) to give each one its own
+    database instead -- note that doing so also opts that database out of
+    live_worktree_branches' detached-HEAD protection (see its docstring),
+    so an override-named database always looks orphaned to
+    find_orphaned_dbs/clean_testdb(orphaned=True); that's intentional for
+    ephemeral CI jobs, which should just clean up their own database
+    directly (clean_testdb()) rather than rely on orphan sweeping.
+    """
+    override = os.environ.get("PGDEVKIT_TESTDB_BRANCH")
+    if override:
+        return override
     result = subprocess.run(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"],
         cwd=cwd,
