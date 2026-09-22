@@ -240,11 +240,19 @@ worktree and wants to know exactly which DB(s) go with it.
 
 Container connection defaults (`localhost:54322`, `postgres`/`testpwd`) can
 be overridden with `PGDEVKIT_TESTDB_HOST`, `PGDEVKIT_TESTDB_PORT`,
-`PGDEVKIT_TESTDB_USER`, `PGDEVKIT_TESTDB_PASSWORD`. Before touching the
-Docker API, pgdevkit first checks (with a short timeout) whether Postgres
-is already reachable at that address and skips container management if so.
-Set `PGDEVKIT_SKIP_CONTAINER=1` to always assume it's already there and skip
-that check too.
+`PGDEVKIT_TESTDB_USER`, `PGDEVKIT_TESTDB_PASSWORD`, and the image with
+`PGDEVKIT_TESTDB_IMAGE`. Before touching the Docker API, pgdevkit first
+checks (with a short timeout) whether Postgres is already reachable at that
+address and skips container management if so. Set `PGDEVKIT_SKIP_CONTAINER=1`
+to always assume it's already there and skip that check too.
+
+Docker-level resource knobs are unset by default (Docker/Podman's own
+defaults apply) and can be overridden with `PGDEVKIT_TESTDB_SHM_SIZE` (e.g.
+`256m`, useful when Docker's 64MB default shared-memory size is too small
+for parallel query workers), `PGDEVKIT_TESTDB_MEM_LIMIT` (e.g. `1g`),
+`PGDEVKIT_TESTDB_CPUS` (e.g. `2` or `0.5`), and `PGDEVKIT_TESTDB_TMPFS` —
+docker-CLI `--tmpfs` syntax (`/path:options`), semicolon-separated for
+multiple mounts, e.g. `/var/lib/postgresql/data:size=512m`.
 
 Container management goes through the Docker API (the `docker` package,
 `docker.from_env()`, falling back to Podman's rootful/rootless socket) — it
@@ -270,6 +278,13 @@ Container defaults (`localhost:14330`, `sa`/a generated complexity-valid
 password) can be overridden with `PGDEVKIT_TESTDB_MSSQL_HOST`, `_PORT`,
 `_USER`, `_PASSWORD`, `_IMAGE`, `_MEMORY_LIMIT_MB`. The container only
 bootstraps the `sa` login — additional logins are a known limitation.
+
+The same Docker-level resource knobs as the Postgres container are
+available here too: `PGDEVKIT_TESTDB_MSSQL_SHM_SIZE`,
+`PGDEVKIT_TESTDB_MSSQL_MEM_LIMIT` (a container-level cgroup limit, distinct
+from `_MEMORY_LIMIT_MB` above which only tunes SQL Server's own internal
+memory management), `PGDEVKIT_TESTDB_MSSQL_CPUS`, and
+`PGDEVKIT_TESTDB_MSSQL_TMPFS`.
 `pgdb testdb shell` execs into
 [`sqlcmd`](https://github.com/microsoft/go-sqlcmd) (an external prerequisite,
 the same category as `psql` for the Postgres path) rather than a Python
