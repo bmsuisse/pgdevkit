@@ -7,7 +7,7 @@ import docker
 import docker.errors
 import psycopg
 
-from . import constants
+from . import _docker, constants
 from ._docker import client as _client
 
 
@@ -43,6 +43,12 @@ def _create_container(client: docker.DockerClient) -> None:
                 "PGTZ": "UTC",
             },
             command=["postgres", *constants.PG_STARTUP_FLAGS],
+            **_docker.resource_kwargs(
+                tmpfs=constants.TMPFS,
+                shm_size=constants.SHM_SIZE,
+                mem_limit=constants.MEM_LIMIT,
+                cpus=constants.CPUS,
+            ),
         )
     except docker.errors.APIError as e:
         if getattr(e, "status_code", None) == 409 or "already in use" in str(e):

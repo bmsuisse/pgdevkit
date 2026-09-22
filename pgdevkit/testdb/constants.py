@@ -5,11 +5,18 @@ import os
 from psycopg.conninfo import make_conninfo
 
 CONTAINER_NAME = "pgdevkit-postgres"
-IMAGE = "pgvector/pgvector:pg18-trixie"
+IMAGE = os.environ.get("PGDEVKIT_TESTDB_IMAGE", "pgvector/pgvector:pg18-trixie")
 HOST = os.environ.get("PGDEVKIT_TESTDB_HOST", "localhost")
 PORT = int(os.environ.get("PGDEVKIT_TESTDB_PORT", "54322"))
 USER = os.environ.get("PGDEVKIT_TESTDB_USER", "postgres")
 PASSWORD = os.environ.get("PGDEVKIT_TESTDB_PASSWORD", "testpwd")
+# Docker-level resource overrides, passed through to `containers.run()` --
+# unset (the default) means "let Docker/Podman use their own defaults".
+# TMPFS uses docker-CLI --tmpfs syntax; see _docker._parse_tmpfs().
+TMPFS = os.environ.get("PGDEVKIT_TESTDB_TMPFS", "")
+SHM_SIZE = os.environ.get("PGDEVKIT_TESTDB_SHM_SIZE", "")
+MEM_LIMIT = os.environ.get("PGDEVKIT_TESTDB_MEM_LIMIT", "")
+CPUS = os.environ.get("PGDEVKIT_TESTDB_CPUS", "")
 PG_SPEED_FLAGS = ["-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off"]
 # Production connects with session timezone=UTC; the container image's own default
 # (baked into its base OS, not something pgdevkit ever set) can differ, silently

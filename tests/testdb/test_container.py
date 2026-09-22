@@ -79,6 +79,30 @@ def test_create_container_forces_utc_timezone():
     assert client.containers.run_kwargs["environment"]["PGTZ"] == "UTC"
 
 
+def test_create_container_omits_resource_kwargs_by_default():
+    client = _FakeClient()
+
+    _create_container(client)
+
+    for key in ("tmpfs", "shm_size", "mem_limit", "nano_cpus"):
+        assert key not in client.containers.run_kwargs
+
+
+def test_create_container_passes_through_resource_overrides(monkeypatch):
+    monkeypatch.setattr(constants, "TMPFS", "/var/lib/postgresql/data:size=512m")
+    monkeypatch.setattr(constants, "SHM_SIZE", "256m")
+    monkeypatch.setattr(constants, "MEM_LIMIT", "1g")
+    monkeypatch.setattr(constants, "CPUS", "2")
+    client = _FakeClient()
+
+    _create_container(client)
+
+    assert client.containers.run_kwargs["tmpfs"] == {"/var/lib/postgresql/data": "size=512m"}
+    assert client.containers.run_kwargs["shm_size"] == "256m"
+    assert client.containers.run_kwargs["mem_limit"] == "1g"
+    assert client.containers.run_kwargs["nano_cpus"] == 2_000_000_000
+
+
 def _admin_dsn() -> str:
     return constants.conninfo("postgres", connect_timeout=5)
 
