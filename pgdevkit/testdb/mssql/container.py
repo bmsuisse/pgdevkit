@@ -40,6 +40,12 @@ def _create_container(client: docker.DockerClient) -> None:
                 "MSSQL_PID": "Developer",
                 "MSSQL_MEMORY_LIMIT_MB": str(constants.MEMORY_LIMIT_MB),
             },
+            **_docker.resource_kwargs(
+                tmpfs=constants.TMPFS,
+                shm_size=constants.SHM_SIZE,
+                mem_limit=constants.MEM_LIMIT,
+                cpus=constants.CPUS,
+            ),
         )
     except docker.errors.APIError as e:
         if getattr(e, "status_code", None) == 409 or "already in use" in str(e):
@@ -83,6 +89,9 @@ def ensure_mssql_container() -> None:
     except docker.errors.NotFound:
         container = None
     if container is not None:
+        # See the Postgres container's ensure_container() -- an existing
+        # (even stopped) container is just restarted as-is, so config
+        # constants only take effect via _create_container().
         if container.status != "running":
             container.start()
     else:

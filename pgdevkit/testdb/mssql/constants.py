@@ -22,6 +22,15 @@ USER = os.environ.get("PGDEVKIT_TESTDB_MSSQL_USER", "sa")
 # default -- see validate_sa_password().
 PASSWORD = os.environ.get("PGDEVKIT_TESTDB_MSSQL_PASSWORD", "TestPwd!2026")
 MEMORY_LIMIT_MB = int(os.environ.get("PGDEVKIT_TESTDB_MSSQL_MEMORY_LIMIT_MB", "2048"))
+# Docker-level resource overrides, passed through to `containers.run()` --
+# unset (the default) means "let Docker/Podman use their own defaults". Distinct
+# from MEMORY_LIMIT_MB above, which only controls SQL Server's own internal memory
+# management, not the container's actual cgroup limit. TMPFS uses docker-CLI
+# --tmpfs syntax; see _docker._parse_tmpfs().
+TMPFS = os.environ.get("PGDEVKIT_TESTDB_MSSQL_TMPFS", "")
+SHM_SIZE = os.environ.get("PGDEVKIT_TESTDB_MSSQL_SHM_SIZE", "")
+MEM_LIMIT = os.environ.get("PGDEVKIT_TESTDB_MSSQL_MEM_LIMIT", "")
+CPUS = os.environ.get("PGDEVKIT_TESTDB_MSSQL_CPUS", "")
 
 
 def validate_sa_password(password: str) -> None:

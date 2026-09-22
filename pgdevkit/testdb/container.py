@@ -7,7 +7,7 @@ import docker
 import docker.errors
 import psycopg
 
-from . import constants
+from . import _docker, constants
 from ._docker import client as _client
 
 
@@ -43,6 +43,12 @@ def _create_container(client: docker.DockerClient) -> None:
                 "PGTZ": "UTC",
             },
             command=["postgres", *constants.PG_STARTUP_FLAGS],
+            **_docker.resource_kwargs(
+                tmpfs=constants.TMPFS,
+                shm_size=constants.SHM_SIZE,
+                mem_limit=constants.MEM_LIMIT,
+                cpus=constants.CPUS,
+            ),
         )
     except docker.errors.APIError as e:
         if getattr(e, "status_code", None) == 409 or "already in use" in str(e):
@@ -79,6 +85,10 @@ def ensure_container() -> None:
     except docker.errors.NotFound:
         container = None
     if container is not None:
+        # An existing container (even stopped) is just restarted as-is --
+        # constants like TMPFS/SHM_SIZE/IMAGE/etc. only take effect via
+        # _create_container(), so changing them has no effect here until
+        # the stale container is removed. Documented in the README.
         if container.status != "running":
             container.start()
     else:

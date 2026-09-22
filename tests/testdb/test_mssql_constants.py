@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import importlib
+
 import pytest
 
+from pgdevkit.testdb.mssql import constants
 from pgdevkit.testdb.mssql.constants import conninfo, validate_sa_password
 
 
@@ -29,3 +32,34 @@ def test_conninfo_omits_driver_and_app_keys():
     assert "Driver=" not in cs
     assert "APP=" not in cs
     assert "Database=mydb" in cs
+
+
+def test_docker_resource_defaults_unset(monkeypatch):
+    monkeypatch.delenv("PGDEVKIT_TESTDB_MSSQL_TMPFS", raising=False)
+    monkeypatch.delenv("PGDEVKIT_TESTDB_MSSQL_SHM_SIZE", raising=False)
+    monkeypatch.delenv("PGDEVKIT_TESTDB_MSSQL_MEM_LIMIT", raising=False)
+    monkeypatch.delenv("PGDEVKIT_TESTDB_MSSQL_CPUS", raising=False)
+    try:
+        importlib.reload(constants)
+        assert constants.TMPFS == ""
+        assert constants.SHM_SIZE == ""
+        assert constants.MEM_LIMIT == ""
+        assert constants.CPUS == ""
+    finally:
+        importlib.reload(constants)
+
+
+def test_docker_resource_env_vars_override_defaults(monkeypatch):
+    monkeypatch.setenv("PGDEVKIT_TESTDB_MSSQL_TMPFS", "/var/opt/mssql:size=512m")
+    monkeypatch.setenv("PGDEVKIT_TESTDB_MSSQL_SHM_SIZE", "256m")
+    monkeypatch.setenv("PGDEVKIT_TESTDB_MSSQL_MEM_LIMIT", "4g")
+    monkeypatch.setenv("PGDEVKIT_TESTDB_MSSQL_CPUS", "2")
+    try:
+        importlib.reload(constants)
+        assert constants.TMPFS == "/var/opt/mssql:size=512m"
+        assert constants.SHM_SIZE == "256m"
+        assert constants.MEM_LIMIT == "4g"
+        assert constants.CPUS == "2"
+    finally:
+        monkeypatch.undo()
+        importlib.reload(constants)

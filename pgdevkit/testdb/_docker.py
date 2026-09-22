@@ -39,3 +39,36 @@ def client() -> docker.DockerClient:
         "Could not reach a Docker-compatible API. Set DOCKER_HOST, or make sure "
         "Docker or Podman's API socket is running."
     )
+
+
+def _parse_tmpfs(spec: str) -> dict[str, str]:
+    """Parse a docker-CLI-style --tmpfs spec into the dict shape docker-py's
+    `containers.run(tmpfs=...)` expects. Multiple mounts are semicolon-separated
+    (commas are already used by docker's own comma-separated mount options),
+    e.g. "/path:rw,size=64m;/other/path:ro,size=32m", matching `docker run
+    --tmpfs /path:rw,size=64m --tmpfs /other/path:ro,size=32m`."""
+    mounts: dict[str, str] = {}
+    for entry in spec.split(";"):
+        entry = entry.strip()
+        if not entry:
+            continue
+        path, _, options = entry.partition(":")
+        mounts[path] = options
+    return mounts
+
+
+def resource_kwargs(*, tmpfs: str, shm_size: str, mem_limit: str, cpus: str) -> dict:
+    """Build the `containers.run()` kwargs for the tmpfs/shm_size/mem_limit/cpus
+    overrides, omitting any that aren't set so Docker's own defaults apply.
+    Shared by the Postgres and MSSQL container modules -- these are Docker-level
+    resource knobs, not anything specific to either engine."""
+    kwargs: dict = {}
+    if tmpfs:
+        kwargs["tmpfs"] = _parse_tmpfs(tmpfs)
+    if shm_size:
+        kwargs["shm_size"] = shm_size
+    if mem_limit:
+        kwargs["mem_limit"] = mem_limit
+    if cpus:
+        kwargs["nano_cpus"] = int(float(cpus) * 1_000_000_000)
+    return kwargs
