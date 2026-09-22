@@ -85,6 +85,10 @@ def ensure_container() -> None:
     except docker.errors.NotFound:
         container = None
     if container is not None:
+        # An existing container (even stopped) is just restarted as-is --
+        # constants like TMPFS/SHM_SIZE/IMAGE/etc. only take effect via
+        # _create_container(), so changing them has no effect here until
+        # the stale container is removed. Documented in the README.
         if container.status != "running":
             container.start()
     else:

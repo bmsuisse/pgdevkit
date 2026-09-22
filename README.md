@@ -254,6 +254,12 @@ for parallel query workers), `PGDEVKIT_TESTDB_MEM_LIMIT` (e.g. `1g`),
 docker-CLI `--tmpfs` syntax (`/path:options`), semicolon-separated for
 multiple mounts, e.g. `/var/lib/postgresql/data:size=512m`.
 
+All of the above (including `_HOST`/`_PORT`/`_USER`/`_PASSWORD`/`_IMAGE`)
+only take effect when pgdevkit actually creates the container, not when it
+finds and restarts an existing stopped one with the same name — remove the
+existing container (`docker rm -f pgdevkit-postgres`) first if you've
+changed any of these on a machine that already has one.
+
 Container management goes through the Docker API (the `docker` package,
 `docker.from_env()`, falling back to Podman's rootful/rootless socket) — it
 works against a real Docker daemon or Podman transparently, no CLI binary
@@ -284,7 +290,11 @@ available here too: `PGDEVKIT_TESTDB_MSSQL_SHM_SIZE`,
 `PGDEVKIT_TESTDB_MSSQL_MEM_LIMIT` (a container-level cgroup limit, distinct
 from `_MEMORY_LIMIT_MB` above which only tunes SQL Server's own internal
 memory management), `PGDEVKIT_TESTDB_MSSQL_CPUS`, and
-`PGDEVKIT_TESTDB_MSSQL_TMPFS`.
+`PGDEVKIT_TESTDB_MSSQL_TMPFS`. As with the Postgres container, these only
+take effect when pgdevkit creates the container, not when restarting an
+existing stopped one (`docker rm -f pgdevkit-mssql` first if you've changed
+any of them).
+
 `pgdb testdb shell` execs into
 [`sqlcmd`](https://github.com/microsoft/go-sqlcmd) (an external prerequisite,
 the same category as `psql` for the Postgres path) rather than a Python

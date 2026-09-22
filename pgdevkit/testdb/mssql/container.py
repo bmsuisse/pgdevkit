@@ -89,6 +89,9 @@ def ensure_mssql_container() -> None:
     except docker.errors.NotFound:
         container = None
     if container is not None:
+        # See the Postgres container's ensure_container() -- an existing
+        # (even stopped) container is just restarted as-is, so config
+        # constants only take effect via _create_container().
         if container.status != "running":
             container.start()
     else:
