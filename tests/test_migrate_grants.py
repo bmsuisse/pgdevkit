@@ -3,7 +3,7 @@ from __future__ import annotations
 import psycopg
 import pytest
 
-from pgdevkit.migrate import execute_sql_script, missing_privileges
+from pgdevkit.migrate import created_table_names, execute_sql_script, missing_privileges
 
 ROLE = "pgdevkit_test_grants_role"
 
@@ -22,6 +22,15 @@ def app_role(clean_db: str):
         # on it" for as long as the granted-on table (e.g. widgets) still exists.
         con.execute(f"DROP OWNED BY {ROLE}")
         con.execute(f"DROP ROLE IF EXISTS {ROLE}")
+
+
+def test_created_table_names_finds_tables_in_a_raw_script():
+    sql = "GRANT SELECT ON foo TO some_role; CREATE TABLE public.widgets (id int primary key);"
+    assert created_table_names(sql) == ["public.widgets"]
+
+
+def test_created_table_names_empty_for_a_script_with_no_create_table():
+    assert created_table_names("GRANT SELECT ON ALL TABLES IN SCHEMA public TO some_role;") == []
 
 
 def test_execute_sql_script_runs_multiple_statements_in_one_transaction(clean_db: str):

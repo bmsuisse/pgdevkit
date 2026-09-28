@@ -303,6 +303,14 @@ def record_applied(conninfo: str, tracking_table: str, filename: str) -> bool:
             return False
 
 
+def created_table_names(sql: str) -> list[str]:
+    """Table names any CREATE TABLE statement in this raw SQL script targets. Public
+    wrapper around the same detection `apply_migration` uses internally, for callers that
+    run a script directly (e.g. via `execute_sql_script`) instead of through a tracked
+    migration file, and still want to know what tables -- if any -- it created."""
+    return _created_table_names(_split_sql(sql))
+
+
 def verify_created_tables(conninfo: str, stmts: list[str]) -> list[str]:
     """Table names from this migration's CREATE TABLE statements that do NOT exist in the
     database. Empty means everything landed."""
