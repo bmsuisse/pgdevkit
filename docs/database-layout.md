@@ -74,6 +74,27 @@ back unconditionally and applies it only once the whole rest of the tree
 `permissions` files as if every table/view they reference is guaranteed to
 already exist, because it is.
 
+**That guarantee is specific to `pgdb testdb` — a production apply path built
+on `pgdevkit.migrate` doesn't get it for free.** `pgdb testdb`/`ensure_testdb()`
+re-derive the whole schema from scratch every time and can afford to hold
+`permissions` back until everything else settles. A production migration
+runner is forward-only: it runs each file from `migrations`/
+`_migration_scripts` exactly once, ever, as whatever shared role the runner
+itself connects as. If your `permissions`/`grants` file goes through that
+path as an ordinary one-time migration, it covers whatever tables existed the
+one time it ran — full stop. A table added by any later migration, by any
+migrant runner or connecting role, silently never gets the grant, and the
+first symptom is a production `InsufficientPrivilege` 500 on that table.
+Two `pgdevkit.migrate` functions exist specifically to close that gap in your
+own production-apply tooling: `execute_sql_script(conninfo, sql)` runs an
+idempotent script (e.g. that same blanket `GRANT ... ON ALL TABLES IN SCHEMA`)
+outside the tracked/forward-only flow, so your tooling can re-run it
+unconditionally on every deploy instead of once; `missing_privileges(conninfo,
+role, tables)` (paired with `created_table_names(sql)` for a raw script, or
+`ApplyResult.verified_tables` from `apply_migration`) checks whether a role
+actually has the access your `permissions` file was supposed to grant it, so
+a gap surfaces immediately instead of as a later outage.
+
 ---
 
 ## File-naming conventions
