@@ -318,6 +318,36 @@ def verify_created_tables(conninfo: str, stmts: list[str]) -> list[str]:
     return missing
 
 
+def missing_privileges(conninfo: str, role: str, tables: list[str], privilege: str = "select") -> list[str]:
+    """Table names from `tables` that `role` cannot currently exercise `privilege` on
+    (checked via Postgres's own `has_table_privilege`). Empty means the role can access
+    all of them. For guarding against the classic "migration creates a table, nobody
+    grants it to the app's runtime role" gap: check the tables a migration just created
+    against the role that will actually query them at runtime."""
+    if not tables:
+        return []
+    missing = []
+    with psycopg.connect(conninfo) as con:
+        for tbl in tables:
+            row = con.execute("select has_table_privilege(%s, %s, %s)", (role, tbl, privilege)).fetchone()
+            if not (row and row[0]):
+                missing.append(tbl)
+    return missing
+
+
+def execute_sql_script(conninfo: str, sql: str) -> None:
+    """Run a raw SQL script as one committed transaction, split into statements the same
+    statement-boundary-safe way apply_migration is (dollar-quoted blocks, string literals,
+    and line comments never get split mid-statement). Unlike apply_migration, this does
+    no tracking-table bookkeeping and isn't forward-only -- for scripts meant to re-run
+    every time, like an idempotent `GRANT ... ON ALL TABLES IN SCHEMA` privilege sync."""
+    stmts = _split_sql(sql)
+    with psycopg.connect(conninfo) as con:
+        for stmt in stmts:
+            con.execute(cast(LiteralString, stmt))
+        con.commit()
+
+
 @dataclass
 class ApplyResult:
     filename: str
@@ -337,11 +367,7 @@ def apply_migration(
     stmts = _split_sql(sql)
 
     if not already_done:
-        # DDL in its own committed transaction.
-        with psycopg.connect(conninfo) as con:
-            for stmt in stmts:
-                con.execute(cast(LiteralString, stmt))
-            con.commit()
+        execute_sql_script(conninfo, sql)
 
     # Tracking insert is a separate connection/transaction so a missing tracking table
     # never rolls back the DDL that was just applied.
