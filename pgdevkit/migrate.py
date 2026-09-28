@@ -335,17 +335,20 @@ def missing_privileges(conninfo: str, role: str, tables: list[str], privilege: s
     return missing
 
 
+def _execute_stmts(conninfo: str, stmts: list[str]) -> None:
+    with psycopg.connect(conninfo) as con:
+        for stmt in stmts:
+            con.execute(cast(LiteralString, stmt))
+        con.commit()
+
+
 def execute_sql_script(conninfo: str, sql: str) -> None:
     """Run a raw SQL script as one committed transaction, split into statements the same
     statement-boundary-safe way apply_migration is (dollar-quoted blocks, string literals,
     and line comments never get split mid-statement). Unlike apply_migration, this does
     no tracking-table bookkeeping and isn't forward-only -- for scripts meant to re-run
     every time, like an idempotent `GRANT ... ON ALL TABLES IN SCHEMA` privilege sync."""
-    stmts = _split_sql(sql)
-    with psycopg.connect(conninfo) as con:
-        for stmt in stmts:
-            con.execute(cast(LiteralString, stmt))
-        con.commit()
+    _execute_stmts(conninfo, _split_sql(sql))
 
 
 @dataclass
@@ -367,7 +370,7 @@ def apply_migration(
     stmts = _split_sql(sql)
 
     if not already_done:
-        execute_sql_script(conninfo, sql)
+        _execute_stmts(conninfo, stmts)
 
     # Tracking insert is a separate connection/transaction so a missing tracking table
     # never rolls back the DDL that was just applied.
