@@ -9,7 +9,7 @@ import psycopg.sql
 from psycopg.rows import dict_row
 
 STATS_DIRNAME = "_stats"
-TABLES_FILE = "tables.json"
+TABLES_FILE = "_tables.json"
 
 _TABLES_SQL = """
 SELECT n.nspname AS schema, c.relname AS name,
@@ -100,7 +100,7 @@ def collect_stats(
 def write_stats(
     scripts_dir: Path, tables: dict[str, dict[str, Any]], columns: dict[str, dict[str, Any]]
 ) -> Path:
-    """Merge into _stats/tables.json (keys sorted; tables not in `tables` are kept)
+    """Merge into _stats/_tables.json (keys sorted; tables not in `tables` are kept)
     and write one _stats/<schema.table>.json per table for column stats."""
     path = stats_dir(scripts_dir) / TABLES_FILE
     existing: dict[str, Any] = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}

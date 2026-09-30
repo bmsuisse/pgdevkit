@@ -228,7 +228,7 @@ def update_stats(
     exact: bool = typer.Option(False, "--exact", help="Use count(*) for row counts instead of the planner estimate"),
     analyze: bool = typer.Option(False, "--analyze", help="Run ANALYZE first so column stats are fresh"),
 ) -> None:
-    """Store table stats in _stats/tables.json (keyed by schema.name, sorted)
+    """Store table stats in _stats/_tables.json (keyed by schema.name, sorted)
     and column stats in _stats/<schema.name>.json."""
     if not scripts_dir.is_dir():
         err_console.print(f"[red]Error:[/red] {scripts_dir} is not a directory")

@@ -19,7 +19,7 @@ TEST_DB = f"pgdevkit_stats_cli_selftest_{RUN_SUFFIX}"
 def test_get_stats_reads_json_without_db(tmp_path: Path):
     stats = tmp_path / "_stats"
     stats.mkdir()
-    (stats / "tables.json").write_text(json.dumps({"public.a": {"row_count": 3}, "public.b": {"row_count": 1}}))
+    (stats / "_tables.json").write_text(json.dumps({"public.a": {"row_count": 3}, "public.b": {"row_count": 1}}))
     (stats / "public.a.json").write_text(json.dumps({"id": {"data_type": "integer"}}))
 
     r = runner.invoke(app, ["get-stats", str(tmp_path), "public.a"])
@@ -48,7 +48,7 @@ def test_update_stats_then_get_stats(tmp_path: Path):
 
         r = runner.invoke(app, ["update-stats", str(tmp_path), "--url", dsn, "--exact", "--analyze"])
         assert r.exit_code == 0, r.output
-        tables = json.loads((tmp_path / "_stats" / "tables.json").read_text())
+        tables = json.loads((tmp_path / "_stats" / "_tables.json").read_text())
         assert list(tables) == ["public.alpha", "public.zeta"]
         assert tables["public.zeta"]["row_count"] == 10
         cols = json.loads((tmp_path / "_stats" / "public.zeta.json").read_text())
@@ -57,7 +57,7 @@ def test_update_stats_then_get_stats(tmp_path: Path):
         # A partial update keeps other tables' entries.
         r = runner.invoke(app, ["update-stats", str(tmp_path), "--url", dsn, "--table", "public.alpha"])
         assert r.exit_code == 0, r.output
-        assert "public.zeta" in json.loads((tmp_path / "_stats" / "tables.json").read_text())
+        assert "public.zeta" in json.loads((tmp_path / "_stats" / "_tables.json").read_text())
 
         got = json.loads(runner.invoke(app, ["get-stats", str(tmp_path), "public.zeta"]).stdout)
         assert got["public.zeta"]["columns"]["id"]["data_type"] == "integer"

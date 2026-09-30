@@ -272,12 +272,12 @@ Stats live next to the schema files, in `database/_stats/`, so they can be commi
 
 ```
 database/_stats/
-├── tables.json              # one entry per table, keyed by "schema.table", keys sorted
+├── _tables.json             # one entry per table, keyed by "schema.table", keys sorted
 └── public.users.json        # column stats for one table, keyed by column name
 ```
 
 ```json
-// tables.json
+// _tables.json
 { "public.users": { "row_count": 1200, "row_count_exact": false,
                     "table_bytes": 98304, "index_bytes": 32768, "total_bytes": 131072 } }
 // public.users.json
@@ -293,7 +293,7 @@ pgdb get-stats database/ public.users public.orders                     # JSON t
 pgdb get-stats database/ --no-columns                                   # all tables, table-level stats only
 ```
 
-To read the stats from code or a script, just `json.load` `database/_stats/tables.json` (and `database/_stats/<schema.table>.json` for columns).
+To read the stats from code or a script, just `json.load` `database/_stats/_tables.json` (and `database/_stats/<schema.table>.json` for columns).
 
 ---
 
