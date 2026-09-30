@@ -44,6 +44,12 @@ def column_stats_path(scripts_dir: Path, qualified_name: str) -> Path:
     return stats_dir(scripts_dir) / f"{qualified_name}.json"
 
 
+def _q(conn: Any, sql: Any, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(sql, params)
+        return cur.fetchall()
+
+
 def _write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -59,8 +65,8 @@ def collect_stats(
     first so column stats (null_frac/n_distinct/avg_width) are populated."""
     tables: dict[str, dict[str, Any]] = {}
     columns: dict[str, dict[str, Any]] = {}
-    with psycopg.connect(conninfo, autocommit=True, row_factory=dict_row) as conn:
-        rows = conn.execute(_TABLES_SQL).fetchall()
+    with psycopg.connect(conninfo, autocommit=True) as conn:
+        rows = _q(conn, _TABLES_SQL)
         if only is not None:
             unknown = only - {f"{r['schema']}.{r['name']}" for r in rows}
             if unknown:
@@ -75,7 +81,7 @@ def collect_stats(
             if analyze:
                 conn.execute(psycopg.sql.SQL("ANALYZE {}").format(ident))
             if exact:
-                row_count = conn.execute(psycopg.sql.SQL("SELECT count(*) AS n FROM {}").format(ident)).fetchone()["n"]  # type: ignore[index]
+                row_count = _q(conn, psycopg.sql.SQL("SELECT count(*) AS n FROM {}").format(ident))[0]["n"]
             else:
                 row_count = r["estimated_rows"] if r["estimated_rows"] >= 0 else None
             tables[qn] = {
@@ -85,10 +91,11 @@ def collect_stats(
                 "index_bytes": r["index_bytes"],
                 "total_bytes": r["total_bytes"],
             }
-            cols = conn.execute(
+            cols = _q(
+                conn,
                 _COLUMNS_SQL,
-                {"schema": r["schema"], "table": r["name"], "qualified": str(ident.as_string(conn))},
-            ).fetchall()
+                {"schema": r["schema"], "table": r["name"], "qualified": ident.as_string(conn)},
+            )
             columns[qn] = {
                 c["name"]: {
                     "data_type": c["data_type"],
