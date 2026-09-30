@@ -32,7 +32,7 @@ FROM pg_attribute a
 LEFT JOIN pg_stats s
   ON s.schemaname = %(schema)s AND s.tablename = %(table)s AND s.attname = a.attname
 WHERE a.attrelid = to_regclass(%(qualified)s) AND a.attnum > 0 AND NOT a.attisdropped
-ORDER BY a.attnum
+ORDER BY a.attnum, s.inherited NULLS FIRST
 """
 
 
@@ -61,6 +61,10 @@ def collect_stats(
     columns: dict[str, dict[str, Any]] = {}
     with psycopg.connect(conninfo, autocommit=True, row_factory=dict_row) as conn:
         rows = conn.execute(_TABLES_SQL).fetchall()
+        if only is not None:
+            unknown = only - {f"{r['schema']}.{r['name']}" for r in rows}
+            if unknown:
+                raise KeyError(", ".join(sorted(unknown)))
         for r in rows:
             qn = f"{r['schema']}.{r['name']}"
             if only is not None and qn not in only:
@@ -98,12 +102,17 @@ def collect_stats(
 
 
 def write_stats(
-    scripts_dir: Path, tables: dict[str, dict[str, Any]], columns: dict[str, dict[str, Any]]
+    scripts_dir: Path, tables: dict[str, dict[str, Any]], columns: dict[str, dict[str, Any]], prune: bool = False
 ) -> Path:
-    """Merge into _stats/_tables.json (keys sorted; tables not in `tables` are kept)
+    """Merge into _stats/_tables.json (keys sorted; tables not in `tables` are kept,
+    unless prune=True, which drops them and their column files — use for a full run)
     and write one _stats/<schema.table>.json per table for column stats."""
     path = stats_dir(scripts_dir) / TABLES_FILE
     existing: dict[str, Any] = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    if prune:
+        for gone in set(existing) - set(tables):
+            column_stats_path(scripts_dir, gone).unlink(missing_ok=True)
+        existing = {}
     existing.update(tables)
     _write_json(path, existing)
     for qn, cols in columns.items():

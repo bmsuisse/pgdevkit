@@ -234,13 +234,13 @@ def update_stats(
         err_console.print(f"[red]Error:[/red] {scripts_dir} is not a directory")
         raise typer.Exit(2)
     conninfo = build_conninfo(url, entra_user)
-    with console.status("Collecting stats..."):
-        tables, columns = stats.collect_stats(conninfo, set(table) or None, exact=exact, analyze=analyze)
-    unknown = set(table) - set(tables)
-    if unknown:
-        err_console.print(f"[red]Error:[/red] unknown table(s): {', '.join(sorted(unknown))}")
+    try:
+        with console.status("Collecting stats..."):
+            tables, columns = stats.collect_stats(conninfo, set(table) or None, exact=exact, analyze=analyze)
+    except KeyError as e:
+        err_console.print(f"[red]Error:[/red] unknown table(s): {e.args[0]}")
         raise typer.Exit(2)
-    path = stats.write_stats(scripts_dir, tables, columns)
+    path = stats.write_stats(scripts_dir, tables, columns, prune=not table)
     console.print(f"Updated stats for {len(tables)} table(s) in {path.parent}")
 
 

@@ -59,6 +59,15 @@ def test_update_stats_then_get_stats(tmp_path: Path):
         assert r.exit_code == 0, r.output
         assert "public.zeta" in json.loads((tmp_path / "_stats" / "_tables.json").read_text())
 
+        assert runner.invoke(app, ["update-stats", str(tmp_path), "--url", dsn, "--table", "public.nope"]).exit_code == 2
+
+        # A full run prunes dropped tables.
+        with psycopg.connect(dsn, autocommit=True) as con:
+            con.execute("DROP TABLE public.alpha")
+        assert runner.invoke(app, ["update-stats", str(tmp_path), "--url", dsn]).exit_code == 0
+        assert list(json.loads((tmp_path / "_stats" / "_tables.json").read_text())) == ["public.zeta"]
+        assert not (tmp_path / "_stats" / "public.alpha.json").exists()
+
         got = json.loads(runner.invoke(app, ["get-stats", str(tmp_path), "public.zeta"]).stdout)
         assert got["public.zeta"]["columns"]["id"]["data_type"] == "integer"
     finally:
