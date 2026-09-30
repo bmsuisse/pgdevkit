@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import queue
 import threading
@@ -12,7 +13,7 @@ from rich.table import Table
 from rich import box
 from tqdm import tqdm
 
-from . import migrate, testdb
+from . import migrate, stats, testdb
 from .backends import get_backend
 from .connection import build_conninfo
 from .diff import DiffKind, compute_diff
@@ -216,6 +217,46 @@ def fetch_missing(
             written += 1
 
     console.print(f"\nWrote {written} file(s).")
+
+
+@app.command("update-stats")
+def update_stats(
+    scripts_dir: Path = typer.Argument(..., help="The database/ folder; stats are written to <scripts_dir>/_stats/"),
+    url: str = typer.Option(..., "--url", help="PostgreSQL DSN (postgresql://user:pass@host:port/db)"),
+    entra_user: str | None = typer.Option(None, "--entra-user", help="Azure Entra user (triggers token auth)"),
+    table: list[str] = typer.Option([], "--table", help="Only update schema.name (repeatable); default is every table"),
+    exact: bool = typer.Option(False, "--exact", help="Use count(*) for row counts instead of the planner estimate"),
+    analyze: bool = typer.Option(False, "--analyze", help="Run ANALYZE first so column stats are fresh"),
+) -> None:
+    """Store table stats in _stats/_tables.json (keyed by schema.name, sorted)
+    and column stats in _stats/<schema.name>.json."""
+    if not scripts_dir.is_dir():
+        err_console.print(f"[red]Error:[/red] {scripts_dir} is not a directory")
+        raise typer.Exit(2)
+    conninfo = build_conninfo(url, entra_user)
+    try:
+        with console.status("Collecting stats..."):
+            tables, columns = stats.collect_stats(conninfo, set(table) or None, exact=exact, analyze=analyze)
+    except KeyError as e:
+        err_console.print(f"[red]Error:[/red] unknown table(s): {e.args[0]}")
+        raise typer.Exit(2)
+    path = stats.write_stats(scripts_dir, tables, columns, prune=not table)
+    console.print(f"Updated stats for {len(tables)} table(s) in {path.parent}")
+
+
+@app.command("get-stats")
+def get_stats(
+    scripts_dir: Path = typer.Argument(..., help="The database/ folder containing _stats/"),
+    tables: list[str] = typer.Argument(None, help="schema.name of the tables (default: all)"),
+    no_columns: bool = typer.Option(False, "--no-columns", help="Omit column stats"),
+) -> None:
+    """Print stored stats (read from the _stats JSON files, no DB access) as JSON."""
+    try:
+        result = stats.read_stats(scripts_dir, tables or [], columns=not no_columns)
+    except (FileNotFoundError, KeyError) as e:
+        err_console.print(f"[red]Error:[/red] {e.args[0]}")
+        raise typer.Exit(2)
+    typer.echo(json.dumps(result, indent=2, sort_keys=True))
 
 
 @testdb_app.command("up")
