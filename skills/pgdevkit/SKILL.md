@@ -266,6 +266,37 @@ It diffs the live schema against `database/`, reverse-engineers DDL for anything
 
 ---
 
+## Table & column stats — `pgdb update-stats` / `pgdb get-stats`
+
+Stats live next to the schema files, in `database/_stats/`, so they can be committed and read without a DB connection:
+
+```
+database/_stats/
+├── tables.json              # one entry per table, keyed by "schema.table", keys sorted
+└── public.users.json        # column stats for one table, keyed by column name
+```
+
+```json
+// tables.json
+{ "public.users": { "row_count": 1200, "row_count_exact": false,
+                    "table_bytes": 98304, "index_bytes": 32768, "total_bytes": 131072 } }
+// public.users.json
+{ "email": { "data_type": "text", "null_fraction": 0.0, "n_distinct": -1, "avg_width": 24 } }
+```
+
+`row_count` is the planner estimate (`null` if the table was never analyzed) unless `--exact` was used. Column stats come from `pg_stats` (`n_distinct` < 0 means a fraction of the row count, as in Postgres) and are `null` until the table is analyzed — pass `--analyze`.
+
+```bash
+pgdb update-stats database/ --url postgresql://... --analyze            # all tables
+pgdb update-stats database/ --url postgresql://... --table public.users --exact   # partial update, keeps other entries
+pgdb get-stats database/ public.users public.orders                     # JSON to stdout, no DB needed
+pgdb get-stats database/ --no-columns                                   # all tables, table-level stats only
+```
+
+To read the stats from code or a script, just `json.load` `database/_stats/tables.json` (and `database/_stats/<schema.table>.json` for columns).
+
+---
+
 ## Comparing scripts to a live database
 
 ```bash
