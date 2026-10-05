@@ -303,16 +303,38 @@ REPL.
 ## `pgdb migrate`
 
 Applies numbered, forward-only SQL migration files from a directory to a live
-Postgres database, tracking each one in a `schema.table` (default
-`public.schema_migrations`) so repeat runs only apply what's pending. Postgres only —
-not available for `--dialect mssql`.
+Postgres or MSSQL database, tracking each one in a `schema.table` (default
+`public.schema_migrations`, `dbo.schema_migrations` for MSSQL) so repeat runs only
+apply what's pending.
 
 ```bash
 pgdb migrate check  path/to/database/_migration_scripts --url postgresql://user:pass@host:port/db
 pgdb migrate apply  path/to/database/_migration_scripts --url postgresql://user:pass@host:port/db
 ```
 
-`--entra-user` works the same as `pgdb compare` (see above). The tracking
+### MSSQL
+
+Pass `--dialect mssql` (needs the `mssql` extra) to both `check` and `apply`, with
+`--url` as an ODBC connection string:
+
+```bash
+pgdb migrate apply path/to/database/_migration_scripts --dialect mssql \
+    --url "Server=host,1433;Database=db;UID=user;PWD=pass"
+```
+
+- Migration files are T-SQL: they are split into batches on standalone `GO` lines
+  (needed for e.g. `CREATE VIEW`, which must be first in its batch), and all batches
+  of one file run in a single transaction that is rolled back if any batch fails.
+- The tracking table needs `filename nvarchar(450) primary key, applied_at
+  datetimeoffset not null default sysdatetimeoffset(), applied_by nvarchar(128) not
+  null default suser_sname()`. As on Postgres, a migration creating it can bootstrap it.
+- `--ask` auto-detects "already done" for single-statement `GO` batches that create a
+  table, view or schema, or add a column; anything else is asked about.
+- Post-apply verification checks every `CREATE TABLE` target via `OBJECT_ID`.
+- `--entra-user` is Postgres-only, and `pgdevkit.migrate.missing_privileges` is not
+  available for MSSQL.
+
+For Postgres, `--entra-user` works the same as `pgdb compare` (see above). The tracking
 table needs `filename text primary key, applied_at timestamptz not null
 default now(), applied_by text not null default current_user` (a migration
 file that creates it, in the same directory, is the usual way to bootstrap
@@ -352,7 +374,7 @@ for a real one.
 `pgdevkit.migrate` is also usable directly as a library — `list_migration_files`,
 `applied_migrations`, `pending_migrations`, and `apply_migration` are the same
 functions the CLI calls, so a project can script around them without shelling
-out.
+out. The database-touching ones take `dialect="postgres" | "mssql"`.
 
 ## `pgdevkit.db` — helpers for application code
 
