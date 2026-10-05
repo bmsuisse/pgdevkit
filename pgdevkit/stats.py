@@ -80,7 +80,7 @@ ORDER BY c.column_id
 """
 
 # Types that can't be COUNT(DISTINCT)ed / measured with DATALENGTH.
-_MSSQL_UNMEASURABLE = {"text", "ntext", "image", "xml", "geography", "geometry", "hierarchyid", "sql_variant"}
+_MSSQL_UNMEASURABLE = {"text", "ntext", "image", "xml", "geography", "geometry", "hierarchyid", "sql_variant", "json", "vector"}
 
 
 def _mssql_q(conn: Any, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
