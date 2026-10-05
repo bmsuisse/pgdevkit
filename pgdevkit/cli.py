@@ -9,11 +9,12 @@ from pathlib import Path
 import psycopg
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 from rich import box
 from tqdm import tqdm
 
-from . import migrate, stats, testdb
+from . import migrate, migrate_mssql, stats, testdb
 from .backends import get_backend
 from .connection import build_conninfo, build_mssql_conninfo
 from .diff import DiffKind, compute_diff
@@ -73,7 +74,12 @@ app.add_typer(migrate_app, name="migrate")
 @app.command()
 def compare(
     url: str = typer.Option(..., "--url", help="PostgreSQL DSN (postgresql://user:pass@host:port/db)"),
-    entra_user: str | None = typer.Option(None, "--entra-user", help="Azure Entra user (triggers token auth)"),
+    entra_user: str | None = typer.Option(
+        None,
+        "--entra-user",
+        help="Azure Entra user (triggers token auth); with --dialect mssql this adds "
+        "Authentication=ActiveDirectoryDefault and the value itself is not used",
+    ),
     databricks_workspace_host: str | None = typer.Option(
         None,
         "--databricks-workspace-host",
@@ -103,18 +109,21 @@ def compare(
         )
 
     try:
-        conninfo = build_conninfo(
-            url,
-            entra_user,
-            databricks_workspace_host=databricks_workspace_host,
-            databricks_instance=databricks_instance,
-        )
+        backend = get_backend(dialect)
     except ValueError as e:
         err_console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(2)
 
     try:
-        backend = get_backend(dialect)
+        if backend.dialect.name == "mssql":
+            conninfo = build_mssql_conninfo(url, entra_user)
+        else:
+            conninfo = build_conninfo(
+                url,
+                entra_user,
+                databricks_workspace_host=databricks_workspace_host,
+                databricks_instance=databricks_instance,
+            )
     except ValueError as e:
         err_console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(2)
@@ -379,6 +388,19 @@ def testdb_list_orphaned() -> None:
         console.print(name)
 
 
+def _describe_target(url: str, dialect: str) -> str:
+    """Where a migrate command points, without credentials: host/db for a Postgres URL,
+    Server/Database only for an MSSQL connection string (never UID/PWD)."""
+    if dialect == "mssql":
+        parts = dict(
+            (k.strip().lower(), v.strip()) for k, _, v in (p.partition("=") for p in url.split(";")) if k.strip()
+        )
+        server = parts.get("server") or parts.get("data source") or "?"
+        database = parts.get("database") or parts.get("initial catalog")
+        return f"{server}/{database}" if database else server
+    return url.rsplit("@", 1)[-1] if "@" in url else url
+
+
 def _migrate_target(
     url: str, entra_user: str | None, dialect: str, tracking_table: str | None, migrations_dir: Path
 ) -> tuple[str, str, str]:
@@ -388,6 +410,12 @@ def _migrate_target(
     except ValueError as e:
         err_console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(2)
+    if resolved.name == "mssql":
+        try:
+            migrate_mssql.require_driver()
+        except ImportError as e:
+            err_console.print(f"[red]Error:[/red] {escape(str(e))}")
+            raise typer.Exit(2)
     try:
         conninfo = (build_mssql_conninfo if resolved.name == "mssql" else build_conninfo)(url, entra_user)
     except ValueError as e:
@@ -504,7 +532,7 @@ def migrate_apply(
     conninfo, dialect, tracking_table = _migrate_target(url, entra_user, dialect, tracking_table, migrations_dir)
     areas, exclude_areas = _as_set(area), _as_set(exclude_area)
     schemas, exclude_schemas = _as_set(schema), _as_set(exclude_schema)
-    target_desc = url.rsplit("@", 1)[-1] if "@" in url else url
+    target_desc = _describe_target(url, dialect)
     if not yes:
         typer.confirm(f"About to run migrations against {target_desc}. Continue?", abort=True)
 

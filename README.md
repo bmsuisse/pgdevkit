@@ -52,6 +52,12 @@ Requires the `mssql` extra: `pip install pgdevkit[mssql]` (pulls in
 own driver — no system ODBC driver install needed). MSSQL has no composite
 type or native enum equivalent, so those areas of a `database/` tree don't
 have a direct equivalent on this backend — see `docs/database-layout.md`.
+
+`pgdb compare --dialect mssql --entra-user <identity>` appends
+`Authentication=ActiveDirectoryDefault` to the connection string so mssql-python
+gets an Entra ID token via `DefaultAzureCredential` (also install the `azure`
+extra). The identity is whatever that credential chain resolves; the flag's
+value only switches Entra auth on.
 Current Azure SQL/SQL Server (2025+) does have a native `json` column type,
 which parses/introspects/diffs like any other column type; see
 "`pgdevkit.db` — helpers for application code" below for how JSON values are
@@ -324,10 +330,14 @@ pgdb migrate apply path/to/database/_migration_scripts --dialect mssql \
 
 - Migration files are T-SQL: they are split into batches on standalone `GO` lines
   (needed for e.g. `CREATE VIEW`, which must be first in its batch), and all batches
-  of one file run in a single transaction that is rolled back if any batch fails.
+  of one file run in a single transaction that is rolled back if any batch fails
+  (including a failure in a later statement of a multi-statement batch). `GO <count>`
+  is not honored: the batch runs once.
 - The tracking table needs `filename nvarchar(450) primary key, applied_at
   datetimeoffset not null default sysdatetimeoffset(), applied_by nvarchar(128) not
   null default suser_sname()`. As on Postgres, a migration creating it can bootstrap it.
+  Override its name with `mssql_migrations_table` in `[tool.pgdevkit]` (the Postgres
+  `migrations_table` key is deliberately ignored for MSSQL) or with `--tracking-table`.
 - `--ask` auto-detects "already done" for single-statement `GO` batches that create a
   table, view or schema, or add a column; anything else is asked about.
 - Post-apply verification checks every `CREATE TABLE` target via `OBJECT_ID`.

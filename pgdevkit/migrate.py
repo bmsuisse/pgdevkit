@@ -64,7 +64,8 @@ def _find_pyproject(start: Path) -> Path | None:
 def default_tracking_table(start: Path | None = None, dialect: str | Dialect = "postgres") -> str:
     """The project's configured tracking table: `[tool.pgdevkit].migrations_table` in the
     nearest pyproject.toml at or above `start` (default: cwd), or "public.schema_migrations"
-    if neither is set ("dbo.schema_migrations" for MSSQL). Lets a project fix its tracking table once instead of passing
+    if neither is set. For MSSQL the key is `mssql_migrations_table` (default
+    "dbo.schema_migrations"), so a Postgres-style `migrations_table` never leaks into it. Lets a project fix its tracking table once instead of passing
     --tracking-table on every `pgdb migrate` invocation."""
     default = f"{resolve_dialect(dialect).default_schema}.schema_migrations"
     pyproject = _find_pyproject((start or Path.cwd()).resolve())
@@ -72,7 +73,8 @@ def default_tracking_table(start: Path | None = None, dialect: str | Dialect = "
         return default
     data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
     section = data.get("tool", {}).get("pgdevkit", {})
-    return section.get("migrations_table", default)
+    key = "mssql_migrations_table" if resolve_dialect(dialect).name == "mssql" else "migrations_table"
+    return section.get(key, default)
 
 
 def _split_sql(sql: str) -> list[str]:

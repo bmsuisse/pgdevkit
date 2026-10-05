@@ -21,10 +21,8 @@ import re
 from datetime import datetime
 from typing import Any
 
-import mssql_python
 import sqlglot
 
-from .sql_text import strip_line_comments
 from .testdb.query import split_tsql_batches
 
 _IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_]*"
@@ -61,8 +59,58 @@ def split_batches(sql: str) -> list[str]:
     return split_tsql_batches(sql)
 
 
+def require_driver() -> None:
+    """Raise a clear ImportError if the `mssql` extra isn't installed."""
+    try:
+        import mssql_python  # noqa: F401
+    except ImportError:
+        raise ImportError("MSSQL support needs the mssql extra: pip install pgdevkit[mssql]") from None
+
+
 def connect(conninfo: str) -> Any:
+    require_driver()
+    import mssql_python
+
     return mssql_python.connect(conninfo)
+
+
+def strip_comments(sql: str) -> str:
+    """Drop `--` line comments and (nestable) `/* ... */` block comments, leaving string
+    literals and [bracketed identifiers] untouched."""
+    out: list[str] = []
+    i, n, depth = 0, len(sql), 0
+    quote: str | None = None  # "'" or "]" while inside a literal / bracketed identifier
+    while i < n:
+        c, nxt = sql[i], sql[i + 1 : i + 2]
+        if depth:
+            if c == "/" and nxt == "*":
+                depth, i = depth + 1, i + 2
+            elif c == "*" and nxt == "/":
+                depth, i = depth - 1, i + 2
+            else:
+                i += 1
+        elif quote:
+            out.append(c)
+            if c == quote:
+                if nxt == quote:  # doubled '' or ]] is an escape
+                    out.append(nxt)
+                    i += 1
+                else:
+                    quote = None
+            i += 1
+        elif c == "-" and nxt == "-":
+            while i < n and sql[i] != "\n":
+                i += 1
+        elif c == "/" and nxt == "*":
+            depth, i = 1, i + 2
+        else:
+            if c == "'":
+                quote = "'"
+            elif c == "[":
+                quote = "]"
+            out.append(c)
+            i += 1
+    return "".join(out)
 
 
 def _scalar(con: Any, sql: str, params: tuple = ()) -> Any:
@@ -131,6 +179,10 @@ def execute_batches(conninfo: str, batches: list[str]) -> None:
         try:
             for batch in batches:
                 cur.execute(batch)
+                # A statement-level error after the first statement of a batch is only
+                # reported once its result set is reached, so drain them all before commit.
+                while cur.nextset():
+                    pass
         finally:
             cur.close()
         con.commit()
@@ -142,14 +194,11 @@ def execute_batches(conninfo: str, batches: list[str]) -> None:
 
 
 def created_table_names(batches: list[str]) -> list[str]:
-    """Table names any CREATE TABLE in these batches targets. Temp tables (#x) are skipped
-    since they don't outlive the batch."""
+    """Table names any CREATE TABLE in these batches targets (comments ignored). Temp
+    tables (#x) never match `_NAME`, so they're skipped."""
     names: list[str] = []
     for batch in batches:
-        stripped = strip_line_comments(batch)
-        names.extend(
-            m.group(1) for m in _CREATE_TABLE_RE.finditer(stripped) if not m.group(1).startswith("#")
-        )
+        names.extend(m.group(1) for m in _CREATE_TABLE_RE.finditer(strip_comments(batch)))
     return names
 
 
@@ -177,7 +226,7 @@ def idempotent_target(batch: str) -> tuple[str, ...] | None:
     view, ("schema", name), or ("column", table, column) for an ADD column. Anything else
     (CREATE OR ALTER, indexes, procedures, data changes, a batch holding more than one
     statement, a multi-column ADD, ...) is None -- never guessed."""
-    stripped = strip_line_comments(batch).strip()
+    stripped = strip_comments(batch).strip()
     if re.search(r"\bOR\s+ALTER\b", stripped, re.IGNORECASE) or not _single_statement(stripped):
         return None
     for regex in (_CREATE_TABLE_RE, _CREATE_VIEW_RE):
