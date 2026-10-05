@@ -331,8 +331,12 @@ pgdb migrate apply path/to/database/_migration_scripts --dialect mssql \
 - `--ask` auto-detects "already done" for single-statement `GO` batches that create a
   table, view or schema, or add a column; anything else is asked about.
 - Post-apply verification checks every `CREATE TABLE` target via `OBJECT_ID`.
-- `--entra-user` is Postgres-only, and `pgdevkit.migrate.missing_privileges` is not
-  available for MSSQL.
+- `--entra-user` appends `Authentication=ActiveDirectoryDefault` to the connection
+  string, so mssql-python fetches an Entra ID token through azure-identity's
+  `DefaultAzureCredential` (install `pgdevkit[mssql,azure]`). The identity is whatever
+  that credential chain resolves — the flag's value only switches Entra auth on. It
+  can't be combined with an `Authentication=` already in the connection string.
+- `pgdevkit.migrate.missing_privileges` is not available for MSSQL.
 
 For Postgres, `--entra-user` works the same as `pgdb compare` (see above). The tracking
 table needs `filename text primary key, applied_at timestamptz not null

@@ -15,7 +15,7 @@ from tqdm import tqdm
 
 from . import migrate, stats, testdb
 from .backends import get_backend
-from .connection import build_conninfo
+from .connection import build_conninfo, build_mssql_conninfo
 from .diff import DiffKind, compute_diff
 from .fetch_missing import SUBFOLDER, find_missing_objects, layer_folder_for, reconstruct_ddl
 from .parser import parse_directory
@@ -388,10 +388,11 @@ def _migrate_target(
     except ValueError as e:
         err_console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(2)
-    if resolved.name == "mssql" and entra_user:
-        err_console.print("[red]Error:[/red] --entra-user is only supported for the postgres dialect")
+    try:
+        conninfo = (build_mssql_conninfo if resolved.name == "mssql" else build_conninfo)(url, entra_user)
+    except ValueError as e:
+        err_console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(2)
-    conninfo = url if resolved.name == "mssql" else build_conninfo(url, entra_user)
     tracking_table = tracking_table or migrate.default_tracking_table(migrations_dir, dialect=resolved)
     return conninfo, resolved.name, tracking_table
 
@@ -405,7 +406,12 @@ def migrate_check(
         help="PostgreSQL DSN (postgresql://user:pass@host:port/db), or with --dialect mssql "
         "a connection string (Server=host,1433;Database=db;UID=user;PWD=pass)",
     ),
-    entra_user: str | None = typer.Option(None, "--entra-user", help="Azure Entra user (triggers token auth)"),
+    entra_user: str | None = typer.Option(
+        None,
+        "--entra-user",
+        help="Azure Entra user (triggers token auth); with --dialect mssql this adds "
+        "Authentication=ActiveDirectoryDefault and the value itself is not used",
+    ),
     tracking_table: str | None = typer.Option(
         None,
         "--tracking-table",
@@ -465,7 +471,12 @@ def migrate_apply(
         help="PostgreSQL DSN (postgresql://user:pass@host:port/db), or with --dialect mssql "
         "a connection string (Server=host,1433;Database=db;UID=user;PWD=pass)",
     ),
-    entra_user: str | None = typer.Option(None, "--entra-user", help="Azure Entra user (triggers token auth)"),
+    entra_user: str | None = typer.Option(
+        None,
+        "--entra-user",
+        help="Azure Entra user (triggers token auth); with --dialect mssql this adds "
+        "Authentication=ActiveDirectoryDefault and the value itself is not used",
+    ),
     tracking_table: str | None = typer.Option(
         None,
         "--tracking-table",

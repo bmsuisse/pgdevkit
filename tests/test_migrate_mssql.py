@@ -213,9 +213,34 @@ def test_cli_check_and_apply_with_mssql_dialect(fake: FakeConnection, tmp_path: 
     assert any("insert into [dbo].[schema_migrations]" in s for s in fake.sql())
 
 
-def test_cli_rejects_entra_user_and_unknown_dialect(tmp_path: Path):
+def test_build_mssql_conninfo():
+    from pgdevkit.connection import build_mssql_conninfo
+
+    assert build_mssql_conninfo("Server=x;Database=d") == "Server=x;Database=d"
+    assert (
+        build_mssql_conninfo("Server=x;Database=d;", "a@b.c")
+        == "Server=x;Database=d;Authentication=ActiveDirectoryDefault"
+    )
+    with pytest.raises(ValueError):
+        build_mssql_conninfo("Server=x;authentication = ActiveDirectoryMSI", "a@b.c")
+
+
+def test_cli_entra_user_with_mssql_adds_authentication(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    seen: list[str] = []
+    con = FakeConnection(objects={"[dbo].[schema_migrations]"})
+    monkeypatch.setattr(migrate_mssql, "connect", lambda conninfo: (seen.append(conninfo), con)[1])
     result = runner.invoke(
         app, ["migrate", "check", str(tmp_path), "--url", "Server=x", "--dialect", "mssql", "--entra-user", "a@b.c"]
+    )
+    assert result.exit_code == 0, result.output
+    assert seen == ["Server=x;Authentication=ActiveDirectoryDefault"]
+
+
+def test_cli_rejects_conflicting_authentication_and_unknown_dialect(tmp_path: Path):
+    result = runner.invoke(
+        app,
+        ["migrate", "check", str(tmp_path), "--url", "Server=x;Authentication=ActiveDirectoryMSI",
+         "--dialect", "mssql", "--entra-user", "a@b.c"],
     )
     assert result.exit_code == 2
     result = runner.invoke(app, ["migrate", "check", str(tmp_path), "--url", "x", "--dialect", "oracle"])
