@@ -293,6 +293,8 @@ pgdb get-stats database/ public.users public.orders                     # JSON t
 pgdb get-stats database/ --no-columns                                   # all tables, table-level stats only
 ```
 
+MSSQL: add `--dialect mssql` (needs the `mssql` extra). Row counts and sizes come from `sys.dm_db_partition_stats`; SQL Server has no `pg_stats`, so column `null_fraction`/`n_distinct`/`avg_width` are `null` unless `--exact` is given, which scans each table to compute them. `--analyze` runs `UPDATE STATISTICS`.
+
 To read the stats from code or a script, just `json.load` `database/_stats/_tables.json` (and `database/_stats/<schema.table>.json` for columns).
 
 ---

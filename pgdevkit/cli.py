@@ -227,6 +227,7 @@ def update_stats(
     table: list[str] = typer.Option([], "--table", help="Only update schema.name (repeatable); default is every table"),
     exact: bool = typer.Option(False, "--exact", help="Use count(*) for row counts instead of the planner estimate"),
     analyze: bool = typer.Option(False, "--analyze", help="Run ANALYZE first so column stats are fresh"),
+    dialect: str = typer.Option("postgres", "--dialect", help="postgres (default) or mssql"),
 ) -> None:
     """Store table stats in _stats/_tables.json (keyed by schema.name, sorted)
     and column stats in _stats/<schema.name>.json."""
@@ -236,9 +237,12 @@ def update_stats(
     conninfo = build_conninfo(url, entra_user)
     try:
         with console.status("Collecting stats..."):
-            tables, columns = stats.collect_stats(conninfo, set(table) or None, exact=exact, analyze=analyze)
+            tables, columns = stats.collect_stats(conninfo, set(table) or None, exact=exact, analyze=analyze, dialect=dialect)
     except KeyError as e:
         err_console.print(f"[red]Error:[/red] unknown table(s): {e.args[0]}")
+        raise typer.Exit(2)
+    except ValueError as e:
+        err_console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(2)
     path = stats.write_stats(scripts_dir, tables, columns, prune=not table)
     console.print(f"Updated stats for {len(tables)} table(s) in {path.parent}")
