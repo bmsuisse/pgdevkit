@@ -9,13 +9,14 @@ from pathlib import Path
 import psycopg
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 from rich import box
 from tqdm import tqdm
 
-from . import migrate, stats, testdb
+from . import migrate, migrate_mssql, stats, testdb
 from .backends import get_backend
-from .connection import build_conninfo
+from .connection import build_conninfo, build_mssql_conninfo
 from .diff import DiffKind, compute_diff
 from .fetch_missing import SUBFOLDER, find_missing_objects, layer_folder_for, reconstruct_ddl
 from .parser import parse_directory
@@ -47,6 +48,9 @@ _TESTDB_ENV_OPTION = typer.Option(
     "--env",
     help="Environment to apply: skips any <name>.<other-env>.sql file (e.g. grants.prod.sql); untagged files always apply",
 )
+_MIGRATE_DIALECT_OPTION = typer.Option(
+    "postgres", "--dialect", help="postgres (default) or mssql; mssql needs the mssql extra and uses --url as an ODBC connection string"
+)
 _MIGRATE_ENV_OPTION = typer.Option(
     None,
     "--env",
@@ -70,7 +74,12 @@ app.add_typer(migrate_app, name="migrate")
 @app.command()
 def compare(
     url: str = typer.Option(..., "--url", help="PostgreSQL DSN (postgresql://user:pass@host:port/db)"),
-    entra_user: str | None = typer.Option(None, "--entra-user", help="Azure Entra user (triggers token auth)"),
+    entra_user: str | None = typer.Option(
+        None,
+        "--entra-user",
+        help="Azure Entra user (triggers token auth); with --dialect mssql this adds "
+        "Authentication=ActiveDirectoryDefault and the value itself is not used",
+    ),
     databricks_workspace_host: str | None = typer.Option(
         None,
         "--databricks-workspace-host",
@@ -100,18 +109,21 @@ def compare(
         )
 
     try:
-        conninfo = build_conninfo(
-            url,
-            entra_user,
-            databricks_workspace_host=databricks_workspace_host,
-            databricks_instance=databricks_instance,
-        )
+        backend = get_backend(dialect)
     except ValueError as e:
         err_console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(2)
 
     try:
-        backend = get_backend(dialect)
+        if backend.dialect.name == "mssql":
+            conninfo = build_mssql_conninfo(url, entra_user)
+        else:
+            conninfo = build_conninfo(
+                url,
+                entra_user,
+                databricks_workspace_host=databricks_workspace_host,
+                databricks_instance=databricks_instance,
+            )
     except ValueError as e:
         err_console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(2)
@@ -376,30 +388,78 @@ def testdb_list_orphaned() -> None:
         console.print(name)
 
 
+def _describe_target(url: str, dialect: str) -> str:
+    """Where a migrate command points, without credentials: host/db for a Postgres URL,
+    Server/Database only for an MSSQL connection string (never UID/PWD)."""
+    if dialect == "mssql":
+        parts = dict(
+            (k.strip().lower(), v.strip()) for k, _, v in (p.partition("=") for p in url.split(";")) if k.strip()
+        )
+        server = parts.get("server") or parts.get("data source") or "?"
+        database = parts.get("database") or parts.get("initial catalog")
+        return f"{server}/{database}" if database else server
+    return url.rsplit("@", 1)[-1] if "@" in url else url
+
+
+def _migrate_target(
+    url: str, entra_user: str | None, dialect: str, tracking_table: str | None, migrations_dir: Path
+) -> tuple[str, str, str]:
+    """Resolve (conninfo, dialect name, tracking table) for a migrate command."""
+    try:
+        resolved = get_backend(dialect).dialect
+    except ValueError as e:
+        err_console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(2)
+    if resolved.name == "mssql":
+        try:
+            migrate_mssql.require_driver()
+        except ImportError as e:
+            err_console.print(f"[red]Error:[/red] {escape(str(e))}")
+            raise typer.Exit(2)
+    try:
+        conninfo = (build_mssql_conninfo if resolved.name == "mssql" else build_conninfo)(url, entra_user)
+    except ValueError as e:
+        err_console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(2)
+    tracking_table = tracking_table or migrate.default_tracking_table(migrations_dir, dialect=resolved)
+    return conninfo, resolved.name, tracking_table
+
+
 @migrate_app.command("check")
 def migrate_check(
     migrations_dir: Path = typer.Argument(..., help="Directory of numbered .sql migration files"),
-    url: str = typer.Option(..., "--url", help="PostgreSQL DSN (postgresql://user:pass@host:port/db)"),
-    entra_user: str | None = typer.Option(None, "--entra-user", help="Azure Entra user (triggers token auth)"),
+    url: str = typer.Option(
+        ...,
+        "--url",
+        help="PostgreSQL DSN (postgresql://user:pass@host:port/db), or with --dialect mssql "
+        "a connection string (Server=host,1433;Database=db;UID=user;PWD=pass)",
+    ),
+    entra_user: str | None = typer.Option(
+        None,
+        "--entra-user",
+        help="Azure Entra user (triggers token auth); with --dialect mssql this adds "
+        "Authentication=ActiveDirectoryDefault and the value itself is not used",
+    ),
     tracking_table: str | None = typer.Option(
         None,
         "--tracking-table",
         help="schema.table recording applied migrations "
-        "(default: tool.pgdevkit.migrations_table in pyproject.toml, else public.schema_migrations)",
+        "(default: tool.pgdevkit.migrations_table in pyproject.toml, else public.schema_migrations "
+        "-- dbo.schema_migrations with --dialect mssql)",
     ),
     area: list[str] = _AREA_OPTION,
     exclude_area: list[str] = _EXCLUDE_AREA_OPTION,
     schema: list[str] = _SCHEMA_OPTION,
     exclude_schema: list[str] = _EXCLUDE_SCHEMA_OPTION,
     env: str | None = _MIGRATE_ENV_OPTION,
+    dialect: str = _MIGRATE_DIALECT_OPTION,
 ) -> None:
     """List which migration files under migrations_dir are applied vs. pending."""
     if not migrations_dir.is_dir():
         err_console.print(f"[red]Error:[/red] {migrations_dir} is not a directory")
         raise typer.Exit(2)
 
-    conninfo = build_conninfo(url, entra_user)
-    tracking_table = tracking_table or migrate.default_tracking_table(migrations_dir)
+    conninfo, dialect, tracking_table = _migrate_target(url, entra_user, dialect, tracking_table, migrations_dir)
     local_files = migrate.list_migration_files(
         migrations_dir,
         areas=_as_set(area),
@@ -409,7 +469,7 @@ def migrate_check(
         env=env,
     )
     try:
-        applied = migrate.applied_migrations(conninfo, tracking_table)
+        applied = migrate.applied_migrations(conninfo, tracking_table, dialect)
     except migrate.TrackingTableMissing:
         err_console.print(f"[yellow]⚠[/yellow]  {tracking_table} not found — nothing recorded as applied yet")
         applied = {}
@@ -433,13 +493,24 @@ def migrate_check(
 @migrate_app.command("apply")
 def migrate_apply(
     migrations_dir: Path = typer.Argument(..., help="Directory of numbered .sql migration files"),
-    url: str = typer.Option(..., "--url", help="PostgreSQL DSN (postgresql://user:pass@host:port/db)"),
-    entra_user: str | None = typer.Option(None, "--entra-user", help="Azure Entra user (triggers token auth)"),
+    url: str = typer.Option(
+        ...,
+        "--url",
+        help="PostgreSQL DSN (postgresql://user:pass@host:port/db), or with --dialect mssql "
+        "a connection string (Server=host,1433;Database=db;UID=user;PWD=pass)",
+    ),
+    entra_user: str | None = typer.Option(
+        None,
+        "--entra-user",
+        help="Azure Entra user (triggers token auth); with --dialect mssql this adds "
+        "Authentication=ActiveDirectoryDefault and the value itself is not used",
+    ),
     tracking_table: str | None = typer.Option(
         None,
         "--tracking-table",
         help="schema.table recording applied migrations "
-        "(default: tool.pgdevkit.migrations_table in pyproject.toml, else public.schema_migrations)",
+        "(default: tool.pgdevkit.migrations_table in pyproject.toml, else public.schema_migrations "
+        "-- dbo.schema_migrations with --dialect mssql)",
     ),
     file: str | None = typer.Option(
         None, "--file", help="Apply only this one filename (relative to migrations_dir) instead of all pending"
@@ -451,17 +522,17 @@ def migrate_apply(
     schema: list[str] = _SCHEMA_OPTION,
     exclude_schema: list[str] = _EXCLUDE_SCHEMA_OPTION,
     env: str | None = _MIGRATE_ENV_OPTION,
+    dialect: str = _MIGRATE_DIALECT_OPTION,
 ) -> None:
     """Apply pending migration files, in filename order, tracking each in tracking_table."""
     if not migrations_dir.is_dir():
         err_console.print(f"[red]Error:[/red] {migrations_dir} is not a directory")
         raise typer.Exit(2)
 
-    conninfo = build_conninfo(url, entra_user)
-    tracking_table = tracking_table or migrate.default_tracking_table(migrations_dir)
+    conninfo, dialect, tracking_table = _migrate_target(url, entra_user, dialect, tracking_table, migrations_dir)
     areas, exclude_areas = _as_set(area), _as_set(exclude_area)
     schemas, exclude_schemas = _as_set(schema), _as_set(exclude_schema)
-    target_desc = url.rsplit("@", 1)[-1] if "@" in url else url
+    target_desc = _describe_target(url, dialect)
     if not yes:
         typer.confirm(f"About to run migrations against {target_desc}. Continue?", abort=True)
 
@@ -478,6 +549,7 @@ def migrate_apply(
                 schemas=schemas,
                 exclude_schemas=exclude_schemas,
                 env=env,
+                dialect=dialect,
             )
         except migrate.TrackingTableMissing:
             err_console.print(
@@ -517,7 +589,9 @@ def migrate_apply(
         for path, already_done in iter(work_q.get, None):
             if not stop.is_set():
                 try:
-                    result = migrate.apply_migration(conninfo, path, tracking_table, already_done=already_done)
+                    result = migrate.apply_migration(
+                        conninfo, path, tracking_table, already_done=already_done, dialect=dialect
+                    )
                 except Exception as e:  # noqa: BLE001
                     failure = e
                     stop.set()
@@ -544,7 +618,7 @@ def migrate_apply(
             break
         already_done = False
         if ask:
-            already_done = migrate.already_fully_applied(conninfo, path)
+            already_done = migrate.already_fully_applied(conninfo, path, dialect)
             if already_done:
                 bar_write(f"Auto: {path.name} is already fully present in the database — marking as already done")
             else:

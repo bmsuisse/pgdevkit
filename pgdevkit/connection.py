@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Literal
 from urllib.parse import quote, urlparse, urlunparse
 
@@ -65,6 +66,21 @@ def get_azure_postgres_password(
         credential = _default_credential
     token = credential.get_token("https://ossrdbms-aad.database.windows.net/.default")
     return token.token
+
+
+def build_mssql_conninfo(conn_str: str, entra_user: str | None = None) -> str:
+    """MSSQL counterpart of `build_conninfo`. Without `entra_user` the ODBC connection
+    string is used as-is. With it, `Authentication=ActiveDirectoryDefault` is appended so
+    mssql-python acquires an Entra ID token itself via azure-identity's
+    `DefaultAzureCredential` (needs the `azure` extra); the identity is whatever that
+    credential chain resolves, so `entra_user` only switches Entra auth on and is not
+    sent to the server. A connection string that already sets `Authentication` is left
+    to speak for itself and rejected here to avoid ambiguity."""
+    if entra_user is None:
+        return conn_str
+    if re.search(r"(^|;)\s*Authentication\s*=", conn_str, re.IGNORECASE):
+        raise ValueError("--entra-user can't be combined with an Authentication= setting in the connection string")
+    return f"{conn_str.rstrip().rstrip(';')};Authentication=ActiveDirectoryDefault"
 
 
 def build_conninfo(
