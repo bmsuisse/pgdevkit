@@ -88,11 +88,8 @@ class _FakeMssqlCursor:
             self.description = [(n,) for n in ("name", "base_type", "max_length", "precision", "scale")]
             self.rows = [("id", "int", 4, 10, 0), ("note", "nvarchar", 100, 0, 0)]
         elif "COUNT_BIG(*)" in sql:
-            self.description, self.rows = [("n",)], [(10,)]
-        elif "COUNT_BIG(DISTINCT [id])" in sql:
-            self.description, self.rows = [("nn",), ("nd",), ("w",)], [(10, 10, 4.0)]
-        elif "COUNT_BIG(DISTINCT [note])" in sql:
-            self.description, self.rows = [("nn",), ("nd",), ("w",)], [(0, 0, None)]
+            names = ("n", "nn0", "nd0", "w0", "nn1", "nd1", "w1")
+            self.description, self.rows = [(n,) for n in names], [(10, 10, 10, 4.0, 0, 0, None)]
 
     def fetchall(self):
         return self.rows

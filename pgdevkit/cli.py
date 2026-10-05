@@ -234,15 +234,17 @@ def update_stats(
     if not scripts_dir.is_dir():
         err_console.print(f"[red]Error:[/red] {scripts_dir} is not a directory")
         raise typer.Exit(2)
+    try:
+        dialect = get_backend(dialect).dialect.name
+    except ValueError as e:
+        err_console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(2)
     conninfo = build_conninfo(url, entra_user)
     try:
         with console.status("Collecting stats..."):
             tables, columns = stats.collect_stats(conninfo, set(table) or None, exact=exact, analyze=analyze, dialect=dialect)
     except KeyError as e:
         err_console.print(f"[red]Error:[/red] unknown table(s): {e.args[0]}")
-        raise typer.Exit(2)
-    except ValueError as e:
-        err_console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(2)
     path = stats.write_stats(scripts_dir, tables, columns, prune=not table)
     console.print(f"Updated stats for {len(tables)} table(s) in {path.parent}")

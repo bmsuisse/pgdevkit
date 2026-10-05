@@ -126,8 +126,20 @@ def _collect_mssql_stats(
             ident = f"{_mssql_ident(r['schema'])}.{_mssql_ident(r['name'])}"
             if analyze:
                 conn.execute(f"UPDATE STATISTICS {ident}")
+            col_defs = _mssql_q(conn, _MSSQL_COLUMNS_SQL, (ident,))
+            measured: dict[str, Any] = {}
             if exact:
-                row_count = _mssql_q(conn, f"SELECT COUNT_BIG(*) AS n FROM {ident}")[0]["n"]
+                # One scan per table, so row and column counts share a snapshot.
+                parts = ["COUNT_BIG(*) AS n"]
+                for i, c in enumerate(col_defs):
+                    if c["base_type"].lower() not in _MSSQL_UNMEASURABLE:
+                        col = _mssql_ident(c["name"])
+                        parts.append(
+                            f"COUNT_BIG({col}) AS nn{i}, COUNT_BIG(DISTINCT {col}) AS nd{i}, "
+                            f"AVG(CAST(DATALENGTH({col}) AS float)) AS w{i}"
+                        )
+                measured = _mssql_q(conn, f"SELECT {', '.join(parts)} FROM {ident}")[0]
+                row_count = measured["n"]
             else:
                 row_count = r["estimated_rows"]
             tables[qn] = {
@@ -138,23 +150,18 @@ def _collect_mssql_stats(
                 "total_bytes": r["total_bytes"],
             }
             col_stats: dict[str, Any] = {}
-            for c in _mssql_q(conn, _MSSQL_COLUMNS_SQL, (ident,)):
+            for i, c in enumerate(col_defs):
                 entry: dict[str, Any] = {
                     "data_type": _format_type(c["base_type"], c["max_length"], c["precision"], c["scale"]),
                     "null_fraction": None,
                     "n_distinct": None,
                     "avg_width": None,
                 }
-                if exact and row_count and c["base_type"].lower() not in _MSSQL_UNMEASURABLE:
-                    col = _mssql_ident(c["name"])
-                    m = _mssql_q(
-                        conn,
-                        f"SELECT COUNT_BIG({col}) AS nn, COUNT_BIG(DISTINCT {col}) AS nd, "
-                        f"AVG(CAST(DATALENGTH({col}) AS float)) AS w FROM {ident}",
-                    )[0]
-                    entry["null_fraction"] = 1 - m["nn"] / row_count
-                    entry["n_distinct"] = m["nd"]
-                    entry["avg_width"] = None if m["w"] is None else round(m["w"])
+                if row_count and f"nn{i}" in measured:
+                    entry["null_fraction"] = 1 - measured[f"nn{i}"] / row_count
+                    entry["n_distinct"] = measured[f"nd{i}"]
+                    w = measured[f"w{i}"]
+                    entry["avg_width"] = None if w is None else round(w)
                 col_stats[c["name"]] = entry
             columns[qn] = col_stats
     finally:
