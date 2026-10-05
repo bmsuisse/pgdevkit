@@ -73,3 +73,61 @@ def test_update_stats_then_get_stats(tmp_path: Path):
     finally:
         with psycopg.connect(admin, autocommit=True) as con:
             con.execute(f'DROP DATABASE IF EXISTS "{TEST_DB}"')
+
+
+class _FakeMssqlCursor:
+    def __init__(self, conn):
+        self.conn, self.description, self.rows = conn, None, []
+
+    def execute(self, sql, params=()):
+        self.conn.executed.append(sql)
+        if "sys.dm_db_partition_stats" in sql:
+            self.description = [(n,) for n in ("schema", "name", "estimated_rows", "table_bytes", "index_bytes", "total_bytes")]
+            self.rows = [("dbo", "zeta", 10, 8192, 16384, 24576), ("sys", "junk", 1, 0, 0, 0)]
+        elif "FROM sys.columns" in sql:
+            self.description = [(n,) for n in ("name", "base_type", "max_length", "precision", "scale")]
+            self.rows = [("id", "int", 4, 10, 0), ("note", "nvarchar", 100, 0, 0)]
+        elif "COUNT_BIG(*)" in sql:
+            names = ("n", "nn0", "nd0", "w0", "nn1", "nd1", "w1")
+            self.description, self.rows = [(n,) for n in names], [(10, 10, 10, 4.0, 0, 0, None)]
+
+    def fetchall(self):
+        return self.rows
+
+    def close(self):
+        pass
+
+
+class _FakeMssqlConn:
+    def __init__(self):
+        self.executed: list[str] = []
+
+    def cursor(self):
+        return _FakeMssqlCursor(self)
+
+    def execute(self, sql):
+        self.executed.append(sql)
+
+    def close(self):
+        pass
+
+
+def test_update_stats_mssql(tmp_path: Path, monkeypatch):
+    import mssql_python
+
+    conn = _FakeMssqlConn()
+    monkeypatch.setattr(mssql_python, "connect", lambda *a, **k: conn)
+
+    r = runner.invoke(app, ["update-stats", str(tmp_path), "--url", "x", "--dialect", "mssql", "--exact", "--analyze"])
+    assert r.exit_code == 0, r.output
+    tables = json.loads((tmp_path / "_stats" / "_tables.json").read_text())
+    assert list(tables) == ["dbo.zeta"]  # system schema skipped
+    assert tables["dbo.zeta"]["row_count"] == 10 and tables["dbo.zeta"]["row_count_exact"] is True
+    assert tables["dbo.zeta"]["total_bytes"] == 24576
+    cols = json.loads((tmp_path / "_stats" / "dbo.zeta.json").read_text())
+    assert cols["note"]["data_type"] == "nvarchar(50)" and cols["note"]["null_fraction"] == 1
+    assert cols["id"]["n_distinct"] == 10 and cols["id"]["avg_width"] == 4
+    assert "UPDATE STATISTICS [dbo].[zeta]" in conn.executed
+
+    assert runner.invoke(app, ["update-stats", str(tmp_path), "--url", "x", "--dialect", "mssql", "--table", "dbo.nope"]).exit_code == 2
+    assert runner.invoke(app, ["update-stats", str(tmp_path), "--url", "x", "--dialect", "oracle"]).exit_code == 2
