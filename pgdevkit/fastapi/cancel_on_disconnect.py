@@ -17,6 +17,7 @@ from typing import Any
 
 from fastapi import Request, Response
 from fastapi.routing import APIRoute
+from starlette.requests import ClientDisconnect
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,10 @@ class CancelOnDisconnectRoute(APIRoute):
         async def cancel_on_disconnect(request: Request) -> Response:
             # Buffer the body first (Starlette caches it for the handler): afterwards receive() only yields the
             # disconnect, which is all the watcher below needs.
-            await request.body()
+            try:
+                await request.body()
+            except ClientDisconnect:  # gone before the handler even started: nothing to run
+                return Response(status_code=CLIENT_CLOSED_REQUEST)
             task = asyncio.ensure_future(handler(request))
             watcher = asyncio.ensure_future(_wait_for_disconnect(request))
             try:

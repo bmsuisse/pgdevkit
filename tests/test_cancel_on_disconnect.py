@@ -21,8 +21,11 @@ class HttpClient:
         self.disconnect = asyncio.Event()
         self.sent: list[dict] = []
         self._body_sent = False
+        self.gone_at_start = False  # the client disconnected before the body arrived
 
     async def receive(self) -> dict:
+        if self.gone_at_start:
+            return {"type": "http.disconnect"}
         if not self._body_sent:
             self._body_sent = True
             return {"type": "http.request", "body": self.request_body, "more_body": False}
@@ -189,3 +192,11 @@ async def test_no_task_is_left_behind(app: FastAPI) -> None:
     await client.call(app)
     await asyncio.sleep(0)
     assert len(asyncio.all_tasks()) <= before
+
+
+async def test_client_gone_before_the_handler_starts_is_not_an_error(app: FastAPI, events: list[str]) -> None:
+    client = HttpClient(path="/ok")
+    client.gone_at_start = True
+    await client.call(app)  # no ClientDisconnect / 500 / traceback
+    assert client.status == 499
+    assert events == []
