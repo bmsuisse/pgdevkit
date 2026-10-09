@@ -406,14 +406,17 @@ Install with the `db` extra: `pip install pgdevkit[db]`.
   `--entra-user`. For Lakebase hosts, also set the
   `{env_prefix}DATABRICKS_WORKSPACE_HOST` and `{env_prefix}DATABRICKS_INSTANCE`
   env vars.
-- **`fetch_all(query, params=None, *, model=None, row_mapper=None, con=None, pool=None, cancel=None)`**
+- **`fetch_all(query, params=None, *, model=None, row_mapper=None, con=None, pool=None, cancel=None, statement_timeout=None)`**
   — run one custom query and get every row back as dicts, as validated
   Pydantic `model` instances, or through a `row_mapper`. Pass `con` to run on a
   connection you already hold (it is borrowed: never committed, closed or
   released); otherwise a connection is taken from `pool` or the pool registered
   with `set_default_pool()`. Set the `cancel` `asyncio.Event` to abort the query on the server
-  (`QueryCanceled`); cancelling the awaiting task cancels it there too, and
-  `CancelledError` propagates as usual. `query` must be a literal string, a sqlglot
+  (`QueryCanceled`; to stream a result as JSON from FastAPI see `PostgresJsonResponse`, which watches for the
+  disconnect itself); cancelling the awaiting task cancels it there too, and
+  `CancelledError` propagates as usual. `statement_timeout=<seconds>` lets Postgres abort the query after that
+  long (`QueryCanceled`, "canceling statement due to statement timeout"); it is applied per call with `SET LOCAL`
+  semantics, so it never outlives the call (a borrowed `con` gets its previous setting back). `query` must be a literal string, a sqlglot
   expression, a `psycopg.sql` composable or a t-string — never an f-string (a sqlglot
   expression is only as safe as the strings it was built from: pass user values as
   `exp.Placeholder` + `params`).
@@ -460,6 +463,96 @@ async with pool.connection() as con:
     widget = await pg_retrieve(con, Widget, {"id": 1})
     await pg_upsert(con, Widget(id=1, name="thing"), Widget)
 ```
+
+## `pgdevkit.fastapi` — streaming JSON responses
+
+Requires the `fastapi` extra (`pip install pgdevkit[fastapi]`, FastAPI >= 0.118).
+
+`PostgresJsonResponse` runs a query and streams its rows to the client as a JSON array. Postgres builds the JSON
+(`row_to_json`), so there is no row-by-row Python serialization and no pydantic round trip, and memory use stays flat
+for big results. **If the client goes away, the query is cancelled in Postgres** instead of running to completion.
+(`fetch_all(..., cancel=event)` cancels a buffered query too, but you wire the event to the disconnect yourself.)
+
+```python
+from pgdevkit.db import PgPool, set_default_pool
+from pgdevkit.fastapi import PostgresJsonResponse
+
+pool = PgPool(env_prefix="APP_POSTGRES_")
+set_default_pool(pool)  # once at startup, shared with fetch_all
+
+@router.get("/articles", responses={200: {"model": list[ArticleOut]}})
+async def articles(lng: str) -> PostgresJsonResponse:
+    return PostgresJsonResponse(
+        "select id, name from articles where lng = %(lng)s order by name",
+        {"lng": lng},
+    )
+```
+
+The `responses=` entry keeps the OpenAPI schema (and a generated frontend client) typed; `response_model` is ignored
+for a `Response`, and the rows are *not* validated against the model.
+
+- **Connections** work as in `fetch_all`: the pool registered with `set_default_pool()`, an explicit `pool=` (anything
+  with `.connection()`, e.g. `PgPool`), or a `con=` you opened yourself. A pooled connection is acquired when streaming
+  starts and released when it ends. A `con` must stay open until the response has been sent, i.e. come from a `Depends`
+  with `yield` (FastAPI >= 0.118); `async with pool.connection() as conn: return PostgresJsonResponse(q, con=conn)`
+  closes it too early. Prefer the pool.
+- **Query** — a literal string, a `psycopg.sql` composable or a sqlglot expression, with values bound through `params`
+  (`%(name)s`). Passing only literals is enforced by the type checker, **not at runtime**: the query is wrapped
+  as a subquery, never parsed, so never build it from user input. For a data-modifying CTE, or custom JSON, pass
+  `query_produces_json=True` and return one *text* column per row (a `json` column or NULL fails). A trailing `;`
+  is fine, a `;` followed by a comment is not. t-strings aren't supported (they can't be wrapped).
+- **Options** — `batch_size` (rows per chunk, >= 1, default 1000; don't take it from user input),
+  `statement_timeout` (seconds, see below), `status_code`, `headers` (e.g. `{"Cache-Control": "max-age=3600"}`).
+
+### Cancellation
+
+The response watches for `http.disconnect` itself (Starlette only does that for ASGI spec < 2.4), also while the
+query is still running and nothing has been sent yet. It then cancels the query with `cancel_safe()`, shielded from
+the cancellation that is tearing the request down, and closes the connection if it was left mid-query: a pool opens a
+fresh one instead of reusing it. Only a query that is still running is cancelled, so a late cancel can never
+hit the next statement on a reused connection. A frontend `AbortController` / closed tab therefore frees the database.
+
+With `con=`, a disconnect aborts the query *and your transaction*, unlike `fetch_all`: the connection is afterwards
+either left in an aborted transaction (idle, with autocommit) or closed, depending on whether the stream was waiting for
+Postgres or for the client.
+Don't use it afterwards, and don't count on earlier writes in that transaction.
+
+Connections are held while the client reads, so a client that reads very slowly pins one (`statement_timeout` does not
+help, see below). Enforce a write timeout in the reverse proxy and size the pool accordingly. Disconnect behaviour can only be tested over a real socket
+(`httpx.ASGITransport` never sends `http.disconnect`); see `tests/test_pg_json_granian.py`.
+
+### Statement timeout
+
+`statement_timeout=<seconds>` (optional, also on `fetch_all`) lets **Postgres** abort the query after that long. It
+is set with `SET LOCAL` semantics for this one query: transaction-scoped, so it can't leak into the pool and works
+behind PgBouncer's transaction pooling, and a `con` you passed gets its previous setting back. Before the first byte
+the client gets a `504 {"error": "Query timed out"}`; after that the response is cut short like any other error. It
+needs a connection that is not in autocommit mode. Without it, the connection's own `statement_timeout` applies.
+
+It limits *query execution*, nothing else: Postgres defers a cancel while it is blocked writing to a client that
+has stopped reading, so a stalled reader keeps its connection regardless (a backend was observed staying `active`
+in `ClientWrite` well past a 1 s timeout). For that, use a write timeout in the reverse proxy.
+
+### Errors
+
+An error before the first byte becomes a JSON `{"error": ...}` response (500, or the status and headers of an
+`HTTPException` raised by a custom pool); the text is hidden unless you subclass and set `expose_errors = True`
+(it contains SQL fragments and parameter values: never in production):
+
+```python
+class AppJsonResponse(PostgresJsonResponse):
+    expose_errors = IS_DEV
+```
+
+After the first byte the status line is gone: the error is logged and re-raised, and the response ends **without
+the closing `]`**, so clients fail to parse it rather than accepting a silently shortened array. (Granian, which our
+apps run on, ends such a response cleanly with the truncated body.)
+
+### Notes
+
+It does no authorization: scope the query yourself. The first byte is sent once `batch_size` rows (or the whole
+result) are available, so lower `batch_size` for earlier output; Postgres itself also sends rows in 8 kB buffers,
+so a slow query with tiny rows delivers late either way.
 
 ## Releasing
 
