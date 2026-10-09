@@ -11,7 +11,7 @@ from psycopg.errors import QueryCanceled
 from pydantic import BaseModel
 from sqlglot import exp, select
 
-from pgdevkit.db import PgPool, fetch_all, set_default_pool
+from pgdevkit.db import PgPool, execute, fetch_all, fetch_one, fetch_scalar, set_default_pool
 from pgdevkit.testdb import constants
 from pgdevkit.testdb.container import ensure_container
 from tests.testdb.conftest import RUN_SUFFIX, requires_podman
@@ -251,3 +251,95 @@ async def test_failing_cancel_request_closes_the_connection_and_returns_promptly
         )
         await observer.close()
         await con.close()
+
+
+# --- fetch_one / fetch_scalar / execute ---------------------------------------------------------
+
+
+async def test_siblings_validate_their_arguments_before_touching_a_connection():
+    with pytest.raises(TypeError, match="model"):
+        await fetch_one("SELECT 1", model=Widget, row_mapper=dict)  # type: ignore[call-overload]
+    value = 1
+    for fn in (fetch_one, fetch_scalar, execute):
+        with pytest.raises(TypeError, match="t-string"):
+            await fn(t"SELECT {value}", {"x": 1})  # type: ignore[call-overload]
+        with pytest.raises(ValueError, match="statement_timeout"):
+            await fn("SELECT 1", statement_timeout=0)
+        with pytest.raises(RuntimeError, match="set_default_pool"):
+            await fn("SELECT 1")
+        with pytest.raises(TypeError, match=fn.__name__):
+            await fn(123, pool=_NoPool())  # type: ignore[call-overload]
+        cancel = asyncio.Event()
+        cancel.set()
+        with pytest.raises(QueryCanceled, match=fn.__name__):
+            await fn("SELECT 1", cancel=cancel, pool=_NoPool())
+
+
+@requires_podman
+async def test_fetch_one_returns_first_row_or_none(pool: PgPool):
+    assert await fetch_one("SELECT id, name FROM widget ORDER BY id", pool=pool) == {"id": 1, "name": "sprocket"}
+    assert await fetch_one("SELECT id FROM widget WHERE id = %(id)s", {"id": 99}, pool=pool) is None
+    assert await fetch_one("SELECT id, name FROM widget WHERE id = 2", model=Widget, pool=pool) == Widget(id=2, name="cog")
+    assert await fetch_one("SELECT name FROM widget WHERE id = 2", row_mapper=lambda r: r["name"].upper(), pool=pool) == "COG"
+    assert await fetch_one("SELECT name FROM widget WHERE id = 99", model=Widget, pool=pool) is None
+    widget_id = 1
+    assert await fetch_one(t"SELECT name FROM widget WHERE id = {widget_id}", pool=pool) == {"name": "sprocket"}
+    query = select("name").from_("widget").where(exp.column("id").eq(exp.Placeholder(this="id")))
+    assert await fetch_one(query, {"id": 2}, pool=pool) == {"name": "cog"}
+
+
+@requires_podman
+async def test_fetch_scalar_returns_first_column_of_first_row_or_none(pool: PgPool):
+    set_default_pool(pool)
+    assert await fetch_scalar("SELECT count(*) FROM widget") == 2
+    assert await fetch_scalar("SELECT name, id FROM widget ORDER BY id DESC") == "cog"
+    assert await fetch_scalar("SELECT name FROM widget WHERE id = %(id)s", {"id": 99}) is None
+    assert await fetch_scalar("SELECT NULL::int") is None
+    assert await fetch_scalar("SELECT 1 AS a, 2 AS a") == 1  # first column, even if names repeat
+    assert await fetch_scalar(t"SELECT {5}::int + 1") == 6
+
+
+@requires_podman
+async def test_execute_returns_rowcount_and_commits_on_a_pooled_connection(pool: PgPool):
+    assert await execute("UPDATE widget SET name = upper(name)", pool=pool) == 2
+    assert await execute("DELETE FROM widget WHERE id = %(id)s", {"id": 1}, pool=pool) == 1
+    assert await execute("DELETE FROM widget WHERE id = %(id)s", {"id": 1}, pool=pool) == 0
+    new_id = 7
+    assert await execute(t"INSERT INTO widget VALUES ({new_id}, 'gear')", pool=pool) == 1
+    assert await fetch_all("SELECT id, name FROM widget ORDER BY id", pool=pool) == [
+        {"id": 2, "name": "COG"},
+        {"id": 7, "name": "gear"},
+    ]
+    assert await execute("CREATE TABLE extra (id int)", pool=pool) == -1
+
+
+@requires_podman
+async def test_execute_on_a_given_connection_leaves_the_transaction_to_the_caller(pool: PgPool):
+    async with pool.connection() as con:
+        assert await execute("INSERT INTO widget VALUES (3, 'gear')", con=con) == 1
+        assert con.info.transaction_status == psycopg.pq.TransactionStatus.INTRANS
+        await con.rollback()
+    assert await fetch_scalar("SELECT count(*) FROM widget", pool=pool) == 2
+
+
+@requires_podman
+async def test_siblings_support_cancel_and_statement_timeout(pool: PgPool):
+    cancel = asyncio.Event()
+    task = asyncio.ensure_future(fetch_scalar("SELECT pg_sleep(30)", pool=pool, cancel=cancel))
+    await _wait_for_active_sleeps(pool, 1)
+    cancel.set()
+    with pytest.raises(QueryCanceled):
+        await task
+    await _wait_for_active_sleeps(pool, 0)
+    with pytest.raises(QueryCanceled, match="statement timeout"):
+        await fetch_one("SELECT pg_sleep(30)", pool=pool, statement_timeout=0.3)
+    with pytest.raises(QueryCanceled, match="statement timeout"):
+        await execute("SELECT pg_sleep(30)", pool=pool, statement_timeout=0.3)
+    assert await fetch_scalar("SELECT 1", pool=pool, statement_timeout=5) == 1
+
+
+@requires_podman
+async def test_default_pool_may_be_a_plain_callable(pool: PgPool):
+    set_default_pool(lambda: pool.connection())
+    assert await fetch_scalar("SELECT count(*) FROM widget") == 2
+    assert await fetch_one("SELECT name FROM widget WHERE id = 1") == {"name": "sprocket"}
