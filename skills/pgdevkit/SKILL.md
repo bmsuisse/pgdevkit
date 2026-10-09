@@ -219,6 +219,7 @@ async with pool.connection() as conn:  # inside a transaction you already hold
 
 - `model=` validates each row into a Pydantic model; `row_mapper=` maps each dict row to anything else (exclusive with `model`).
 - Passing `con=` runs on *your* connection: `fetch_all` never commits, closes or releases it. Without it, a connection is borrowed from `pool=` (or the `set_default_pool()` pool) and released afterwards.
+- `cancel=` takes an `asyncio.Event`: set it (e.g. when the HTTP client disconnects) and the running query is cancelled on the server, raising `psycopg.errors.QueryCanceled`. Cancelling the awaiting task does the same, so no query keeps running unattended; a borrowed `con` is left clean (just `await con.rollback()`).
 - `query` is typed `SqlQuery`: a literal string (`SqlLoader.load_sql()`), a sqlglot expression, a `psycopg.sql` composable or a t-string. A plain `str` fails type checking on purpose, and `bdt lint` flags f-strings/concatenation/`%`/`.format()` passed to it just like for `.execute()`. A t-string carries its own values, so don't also pass `params`.
 
 ### Dynamic SQL

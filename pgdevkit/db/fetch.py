@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from string.templatelib import Template
 from typing import TYPE_CHECKING, Any, AsyncIterator, LiteralString, Protocol, cast, overload
 
 from psycopg.connection_async import AsyncConnection
+from psycopg.errors import QueryCanceled
 from psycopg.rows import dict_row
 from psycopg.sql import Composable
 
@@ -63,12 +65,40 @@ def _render(query: SqlQuery) -> Any:
     return query.sql(dialect="postgres")
 
 
-async def _fetch_dicts(
-    query: SqlQuery, params: QueryParams, con: AsyncConnection | None, pool: ConnectionSource | None
-) -> list[dict[str, Any]]:
-    async with _acquire(con, pool) as c, c.cursor(row_factory=dict_row) as cur:
+async def _run_query(c: AsyncConnection, query: SqlQuery, params: QueryParams) -> list[dict[str, Any]]:
+    async with c.cursor(row_factory=dict_row) as cur:
         await cur.execute(_render(query), params)
         return await cur.fetchall()
+
+
+async def _fetch_dicts(
+    query: SqlQuery,
+    params: QueryParams,
+    con: AsyncConnection | None,
+    pool: ConnectionSource | None,
+    cancel: asyncio.Event | None,
+) -> list[dict[str, Any]]:
+    if cancel is not None and cancel.is_set():
+        raise QueryCanceled("fetch_all: cancelled before the query started")
+    async with _acquire(con, pool) as c:
+        work = asyncio.ensure_future(_run_query(c, query, params))
+        stop = asyncio.ensure_future(cancel.wait()) if cancel is not None else None
+        try:
+            await asyncio.wait([work, *([stop] if stop else [])], return_when=asyncio.FIRST_COMPLETED)
+            if not work.done():  # `cancel` was set while the query runs: abort it on the server
+                await c.cancel_safe()
+            return await work  # raises psycopg.errors.QueryCanceled if it was cancelled
+        except asyncio.CancelledError:
+            # The awaiting task itself was cancelled: abandoning the query client-side would leave it
+            # running on the server (and the connection mid-query), so cancel it there and let it
+            # unwind first -- the connection is then clean for its owner/the pool.
+            if not work.done():
+                await asyncio.shield(c.cancel_safe())
+                await asyncio.gather(work, return_exceptions=True)
+            raise
+        finally:
+            if stop is not None:
+                stop.cancel()
 
 
 @overload
@@ -79,6 +109,7 @@ async def fetch_all[M: BaseModel](
     model: type[M],
     con: AsyncConnection | None = None,
     pool: ConnectionSource | None = None,
+    cancel: asyncio.Event | None = None,
 ) -> list[M]: ...
 
 
@@ -90,6 +121,7 @@ async def fetch_all[T](
     row_mapper: Callable[[dict[str, Any]], T],
     con: AsyncConnection | None = None,
     pool: ConnectionSource | None = None,
+    cancel: asyncio.Event | None = None,
 ) -> list[T]: ...
 
 
@@ -100,6 +132,7 @@ async def fetch_all(
     *,
     con: AsyncConnection | None = None,
     pool: ConnectionSource | None = None,
+    cancel: asyncio.Event | None = None,
 ) -> list[dict[str, Any]]: ...
 
 
@@ -111,6 +144,7 @@ async def fetch_all(
     row_mapper: Callable[[dict[str, Any]], Any] | None = None,
     con: AsyncConnection | None = None,
     pool: ConnectionSource | None = None,
+    cancel: asyncio.Event | None = None,
 ) -> list[Any]:
     """Run one query and return every row.
 
@@ -121,6 +155,10 @@ async def fetch_all(
     borrowed, never committed, closed or returned to a pool. Without it, a connection is taken
     from `pool` or the pool registered via `set_default_pool()` and released afterwards.
 
+    Set `cancel` (an `asyncio.Event`, e.g. when the HTTP client disconnects) to abort a running
+    query on the server: `fetch_all` then raises `psycopg.errors.QueryCanceled`. Cancelling the
+    awaiting task does the same, so the query never keeps running server-side unattended.
+
     `query` must be a literal string, a sqlglot expression, a `psycopg.sql` composable or a
     t-string -- never text built with f-strings/concatenation (`bdt lint` enforces this too).
     A t-string already carries its values, so it must not be combined with `params`.
@@ -129,7 +167,7 @@ async def fetch_all(
         raise TypeError("Pass either `model` or `row_mapper`, not both.")
     if isinstance(query, Template) and params is not None:
         raise TypeError("A t-string query carries its own values; don't pass `params` with it.")
-    rows = await _fetch_dicts(query, params, con, pool)
+    rows = await _fetch_dicts(query, params, con, pool, cancel)
     if model is not None:
         return [model.model_validate(row) for row in rows]
     if row_mapper is not None:

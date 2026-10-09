@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import time
+
 import psycopg
 import pytest
 from psycopg import sql
+from psycopg.errors import QueryCanceled
 from pydantic import BaseModel
 from sqlglot import exp, select
 
@@ -112,3 +116,44 @@ async def test_accepts_sqlglot_expression_psycopg_sql_and_t_string(pool: PgPool)
     assert await fetch_all(composed, pool=pool) == [{"name": "cog"}]
     widget_id = 1
     assert await fetch_all(t"SELECT name FROM widget WHERE id = {widget_id}", pool=pool) == [{"name": "sprocket"}]
+
+
+async def test_already_set_cancel_raises_before_touching_a_connection():
+    cancel = asyncio.Event()
+    cancel.set()
+    with pytest.raises(QueryCanceled):
+        await fetch_all("SELECT pg_sleep(10)", cancel=cancel)
+
+
+async def _active_sleeps(pool: PgPool) -> int:
+    async with pool.connection() as con:
+        cur = await con.execute("SELECT count(*) FROM pg_stat_activity WHERE query LIKE '%pg_sleep(30)%' AND state = 'active' AND pid <> pg_backend_pid()")
+        row = await cur.fetchone()
+        assert row is not None
+        return row[0]
+
+
+@requires_podman
+async def test_cancel_event_aborts_running_query_and_keeps_borrowed_connection_usable(pool: PgPool):
+    cancel = asyncio.Event()
+    asyncio.get_running_loop().call_later(0.3, cancel.set)
+    async with pool.connection() as con:
+        started = time.monotonic()
+        with pytest.raises(QueryCanceled):
+            await fetch_all("SELECT pg_sleep(30)", con=con, cancel=cancel)
+        assert time.monotonic() - started < 5
+        await con.rollback()
+        assert await fetch_all("SELECT 1 AS one", con=con) == [{"one": 1}]
+    assert await _active_sleeps(pool) == 0
+
+
+@requires_podman
+async def test_cancelling_the_task_cancels_the_query_on_the_server(pool: PgPool):
+    task = asyncio.ensure_future(fetch_all("SELECT pg_sleep(30)", pool=pool))
+    await asyncio.sleep(0.3)
+    assert await _active_sleeps(pool) == 1
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert await _active_sleeps(pool) == 0
+    assert await fetch_all("SELECT 1 AS one", pool=pool) == [{"one": 1}]
