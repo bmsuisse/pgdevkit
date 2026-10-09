@@ -460,8 +460,8 @@ Install with the `db` extra: `pip install pgdevkit[db]`.
   from `load_all_complex_types`/`load_complex_type`: `await helper.register_on(cur, info)`, then execute the converted
   value on that same `cur` (passing the connection instead would restore psycopg's global behaviour).
   What it learns from the catalog (types and column types) is cached per connection, so a helper created per call
-  queries the catalog only the first time a connection is used (the SELECT/INSERT itself is then the only query). The cache cannot see later DDL, nor DDL that
-  was rolled back after it had been cached: call `helper.clear_cache()` after `CREATE TYPE`/`ALTER TYPE`/column
+  queries the catalog only the first time a connection is used (the SELECT/INSERT itself is then the only query). The cache cannot see later DDL, nor
+  DDL that was rolled back after it had been cached: call `helper.clear_cache()` after `CREATE TYPE`/`ALTER TYPE`/column
   changes or rollbacks of those (typical for tests that create types inside a rolled-back transaction on a reused
   connection). `ComplexHelper(con, cache=False)` gives the helper a private cache and the pre-cache behaviour.
 - **CRUD functions** — `pg_retrieve`, `pg_retrieve_many` (equality `filters`, plus optional `where=` as a t-string or
