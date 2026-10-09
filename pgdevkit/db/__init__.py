@@ -16,15 +16,19 @@ from .crud import (
     pg_upsert_many,
     pg_upsert_many_dict,
 )
+from .fetch import ConnectionSource, SqlQuery, fetch_all, set_default_pool
 from .loader import SqlLoader
 from .model import PostgresTableModel, TableModel
 
 __all__ = [
     "ComplexHelper",
+    "ConnectionSource",
     "PgPool",
     "PostgresTableModel",
     "SqlLoader",
+    "SqlQuery",
     "TableModel",
+    "fetch_all",
     "pg_delete",
     "pg_delete_dict",
     "pg_insert",
@@ -37,4 +41,5 @@ __all__ = [
     "pg_upsert_dict",
     "pg_upsert_many",
     "pg_upsert_many_dict",
+    "set_default_pool",
 ]

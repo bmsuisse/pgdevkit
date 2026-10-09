@@ -313,7 +313,7 @@ wheels = [
 
 [[package]]
 name = "pgdevkit"
-version = "0.12.0"
+version = "0.13.0"
 source = { editable = "." }
 dependencies = [
     { name = "docker" },
@@ -354,7 +354,7 @@ requires-dist = [
     { name = "azure-identity", marker = "extra == 'azure'", specifier = ">=1.19.0" },
     { name = "docker", specifier = ">=7.1.0" },
     { name = "mssql-python", marker = "extra == 'mssql'", specifier = ">=1.0.0" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.2.0" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.3.0" },
     { name = "psycopg-pool", marker = "extra == 'db'", specifier = ">=3.3.0" },
     { name = "pydantic", marker = "extra == 'db'", specifier = ">=2.0" },
     { name = "rich", marker = "extra == 'cli'", specifier = ">=13.0.0" },
@@ -367,7 +367,7 @@ provides-extras = ["azure", "cli", "db", "mssql"]
 [package.metadata.requires-dev]
 dev = [{ name = "ty", specifier = ">=0.0.59" }]
 test = [
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.2.0" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.3.0" },
     { name = "pytest", specifier = ">=9.1.0" },
     { name = "pytest-asyncio", specifier = ">=0.24.0" },
     { name = "pytest-env", specifier = ">=1.1.0" },
