@@ -404,3 +404,17 @@ async def test_registration_is_scoped_to_the_cursor_that_writes(complex_types_te
         assert (d.w, d.h.name) == (1, "sad") and (d2[0].w, d2[0].h.name) == (2, "happy")  # nested types registered too
         # a plain SELECT on the connection (or on another cursor) is untouched
         assert await (await con.execute("SELECT moods, d FROM gadget")).fetchone() == ("{happy,sad}", "(1,sad)")
+
+
+@requires_podman
+async def test_repeated_writes_do_not_grow_psycopgs_loader_class_cache(complex_types_test_db):
+    from psycopg.types import composite as psycopg_composite
+
+    async with await _connect() as con:
+        await _setup_gadget(con)
+        row = {"id": 1, "dims": {"w": 1, "h": 1}}
+        await pg_upsert_dict(con, ("public", "gadget"), row, ["id"], complex_helper="auto")
+        size = psycopg_composite._make_loader.cache_info().currsize
+        for i in range(5):
+            await pg_upsert_dict(con, ("public", "gadget"), {**row, "id": i + 2}, ["id"], complex_helper="auto")
+        assert psycopg_composite._make_loader.cache_info().currsize == size  # one registration per write, no new classes
