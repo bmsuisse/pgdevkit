@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import pytest
+from psycopg import AsyncConnection
+from psycopg.conninfo import conninfo_to_dict
 
+from pgdevkit.db import fetch_scalar
 from pgdevkit.db.connection import PgPool
 
 
@@ -137,3 +140,110 @@ async def test_dsn_databricks_lakebase_entra(monkeypatch):
         "user=alice@example.com password=LAKEBASE_TOKEN"
     )
     assert calls == [("https://adb-123.azuredatabricks.net", "myinstance")]
+
+
+@pytest.mark.parametrize("password", ["p ss", "back\\slash", "it's", "a=b", "two  spaces\\ and 'quote'", "", "ünï"])
+async def test_dsn_quotes_the_password(monkeypatch, password):
+    monkeypatch.setenv(f"{ENV_PREFIX}HOST", "localhost")
+    monkeypatch.setenv(f"{ENV_PREFIX}PORT", "5432")
+    monkeypatch.setenv(f"{ENV_PREFIX}DB", "mydb")
+    monkeypatch.setenv(f"{ENV_PREFIX}USER", "myuser")
+    monkeypatch.setenv(f"{ENV_PREFIX}PASSWORD", password)
+
+    info = conninfo_to_dict(await PgPool(env_prefix=ENV_PREFIX)._dsn())
+    assert info == {"host": "localhost", "port": "5432", "dbname": "mydb", "user": "myuser", "password": password}
+
+
+async def test_dsn_quotes_extra_params_and_lets_them_override(monkeypatch):
+    monkeypatch.setenv(f"{ENV_PREFIX}HOST", "localhost")
+    monkeypatch.setenv(f"{ENV_PREFIX}PORT", "5432")
+    monkeypatch.setenv(f"{ENV_PREFIX}DB", "mydb")
+    monkeypatch.setenv(f"{ENV_PREFIX}USER", "myuser")
+    monkeypatch.setenv(f"{ENV_PREFIX}PASSWORD", "pw")
+
+    pool = PgPool(env_prefix=ENV_PREFIX, dsn_params={"application_name": "my app\\'s", "sslmode": "require"})
+    info = conninfo_to_dict(await pool._dsn())
+    assert info["application_name"] == "my app\\'s"
+    assert info["sslmode"] == "require"
+
+
+async def test_azure_token_is_quoted_too(monkeypatch):
+    monkeypatch.setenv(f"{ENV_PREFIX}HOST", "myserver.postgres.database.azure.com")
+    monkeypatch.setenv(f"{ENV_PREFIX}PORT", "5432")
+    monkeypatch.setenv(f"{ENV_PREFIX}DB", "mydb")
+    monkeypatch.setattr("pgdevkit.db.connection.get_azure_postgres_password", lambda **kwargs: "tok en\\")
+    info = conninfo_to_dict(await PgPool(env_prefix=ENV_PREFIX, entra_user="alice@example.com")._dsn())
+    assert info["password"] == "tok en\\"
+
+
+def _set_local_env(monkeypatch, dsn: str) -> None:
+    info = conninfo_to_dict(dsn)
+    for key, field in (("HOST", "host"), ("PORT", "port"), ("DB", "dbname"), ("USER", "user"), ("PASSWORD", "password")):
+        monkeypatch.setenv(f"PGDEVKIT_CONNLIVE_{key}", info.get(field, ""))
+
+
+async def test_pool_options_are_passed_through(monkeypatch):
+    monkeypatch.setenv(f"{ENV_PREFIX}HOST", "localhost")
+    monkeypatch.setenv(f"{ENV_PREFIX}PORT", "5432")
+    monkeypatch.setenv(f"{ENV_PREFIX}DB", "mydb")
+    monkeypatch.setenv(f"{ENV_PREFIX}USER", "myuser")
+    monkeypatch.setenv(f"{ENV_PREFIX}PASSWORD", "pw")
+
+    async def configure(con: AsyncConnection) -> None: ...
+
+    async def check(con: AsyncConnection) -> None: ...
+
+    pool = PgPool(env_prefix=ENV_PREFIX, max_size=7, min_size=2, timeout=3.5, configure=configure, check=check)
+    await pool.open()
+    try:
+        raw = pool.raw_pool
+        assert (raw.min_size, raw.max_size, raw.timeout) == (2, 7, 3.5)
+        assert raw._configure is configure
+        assert raw._check is check
+    finally:
+        await pool.close()
+    # untouched defaults: the library's own check, no hook
+    plain = PgPool(env_prefix=ENV_PREFIX)
+    await plain.open()
+    try:
+        assert plain.raw_pool._configure is None
+        assert plain.raw_pool._check is not None
+    finally:
+        await plain.close()
+
+
+async def test_configure_hook_and_timeout_work_on_a_live_pool(monkeypatch, postgres_dsn):
+    _set_local_env(monkeypatch, postgres_dsn)
+
+    async def configure(con: AsyncConnection) -> None:
+        await con.execute("SET application_name = 'pgdevkit_configured'")
+        await con.commit()
+
+    pool = PgPool(env_prefix="PGDEVKIT_CONNLIVE_", max_size=1, timeout=0.3, configure=configure)
+    await pool.open()
+    try:
+        assert await fetch_scalar("SHOW application_name", pool=pool) == "pgdevkit_configured"
+        from psycopg_pool import PoolTimeout
+
+        async with pool.connection():  # the only connection is taken: the next borrower times out
+            with pytest.raises(PoolTimeout):
+                await fetch_scalar("SELECT 1", pool=pool)
+    finally:
+        await pool.close()
+
+
+async def test_pool_options_are_passed_to_a_null_pool_too(monkeypatch):
+    monkeypatch.setenv(f"{ENV_PREFIX}HOST", "myserver.postgres.database.azure.com")
+    monkeypatch.setenv(f"{ENV_PREFIX}PORT", "5432")
+    monkeypatch.setenv(f"{ENV_PREFIX}DB", "mydb")
+    monkeypatch.setenv(f"{ENV_PREFIX}USER", "myuser")
+    monkeypatch.setenv(f"{ENV_PREFIX}PASSWORD", "pw")
+
+    async def configure(con: AsyncConnection) -> None: ...
+
+    pool = PgPool(env_prefix=ENV_PREFIX, timeout=2.5, configure=configure)
+    await pool.open()
+    try:
+        assert (pool.raw_pool.timeout, pool.raw_pool._configure) == (2.5, configure)
+    finally:
+        await pool.close()

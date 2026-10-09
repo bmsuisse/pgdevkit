@@ -405,22 +405,57 @@ Install with the `db` extra: `pip install pgdevkit[db]`.
   password — same host-based auto-detection as `pgdb compare`'s
   `--entra-user`. For Lakebase hosts, also set the
   `{env_prefix}DATABRICKS_WORKSPACE_HOST` and `{env_prefix}DATABRICKS_INSTANCE`
-  env vars.
+  env vars. Values (password, `dsn_params`) are quoted properly, so spaces, backslashes and quotes are fine.
+  `min_size`, `timeout` (how long to wait for a free connection before `PoolTimeout`), `configure` (async hook run on
+  every new connection, e.g. to set session timeouts or `application_name`) and `check` are passed through to the
+  psycopg pool; `max_size` defaults to 40 and `min_size` to 4 (or `max_size` if smaller).
 - **`fetch_all(query, params=None, *, model=None, row_mapper=None, con=None, pool=None, cancel=None, statement_timeout=None)`**
   — run one custom query and get every row back as dicts, as validated
   Pydantic `model` instances, or through a `row_mapper`. Pass `con` to run on a
   connection you already hold (it is borrowed: never committed, closed or
   released); otherwise a connection is taken from `pool` or the pool registered
-  with `set_default_pool()`. Set the `cancel` `asyncio.Event` to abort the query on the server
+  with `set_default_pool()` (a `ConnectionSource` such as `PgPool`, or a plain callable returning an
+  async connection context manager). Set the `cancel` `asyncio.Event` to abort the query on the server
   (`QueryCanceled`; to stream a result as JSON from FastAPI see `PostgresJsonResponse`, which watches for the
   disconnect itself); cancelling the awaiting task cancels it there too, and
   `CancelledError` propagates as usual. `statement_timeout=<seconds>` lets Postgres abort the query after that
   long (`QueryCanceled`, "canceling statement due to statement timeout"); it is applied per call with `SET LOCAL`
-  semantics, so it never outlives the call (a borrowed `con` gets its previous setting back). `query` must be a literal string, a sqlglot
+  semantics, so it never outlives the call (a borrowed `con` gets its previous setting back); see
+  [Statement timeout](#statement-timeout) for what it does to a timeout the connection already has. `query` must be a literal string, a sqlglot
   expression, a `psycopg.sql` composable or a t-string — never an f-string (a sqlglot
   expression is only as safe as the strings it was built from: pass user values as
-  `exp.Placeholder` + `params`).
-- **CRUD functions** — `pg_retrieve`, `pg_retrieve_many`, `pg_insert`,
+  `exp.Placeholder` + `params`). A literal `%` in a sqlglot expression (`LIKE 'a%'`, the modulo operator) works with
+  or without `params`: it is escaped for psycopg when `params` is given (plain strings and `psycopg.sql` composables
+  are passed on as is, so there you write `%%` yourself when you pass `params`).
+- **`fetch_one`, `fetch_scalar`, `execute`** — siblings of `fetch_all` with the same `con`/`pool`/`cancel`/
+  `statement_timeout` keywords and the same query types (including t-strings, which take no `params`), so there is no
+  need for hand-written cursor code. `fetch_one(query, params, *, model=None, row_mapper=None)` returns the first row
+  (dict, `model` or `row_mapper` result) or `None`, `fetch_scalar(query, params)` the first column of the first row or
+  `None` (`await fetch_scalar("SELECT name FROM widget WHERE id = %(id)s", {"id": 1})`), and `execute(query, params)`
+  the row count of a write without `RETURNING` (`-1` for statements without one, like DDL). Without `con`, `execute`
+  runs on a pooled connection that commits when it returns (true for `PgPool`/`psycopg_pool`; a custom connection
+  source decides for itself); on your `con` nothing is committed.
+- **`readonly_transaction(con)`** — async context manager that runs its block in a read-only transaction:
+  `async with pool.connection() as con, readonly_transaction(con): await fetch_all(sql, con=con)`.
+  Postgres rejects writes with `ReadOnlySqlTransaction`; the transaction is committed when the block ends normally
+  and rolled back on error, and `read_only` is **always** put back afterwards (normally to `None`), so a connection
+  that goes back to a shared pool is never left read-only. `con` must not be inside a transaction already (a fresh
+  pooled connection is fine). **It is a safety net, not a sandbox for untrusted SQL:** text without bound parameters
+  uses the simple query protocol, where `COMMIT; INSERT ...` ends the read-only transaction, TEMP tables stay
+  writable and `SET` statements stick to the connection. For LLM-generated SQL also connect as a role that only has
+  `SELECT` privileges, and consider `statement_timeout=at_most(...)`.
+- **`ComplexHelper`** — handles composite, enum and JSONB columns for the CRUD functions: pass
+  `complex_helper=ComplexHelper(con)` (optionally with `normalizers`), or `complex_helper="auto"` for a default one,
+  to any `pg_*` function that takes the argument. What it learns from the catalog (types, column types, adapter
+  registrations) is cached per connection, so a helper created per call queries the catalog only the first time a
+  connection is used (the SELECT/INSERT itself is then the only query). The cache cannot see later DDL, nor DDL that
+  was rolled back after it had been cached: call `helper.clear_cache()` after `CREATE TYPE`/`ALTER TYPE`/column
+  changes or rollbacks of those (typical for tests that create types inside a rolled-back transaction on a reused
+  connection). `ComplexHelper(con, cache=False)` gives the helper a private cache and the pre-cache behaviour.
+- **CRUD functions** — `pg_retrieve`, `pg_retrieve_many` (equality `filters`, plus optional `where=` as a t-string or
+  a `psycopg.sql` composable with `params=`, `order_by=` as a column name, a *list* of names or
+  `(name, "asc"|"desc")` pairs, or a composable, and `limit=`; prefer a t-string, since in a composable a literal `%`
+  must be written `%%` whenever filters or params are present), `pg_insert`,
   `pg_insert_many`, `pg_update`, `pg_update_dict`, `pg_upsert`,
   `pg_upsert_dict`, `pg_upsert_many`, `pg_upsert_many_dict`, `pg_delete`,
   `pg_delete_dict` — typed (`TableModel`-based) or dict-based CRUD against a
@@ -519,7 +554,9 @@ Postgres or for the client.
 Don't use it afterwards, and don't count on earlier writes in that transaction.
 
 Connections are held while the client reads, so a client that reads very slowly pins one (`statement_timeout` does not
-help, see below). Enforce a write timeout in the reverse proxy and size the pool accordingly. Disconnect behaviour can only be tested over a real socket
+help, see below). With `PgPool` (40 connections by default; `max_size=`) that means a few slow readers, or many parallel streams of
+big results, can use up the pool and make every other request wait for a connection. Enforce a write timeout in the
+reverse proxy and size the pool accordingly. Disconnect behaviour can only be tested over a real socket
 (`httpx.ASGITransport` never sends `http.disconnect`); see `tests/test_pg_json_granian.py`.
 
 ### Statement timeout
@@ -527,8 +564,14 @@ help, see below). Enforce a write timeout in the reverse proxy and size the pool
 `statement_timeout=<seconds>` (optional, also on `fetch_all`) lets **Postgres** abort the query after that long. It
 is set with `SET LOCAL` semantics for this one query: transaction-scoped, so it can't leak into the pool and works
 behind PgBouncer's transaction pooling, and a `con` you passed gets its previous setting back. Before the first byte
-the client gets a `504 {"error": "Query timed out"}`; after that the response is cut short like any other error. It
+the client gets a `504 {"error": "Query timed out"}` (the key is `error_key`, see Errors); after that the response is cut short like any other error. It
 needs a connection that is not in autocommit mode. Without it, the connection's own `statement_timeout` applies.
+
+A plain value *replaces* whatever timeout the connection already has, in both directions: with a database-level
+safety net of 600 s, a per-call `statement_timeout=120` shortens it for that call, but `statement_timeout=900` loosens
+it. To make a per-call value only ever tighten it, wrap it: `statement_timeout=at_most(120)`
+(`from pgdevkit.db import at_most`) uses `min(current, 120)`, where a current timeout of 0 (none) counts as unlimited.
+`at_most` works anywhere `statement_timeout` does, `PostgresJsonResponse` included.
 
 It limits *query execution*, nothing else: Postgres defers a cancel while it is blocked writing to a client that
 has stopped reading, so a stalled reader keeps its connection regardless (a backend was observed staying `active`
@@ -545,11 +588,26 @@ class AppJsonResponse(PostgresJsonResponse):
     expose_errors = IS_DEV
 ```
 
+FastAPI's own error handlers answer with `{"detail": ...}` instead. If a frontend already handles that shape, set
+`error_key = "detail"` in the subclass and these responses use it too.
+
 After the first byte the status line is gone: the error is logged and re-raised, and the response ends **without
 the closing `]`**, so clients fail to parse it rather than accepting a silently shortened array. (Granian, which our
 apps run on, ends such a response cleanly with the truncated body.)
 
 ### Notes
+
+Timestamps: Postgres' `row_to_json` writes a `timestamptz` as `2026-01-01T10:00:00+00:00` (with the session time
+zone's offset, e.g. `+01:00`), where Pydantic/FastAPI serialize UTC values as `...Z`. Both are valid ISO-8601 and
+parse to the same instant, but code that compares or displays the raw strings sees a difference; normalize in the
+frontend, or in the query (`to_char(...)`).
+
+`NaN`/`Infinity`: JSON has no such numbers, so `row_to_json` writes a `float`/`numeric` NaN or Infinity as the
+*string* `"NaN"`/`"Infinity"`. A frontend expecting numbers must handle those strings, or the query should map them
+(`nullif(x, 'NaN')`).
+
+Behind Starlette's `BaseHTTPMiddleware` a failure after the first byte has been reported to end as a clean `200` with a
+truncated body: the missing closing `]` is then the only signal (clients fail to parse it), the status cannot carry it.
 
 It does no authorization: scope the query yourself. The first byte is sent once `batch_size` rows (or the whole
 result) are available, so lower `batch_size` for earlier output; Postgres itself also sends rows in 8 kB buffers,

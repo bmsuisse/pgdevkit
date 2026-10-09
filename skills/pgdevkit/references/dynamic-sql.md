@@ -25,7 +25,7 @@ T-strings look like f-strings but are evaluated by psycopg — values are always
 await cur.execute(t"SELECT * FROM users WHERE id = {user_id}")
 ```
 
-`fetch_all` accepts t-strings and `psycopg.sql` composables too (don't also pass `params` with a t-string):
+`fetch_all`/`fetch_one`/`fetch_scalar`/`execute` accept t-strings and `psycopg.sql` composables too (so does `pg_retrieve_many(..., where=t"...")`) (don't also pass `params` with a t-string):
 `await fetch_all(t"SELECT {column:i} FROM users WHERE active = {active}", model=UserRow)`.
 
 **Dynamic identifier (`:i`):**

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import weakref
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from psycopg import AsyncConnection
@@ -23,6 +25,33 @@ class JsonbArray:
 ComplexTypeInfo = CompositeInfo | EnumInfo | type[Jsonb] | type[JsonbArray] | None
 
 
+@dataclass
+class _TypeCache:
+    """What a `ComplexHelper` has learned about one connection's database: the catalog's complex types, the
+    CompositeInfo/EnumInfo objects built from them (they carry that database's OIDs), which of those are registered
+    on the connection (an adapter registration lives and dies with the connection), and each table column's type."""
+
+    system_complex_type_dict: dict[Any, tuple[str, str]] | None = None
+    complex_types: dict[tuple[str, str], CompositeInfo | EnumInfo] = field(default_factory=dict)
+    registered: set[CompositeInfo | EnumInfo] = field(default_factory=set)
+    columns: dict[tuple[tuple[str, str], bool], dict[str, ComplexTypeInfo]] = field(default_factory=dict)
+    column: dict[tuple[tuple[str, str], str], ComplexTypeInfo] = field(default_factory=dict)
+    shared: bool = False  # whether other helpers on the same connection use it too (then column lookups are cached)
+
+
+# One cache per live connection, so helpers created per call (`pg_retrieve(..., complex_helper=ComplexHelper(con))`)
+# share it, and it goes away with the connection: pooled connections keep theirs for as long as the pool keeps them.
+# Per connection rather than per process on purpose: the cached OIDs belong to one database.
+_caches: weakref.WeakKeyDictionary[AsyncConnection, _TypeCache] = weakref.WeakKeyDictionary()
+
+
+def _cache_for(con: AsyncConnection) -> _TypeCache:
+    try:
+        return _caches.setdefault(con, _TypeCache(shared=True))
+    except TypeError:  # not something a weak reference can point to (e.g. a stand-in for a connection): no sharing
+        return _TypeCache()
+
+
 class ComplexHelper:
     """psycopg adapter for PostgreSQL composite types, enums, and JSONB.
 
@@ -35,23 +64,61 @@ class ComplexHelper:
     composite type that needs locale-key backfilling before it's built) —
     this is intentionally the only project-specific extension point; nothing
     else about a project's types is hardcoded here.
+
+    What it learns from the catalog (the types, the columns' types, which ones are registered on the connection) is
+    cached per connection, for as long as that connection lives: a helper created for every call, on a connection
+    that is reused (e.g. from a pool), only queries the catalog the first time. The cache can't see schema changes
+    made afterwards (`CREATE TYPE`, `ALTER TYPE ... ADD VALUE`, altered columns), nor DDL that was rolled back after
+    it had been cached (a type's OID is then gone): call `clear_cache()` after such changes. `cache=False` gives the
+    helper a private cache instead, which behaves as before the shared cache existed (types are remembered per helper
+    instance, column lookups always ask the database).
     """
 
     def __init__(
         self,
         con: AsyncConnection,
         normalizers: dict[str, Callable[[dict], dict]] | None = None,
+        *,
+        cache: bool = True,
     ) -> None:
         self.con = con
-        self.system_complex_type_dict: dict[Any, tuple[str, str]] | None = None
-        # Instance-scoped: a CompositeInfo/EnumInfo carries OIDs from a
-        # specific connection/database, so caching it on the class (shared
-        # across every connection) would leak stale OIDs across databases
-        # that happen to reuse the same type name — exactly the case for
-        # pgdevkit's per-worktree isolated test databases.
-        self.complex_types: dict[tuple[str, str], CompositeInfo | EnumInfo] = {}
-        self.registered: set[CompositeInfo | EnumInfo] = set()
+        # Never class-scoped: a CompositeInfo/EnumInfo carries OIDs from a specific connection/database, so
+        # sharing it across every connection would leak stale OIDs across databases that happen to reuse the
+        # same type name — exactly the case for pgdevkit's per-worktree isolated test databases.
+        self._cache = _cache_for(con) if cache else _TypeCache()
         self._normalizers = normalizers or {}
+
+    @property
+    def system_complex_type_dict(self) -> dict[Any, tuple[str, str]] | None:
+        return self._cache.system_complex_type_dict
+
+    @system_complex_type_dict.setter
+    def system_complex_type_dict(self, value: dict[Any, tuple[str, str]] | None) -> None:
+        self._cache.system_complex_type_dict = value
+
+    @property
+    def complex_types(self) -> dict[tuple[str, str], CompositeInfo | EnumInfo]:
+        return self._cache.complex_types
+
+    @complex_types.setter
+    def complex_types(self, value: dict[tuple[str, str], CompositeInfo | EnumInfo]) -> None:
+        self._cache.complex_types = value
+
+    @property
+    def registered(self) -> set[CompositeInfo | EnumInfo]:
+        return self._cache.registered
+
+    @registered.setter
+    def registered(self, value: set[CompositeInfo | EnumInfo]) -> None:
+        self._cache.registered = value
+
+    def clear_cache(self) -> None:
+        """Forget what was learned about this connection's database (see the class docstring)."""
+        self._cache.system_complex_type_dict = None
+        self._cache.complex_types.clear()
+        self._cache.registered.clear()
+        self._cache.columns.clear()
+        self._cache.column.clear()
 
     async def load_complex_type_dict(self) -> None:
         async with self.con.cursor(row_factory=dict_row) as cur:
@@ -94,6 +161,9 @@ class ComplexHelper:
     async def load_all_complex_types(
         self, table_name: tuple[str, str], include_generated: bool = False
     ) -> dict[str, ComplexTypeInfo]:
+        cache_key = (table_name, include_generated)
+        if self._cache.shared and cache_key in self._cache.columns:
+            return dict(self._cache.columns[cache_key])
         if self.system_complex_type_dict is None:
             await self.load_complex_type_dict()
         colquery = """
@@ -120,9 +190,15 @@ class ComplexHelper:
                 },
             )
             res = await cur.fetchall()
-            return {r["column_name"]: await self._load_complex_type_from_colinfos(r) for r in res}
+            types = {r["column_name"]: await self._load_complex_type_from_colinfos(r) for r in res}
+        if types and self._cache.shared:  # (an empty result may just be a table that doesn't exist yet)
+            self._cache.columns[cache_key] = types
+        return dict(types)
 
     async def load_complex_type(self, table_name: tuple[str, str], col_name: str) -> ComplexTypeInfo:
+        cache_key = (table_name, col_name)
+        if self._cache.shared and cache_key in self._cache.column:
+            return self._cache.column[cache_key]
         if self.system_complex_type_dict is None:
             await self.load_complex_type_dict()
         colquery = """
@@ -146,7 +222,10 @@ class ComplexHelper:
                 {"schema": table_name[0], "tbl": table_name[1], "col": col_name},
             )
             res = await cur.fetchone()
-            return await self._load_complex_type_from_colinfos(res)
+        info = await self._load_complex_type_from_colinfos(res)
+        if res and self._cache.shared:  # (a missing column may just not exist yet)
+            self._cache.column[cache_key] = info
+        return info
 
     async def _get_complex_type(self, name: str, is_enum: bool, con: AsyncConnection) -> CompositeInfo | EnumInfo:
         if name.endswith("[]"):
@@ -154,13 +233,9 @@ class ComplexHelper:
         schema, type_name = name.split(".") if "." in name else ("public", name)
         if type_name.startswith("_"):  # the array type in PostgreSQL starts with an underscore
             type_name = type_name[1:]
-        if is_enum:
-            ci = await EnumInfo.fetch(con, Identifier(schema, type_name))
-            assert ci is not None, f"Enum type {name} not found in database"
-            self.complex_types[(schema, type_name)] = ci
         if (schema, type_name) not in self.complex_types:
-            ci = await CompositeInfo.fetch(con, Identifier(schema, type_name))
-            assert ci is not None, f"Complex type {name} not found in database"
+            ci = await (EnumInfo if is_enum else CompositeInfo).fetch(con, Identifier(schema, type_name))
+            assert ci is not None, f"{'Enum' if is_enum else 'Complex'} type {name} not found in database"
             self.complex_types[(schema, type_name)] = ci
         return self.complex_types[(schema, type_name)]
 
