@@ -231,7 +231,12 @@ async def pg_insert(
     *,
     complex_helper: ComplexHelperArg = None,
 ) -> dict[str, Any]:
-    """Insert one row and return the full row (RETURNING *)."""
+    """Insert one row and return the full row (RETURNING *).
+
+    A column of a composite/enum type (or an array of one) whose value was dict/list-converted by `complex_helper`
+    comes back as the Python object registered on this statement's cursor (a composite as a namedtuple, an enum as an
+    enum member); every other column comes back as plain psycopg returns it (an enum as its label, a composite as its
+    text, e.g. '(1,2)'). Nothing is registered on `con`."""
     async with con.cursor(row_factory=dict_row) as cur:
         data = await _convert_complex_values(con, cur, table_name, data, complex_helper)
         query = SQL("INSERT INTO {tbl} ({cols}) VALUES ({vals}) RETURNING *").format(
@@ -254,6 +259,11 @@ async def pg_update_dict(
     complex_helper: ComplexHelperArg = None,
 ) -> Any | None:
     """Update a row identified by primary_keys. Returns the raw row tuple.
+
+    Columns whose type, or a type nested in it, was registered on this statement's cursor to convert a value
+    come back as the registered Python objects (composites as namedtuples, enums as enum members), the others as
+    psycopg returns them by default (an enum as its label, a composite as text, e.g. '(1,2)'). Nothing is
+    registered on `con`.
 
     Pass `complex_helper` when the table has composite/enum columns among the
     values being set — omitted, this behaves exactly as before (plain values
@@ -290,7 +300,12 @@ async def pg_upsert_dict(
     *,
     complex_helper: ComplexHelperArg = None,
 ) -> dict:
-    """INSERT ... ON CONFLICT ... DO UPDATE, returns the row as a dict."""
+    """INSERT ... ON CONFLICT ... DO UPDATE, returns the row as a dict.
+
+    Columns whose type, or a type nested in it, was registered on this statement's cursor to convert a value
+    come back as the registered Python objects (composites as namedtuples, enums as enum members), the others as
+    psycopg returns them by default (an enum as its label, a composite as text, e.g. '(1,2)'). Nothing is
+    registered on `con`."""
     async with con.cursor(row_factory=dict_row) as cur:
         data = await _convert_complex_values(con, cur, table_name, data, complex_helper)
         fields = list(data)

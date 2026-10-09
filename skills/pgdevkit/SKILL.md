@@ -262,20 +262,23 @@ See [`references/temporal-tables.md`](references/temporal-tables.md) for row-lev
 ### Custom Postgres types (composites, enums)
 
 `pgdevkit.db.complex_types.ComplexHelper` detects a table's composite/enum/JSONB
-columns and converts plain dict/list values into the psycopg-registered types
-those columns need. `pgdevkit.testdb.schema`'s test-data seeding uses it automatically; the `pg_*` CRUD helpers only do
+columns and converts plain dict/list values into the Python objects psycopg sends
+for those columns. `pgdevkit.testdb.schema`'s test-data seeding uses it automatically; the `pg_*` CRUD helpers only do
 when you pass `complex_helper="auto"` (or `complex_helper=ComplexHelper(con, normalizers={...})` to reshape a value
 before conversion, keyed by composite type name, e.g. backfilling missing locale keys); without it values are not
 converted and reads are a plain `SELECT *`.
 
 **The helper never registers types on the connection** (psycopg's registration is connection-global and would stick
 to a pooled connection: a plain `SELECT` of an enum would return psycopg's `Enum` member instead of the label, #54).
-Writes register the enum/composite adapters on the one cursor that runs the statement, only when a dict/list value
-needed converting; reads (`pg_retrieve*`) use `to_jsonb(...)` and register nothing. So after any `pg_*` call the
-connection reads enums as label strings and composites as before. `RETURNING` rows of `pg_insert`/`pg_update_dict`/
-`pg_upsert_dict` come from that cursor: a converted column is the registered Python object (composite namedtuple).
-Using `recursive_convert` yourself: `await helper.register_on(cur, info)` on your cursor first (the connection as
-context would be a global registration again).
+Writes register the enum/composite adapters on the one cursor that runs the statement, only for the columns where a
+dict/list value needed converting; reads (`pg_retrieve*`) use `to_jsonb(...)` and register nothing. So after any `pg_*` call the
+connection reads enums as label strings and composites as text (`'(1,2)'`), as before the call. `RETURNING` rows of
+`pg_insert`/`pg_update_dict`/`pg_upsert_dict` (hence `pg_update`/`pg_upsert`) come from that cursor: columns whose
+type, or a type nested in it, was registered on it come back as the registered Python objects (a composite as a
+namedtuple, an enum as an enum member), all others as psycopg returns them by default.
+Using `recursive_convert` yourself: take `info` from `load_all_complex_types`/`load_complex_type`, call
+`await helper.register_on(cur, info)` on your cursor, and execute the converted value on that same `cur` (the
+connection as context would be a global registration again).
 
 What the helper learns from the catalog (types and column types) is cached **per connection**, so
 creating a `ComplexHelper(con)` per call (`pg_retrieve(con, M, pks, complex_helper=ComplexHelper(con))`) queries the

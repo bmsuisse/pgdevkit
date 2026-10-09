@@ -6,7 +6,18 @@ import psycopg
 import pytest
 from psycopg.types.enum import EnumInfo
 
-from pgdevkit.db import PostgresTableModel, pg_insert, pg_retrieve, pg_retrieve_many
+from pgdevkit.db import (
+    PostgresTableModel,
+    pg_insert,
+    pg_insert_many,
+    pg_retrieve,
+    pg_retrieve_many,
+    pg_update,
+    pg_update_dict,
+    pg_upsert,
+    pg_upsert_dict,
+    pg_upsert_many_dict,
+)
 from pgdevkit.db.complex_types import ComplexHelper
 from pgdevkit.db.crud import _select_list
 from pgdevkit.testdb import constants
@@ -128,6 +139,10 @@ async def test_jsonb_array_column_wraps_each_element_not_the_whole_list(complex_
 def test_helper_attributes_stay_assignable():
     helper = ComplexHelper(con=None)  # type: ignore[arg-type]
     helper.complex_types = {}
+    with pytest.warns(DeprecationWarning, match="register_on"):
+        helper.registered = set()  # deprecated and ignored: nothing is registered on the connection any more
+    with pytest.warns(DeprecationWarning, match="register_on"):
+        assert helper.registered == set()
     helper.system_complex_type_dict = {}
     assert helper.system_complex_type_dict == {}
 
@@ -301,8 +316,6 @@ async def _plain_read(con: psycopg.AsyncConnection):
 
 @requires_podman
 async def test_pg_helpers_do_not_change_how_the_connection_reads_enums_and_composites(complex_types_test_db):
-    from pgdevkit.db import pg_insert_many, pg_update, pg_update_dict, pg_upsert, pg_upsert_dict, pg_upsert_many_dict
-
     async with await _connect() as con:
         await _setup_gadget(con)
         table = ("public", "gadget")
@@ -337,6 +350,12 @@ async def test_pg_helpers_do_not_change_how_the_connection_reads_enums_and_compo
             )
             await con.execute("DELETE FROM gadget WHERE id >= 10")
 
+        # an enum *array* (a list converted to enum members) written through the helper
+        await con.execute("ALTER TABLE gadget ADD COLUMN moods mood[]")
+        helper_arg = ComplexHelper(con, cache=False)  # sees the new column
+        await check("pg_insert (enum array)", lambda: pg_insert(con, table, {"id": 40, "moods": ["happy", "sad"]}, complex_helper=helper_arg))
+        assert (await (await con.execute("SELECT moods FROM gadget WHERE id = 40")).fetchone()) == ("{happy,sad}",)
+
         # the data written through the helper is right nevertheless
         await pg_insert(con, table, {"id": 30, "mood": "sad", "dims": {"w": 8, "h": 9}}, complex_helper="auto")
         got = await pg_retrieve(con, Gadget, {"id": 30}, complex_helper="auto")
@@ -345,7 +364,7 @@ async def test_pg_helpers_do_not_change_how_the_connection_reads_enums_and_compo
 
 
 @requires_podman
-async def test_issue_54_snippet_enum_label_survives_pg_retrieve_many(complex_types_test_db):
+async def test_enum_label_survives_pg_retrieve_many_on_the_same_connection(complex_types_test_db):
     async with await _connect() as con:
         await _setup_gadget(con)
 

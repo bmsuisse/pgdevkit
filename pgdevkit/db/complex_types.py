@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 import weakref
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -54,6 +55,13 @@ def _cache_for(con: AsyncConnection) -> _TypeCache:
         return _TypeCache()
 
 
+def _make_composite_object(values: Any, info: CompositeInfo) -> Any:
+    # One module-level function, so psycopg's cache of generated loader classes (keyed on it) hits on re-registration
+    # instead of growing by two classes per registration.
+    assert info.python_type is not None
+    return info.python_type(*values)
+
+
 class _Scope:
     """An `AdaptContext` of its own (a copy of psycopg's defaults, shared with nothing)."""
 
@@ -67,8 +75,8 @@ class ComplexHelper:
     """psycopg adapter for PostgreSQL composite types, enums, and JSONB.
 
     Detects a table's non-scalar columns (composite types, enums, JSONB) and
-    converts plain dict/list Python values into the psycopg-registered types
-    those columns need, recursing into nested composite fields.
+    converts plain dict/list Python values into the Python objects (enum members, composite namedtuples)
+    psycopg sends for those columns, recursing into nested composite fields.
 
     `normalizers` lets a caller reshape a composite value before conversion,
     keyed by composite type name (e.g. a project with a `locale_labels`
@@ -121,6 +129,27 @@ class ComplexHelper:
     @complex_types.setter
     def complex_types(self, value: dict[tuple[str, str], CompositeInfo | EnumInfo]) -> None:
         self._cache.complex_types = value
+
+    @property
+    def registered(self) -> set[CompositeInfo | EnumInfo]:
+        """Deprecated: nothing is registered on the connection any more, so this is always empty (a new set each
+        time). Use `register_on(cursor, info)` to register types for a statement."""
+        warnings.warn(
+            "ComplexHelper.registered is deprecated: types are no longer registered on the connection; "
+            "use `await helper.register_on(cursor, info)` to register them on a cursor",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return set()
+
+    @registered.setter
+    def registered(self, value: set[CompositeInfo | EnumInfo]) -> None:
+        warnings.warn(
+            "ComplexHelper.registered is deprecated and ignored (types are no longer registered on the connection; "
+            "see `register_on`)",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     def clear_cache(self) -> None:
         """Forget what was learned about this connection's database (see the class docstring)."""
@@ -249,7 +278,7 @@ class ComplexHelper:
             if isinstance(ci, EnumInfo):
                 register_enum(ci, scratch)
             else:
-                register_composite(ci, scratch)
+                register_composite(ci, scratch, make_object=_make_composite_object)
             self.complex_types[(schema, type_name)] = ci
         return self.complex_types[(schema, type_name)]
 
@@ -258,15 +287,23 @@ class ComplexHelper:
         what `recursive_convert` returns for it can be sent by statements run through that context, and values of
         those types come back as those Python objects.
 
+        `info` is what `load_all_complex_types(table)` / `load_complex_type(table, column)` return for the column
+        you are writing, and the value `recursive_convert(value, info, con)` returns must be executed on the same
+        `context` (the cursor) that you registered it on.
+
         Pass the **cursor** that runs the statement: psycopg gives each cursor its own copy of the adapters, so the
         registration lasts as long as the cursor and nothing else on the connection (hence on a pooled one) is
         affected. Passing the connection itself registers globally for that connection, for good (psycopg's
         default); that is not what the `pg_*` helpers do. A no-op for JSONB (`info` being `Jsonb`/`JsonbArray`) and
         for `None`."""
         if isinstance(info, (CompositeInfo, EnumInfo)):
+            if self.system_complex_type_dict is None:
+                await self.load_complex_type_dict()
             await self._recurse_register(info, context, set())
 
-    async def _recurse_register(self, info: CompositeInfo | EnumInfo, context: AdaptContext, seen: set) -> None:
+    async def _recurse_register(
+        self, info: CompositeInfo | EnumInfo, context: AdaptContext, seen: set[CompositeInfo | EnumInfo]
+    ) -> None:
         assert self.system_complex_type_dict is not None, "System complex type dictionary not loaded"
         if info in seen:
             return
@@ -274,7 +311,7 @@ class ComplexHelper:
         if isinstance(info, EnumInfo):
             register_enum(info, context, enum=info.enum)
             return
-        register_composite(info, context, factory=info.python_type)
+        register_composite(info, context, factory=info.python_type, make_object=_make_composite_object)
         for t in info.field_types:
             if t in self.system_complex_type_dict:
                 name, typtype = self.system_complex_type_dict[t]
