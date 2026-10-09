@@ -12,6 +12,7 @@ class FakeClient:
         self.disconnect = asyncio.Event()
         self.sent: list[dict] = []
         self.fail_sends_after: int | None = None  # simulate ASGI spec >= 2.4: send() raises OSError once gone
+        self.disconnect_when_send_fails = False  # ... and http.disconnect arrives at that very moment
 
     async def receive(self) -> dict:
         await self.disconnect.wait()
@@ -19,6 +20,8 @@ class FakeClient:
 
     async def send(self, message: dict) -> None:
         if self.fail_sends_after is not None and len(self.sent) >= self.fail_sends_after:
+            if self.disconnect_when_send_fails:
+                self.disconnect.set()
             raise OSError("client went away")
         self.sent.append(message)
 

@@ -3,17 +3,21 @@
 from collections.abc import AsyncIterator, Iterator
 from contextlib import AbstractAsyncContextManager
 
+import json
+
 import httpx
 import psycopg
 import pytest
 from fastapi import Depends, FastAPI
 from psycopg import AsyncConnection
+from psycopg.rows import dict_row
 from psycopg.sql import SQL, Literal
 from psycopg_pool import AsyncConnectionPool
 from starlette.exceptions import HTTPException
 
-from pgdevkit.db import set_default_pool
+from pgdevkit.db import fetch, set_default_pool
 from pgdevkit.fastapi import PostgresJsonResponse
+from tests._asgi import FakeClient
 
 
 class VerboseResponse(PostgresJsonResponse):
@@ -22,7 +26,7 @@ class VerboseResponse(PostgresJsonResponse):
 
 class ForbiddenPool:
     def connection(self) -> AbstractAsyncContextManager[AsyncConnection]:
-        raise HTTPException(status_code=403, detail="no access")
+        raise HTTPException(status_code=403, detail="no access", headers={"WWW-Authenticate": "Bearer"})
 
 
 @pytest.fixture
@@ -36,6 +40,14 @@ def default_pool(pool: AsyncConnectionPool) -> Iterator[AsyncConnectionPool]:
     set_default_pool(pool)
     yield pool
     set_default_pool(None)
+
+
+@pytest.fixture
+def no_default_pool() -> Iterator[None]:
+    previous = fetch._default_source  # process-wide state: put back whatever was registered
+    set_default_pool(None)
+    yield
+    set_default_pool(previous)
 
 
 @pytest.fixture
@@ -88,6 +100,14 @@ async def client(pool: AsyncConnectionPool) -> AsyncIterator[httpx.AsyncClient]:
     @app.get("/default-pool")
     async def default_pool_route():
         return PostgresJsonResponse("select 1 as a")
+
+    @app.get("/no-pool")
+    async def no_pool_route():
+        return VerboseResponse("select 1 as a")
+
+    @app.get("/stacked")
+    async def stacked():
+        return VerboseResponse("select 1 as a) s; select 2 as b from (select 1", pool=pool)
 
     @app.get("/syntax-error")
     async def syntax_error():
@@ -163,10 +183,18 @@ async def test_uses_the_default_pool(client: httpx.AsyncClient) -> None:
     assert (await client.get("/default-pool")).json() == [{"a": 1}]
 
 
+@pytest.mark.usefixtures("no_default_pool")
 async def test_without_any_connection_source_the_error_is_reported(client: httpx.AsyncClient) -> None:
-    set_default_pool(None)
-    response = await client.get("/default-pool")
+    response = await client.get("/no-pool")
     assert response.status_code == 500
+    assert "No connection" in response.json()["error"]
+
+
+async def test_stacked_statements_are_rejected(client: httpx.AsyncClient) -> None:
+    """The query is only wrapped, not parsed: the extended protocol (cursor.stream) is what refuses stacking."""
+    response = await client.get("/stacked")
+    assert response.status_code == 500
+    assert "multiple commands" in response.json()["error"]
 
 
 def test_con_and_pool_are_exclusive(pool: AsyncConnectionPool) -> None:
@@ -190,6 +218,7 @@ async def test_http_exception_from_the_pool_keeps_its_status(client: httpx.Async
     response = await client.get("/forbidden")
     assert response.status_code == 403
     assert response.json() == {"error": "no access"}
+    assert response.headers["www-authenticate"] == "Bearer"
 
 
 async def test_error_after_the_first_byte_is_raised_not_hidden(
@@ -199,3 +228,22 @@ async def test_error_after_the_first_byte_is_raised_not_hidden(
         await client.get("/fails-midway")
     async with pool.connection() as conn:  # the pool is still healthy
         assert await (await conn.execute("select 1")).fetchone() == (1,)
+
+
+async def test_connection_with_a_dict_row_factory(postgres_dsn: str) -> None:
+    """The response must not depend on the row factory the connection (or a pool's kwargs) came configured with."""
+    async with await AsyncConnection.connect(postgres_dsn, row_factory=dict_row) as conn:  # ty: ignore[invalid-argument-type]
+        client = FakeClient()
+        await client.call(PostgresJsonResponse("select 1 as a, 2 as b", con=conn))
+    assert json.loads(client.body) == [{"a": 1, "b": 2}]
+
+
+@pytest.mark.parametrize("batch_size", [0, -1])
+def test_batch_size_must_be_positive(pool: AsyncConnectionPool, batch_size: int) -> None:
+    with pytest.raises(ValueError, match="batch_size"):
+        PostgresJsonResponse("select 1", pool=pool, batch_size=batch_size)
+
+
+def test_t_strings_are_rejected_with_a_clear_error(pool: AsyncConnectionPool) -> None:
+    with pytest.raises(TypeError, match="t-string"):
+        PostgresJsonResponse(t"select {1}", pool=pool)  # ty: ignore[invalid-argument-type]

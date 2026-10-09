@@ -7,12 +7,14 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator, Mapping
+from string.templatelib import Template
 from typing import Any
 
 import anyio
 from fastapi.responses import StreamingResponse
 from psycopg import AsyncConnection, pq
 from psycopg.pq import TransactionStatus
+from psycopg.rows import tuple_row
 from psycopg.sql import SQL, Composable, Composed
 from starlette.exceptions import HTTPException
 from starlette.requests import ClientDisconnect
@@ -23,7 +25,7 @@ from ..db.fetch import ConnectionSource, QueryParams, SqlQueryNoTemplate, _acqui
 logger = logging.getLogger(__name__)
 
 _CANCEL_TIMEOUT_SECONDS = 5.0
-# libpq < 17 has no chunked rows mode: stream() then has to run in single-row mode.
+# libpq < 17 (a system libpq; psycopg's binary wheels bundle a newer one) has no chunked rows mode.
 _CHUNKED_ROWS = pq.version() >= 170000
 
 
@@ -66,6 +68,10 @@ class PostgresJsonResponse(StreamingResponse):
     ) -> None:
         if con is not None and pool is not None:
             raise TypeError("Pass either `con` or `pool`, not both.")
+        if batch_size < 1:
+            raise ValueError(f"batch_size must be >= 1, got {batch_size}")
+        if isinstance(query, Template):
+            raise TypeError("t-strings can't be wrapped in a subquery: use a literal string or psycopg.sql with params")
         rendered = _render(query)
         self.query = rendered if query_produces_json else _as_json_rows(rendered)
         self.params = params
@@ -96,8 +102,6 @@ class PostgresJsonResponse(StreamingResponse):
             if not cancel_scope.expired():
                 raise
             # the client is gone and the query has been cancelled: nobody is left to answer
-        except OSError:  # send() failing means the client is gone
-            raise ClientDisconnect from None
         if self.background is not None:
             await self.background()
 
@@ -108,23 +112,27 @@ class PostgresJsonResponse(StreamingResponse):
                 try:
                     async for chunk in self._chunks(conn):
                         if not started:
-                            await send(self._start_message(self.status_code, self.raw_headers))
+                            await _send(send, self._start_message(self.status_code, self.raw_headers))
                             started = True
-                        await send({"type": "http.response.body", "body": chunk, "more_body": True})
+                        await _send(send, {"type": "http.response.body", "body": chunk, "more_body": True})
                 finally:
                     # Runs for completion too, but only acts if the query is still in flight.
                     await _cancel_if_running(conn)
-        except OSError:  # send() failed: the client is gone, nothing to report to
+        except ClientDisconnect:  # nobody to report to
             raise
         except Exception as err:
             if started:
+                logger.exception("Postgres query failed after the response had started; it is cut short")
                 raise
-            logger.exception("Error executing Postgres query")
+            if isinstance(err, HTTPException):
+                logger.info("Connection source refused the request: %s", err.detail)
+            else:
+                logger.exception("Error executing Postgres query")
             await self._send_error(send, err)
             return
         if not started:
-            await send(self._start_message(self.status_code, self.raw_headers))
-        await send({"type": "http.response.body", "body": b"", "more_body": False})
+            await _send(send, self._start_message(self.status_code, self.raw_headers))
+        await _send(send, {"type": "http.response.body", "body": b"", "more_body": False})
 
     @staticmethod
     def _start_message(status: int, headers: list[tuple[bytes, bytes]]) -> Message:
@@ -137,15 +145,17 @@ class PostgresJsonResponse(StreamingResponse):
             status, message = 500, str(err) if self.expose_errors else "Internal Server Error"
         body = json.dumps({"error": message}).encode()
         headers = [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]
-        await send(self._start_message(status, headers))
-        await send({"type": "http.response.body", "body": body, "more_body": False})
+        if isinstance(err, HTTPException) and err.headers:
+            headers += [(k.lower().encode(), v.encode()) for k, v in err.headers.items()]
+        await _send(send, self._start_message(status, headers))
+        await _send(send, {"type": "http.response.body", "body": body, "more_body": False})
 
     async def _chunks(self, conn: AsyncConnection) -> AsyncIterator[bytes]:
         """Yield the JSON array in pieces of ``batch_size`` rows. Nothing is yielded before the first batch is
         complete, so a failing query surfaces before any byte (and the status line) is sent."""
         batch: list[str] = []
         prefix = "["
-        async with conn.cursor() as cur:
+        async with conn.cursor(row_factory=tuple_row) as cur:  # whatever the connection was configured with
             rows = cur.stream(self.query, self.params, size=self.batch_size if _CHUNKED_ROWS else 1)
             async for (row_json,) in rows:
                 batch.append(row_json)
@@ -162,14 +172,22 @@ def _as_json_rows(query: Any) -> Composed:
     if isinstance(query, Composable):
         inner = query
     else:
-        # bdt-lint: ignore sql-unverified-call -- a literal or a rendered sqlglot expression; wrapped, values stay bound
+        # bdt-lint: ignore sql-unverified-call -- callers pass a trusted literal (type-checked only); stacked statements
+        # are rejected by the extended protocol that cursor.stream() uses
         inner = SQL(query.strip().rstrip(";"))
     # newline before the closing paren: the query may end in a line comment
     return SQL("select row_to_json(s)::text from (\n{}\n) s").format(inner)
 
 
+async def _send(send: Send, message: Message) -> None:
+    try:
+        await send(message)
+    except OSError:  # what servers speaking ASGI spec >= 2.4 do when the client is gone
+        raise ClientDisconnect from None
+
+
 async def _cancel_if_running(conn: AsyncConnection) -> None:
-    """Cancel the in-flight query on ``conn`` and close it. Shielded: this runs while the request task is cancelled.
+    """Cancel the in-flight query on ``conn`` and close it, however often the request is cancelled meanwhile.
 
     The connection can't be reused afterwards (the cancelled query's results are still pending), and a pool must
     not get it back mid-query, so it is closed; a pool simply opens a fresh one.
@@ -179,10 +197,25 @@ async def _cancel_if_running(conn: AsyncConnection) -> None:
     """
     if conn.closed or conn.info.transaction_status != TransactionStatus.ACTIVE:
         return
+    # Its own task, awaited through asyncio.shield: a native task.cancel() (e.g. the disconnect watcher firing
+    # while we are already cleaning up) would otherwise interrupt it. The anyio shield covers scope cancellation.
+    cleanup = asyncio.ensure_future(_cancel_and_close(conn))
+    interrupted = False
     with anyio.CancelScope(shield=True):
-        with anyio.move_on_after(_CANCEL_TIMEOUT_SECONDS):
+        while not cleanup.done():
             try:
-                await conn.cancel_safe(timeout=_CANCEL_TIMEOUT_SECONDS)
-            except Exception:
-                logger.warning("Could not cancel Postgres query", exc_info=True)
-        await conn.close()
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                interrupted = True
+    cleanup.result()
+    if interrupted:
+        raise asyncio.CancelledError
+
+
+async def _cancel_and_close(conn: AsyncConnection) -> None:
+    try:
+        async with asyncio.timeout(_CANCEL_TIMEOUT_SECONDS):
+            await conn.cancel_safe(timeout=_CANCEL_TIMEOUT_SECONDS)
+    except Exception:
+        logger.warning("Could not cancel Postgres query", exc_info=True)
+    await conn.close()

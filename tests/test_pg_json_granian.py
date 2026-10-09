@@ -1,5 +1,6 @@
 """PostgresJsonResponse under Granian, the server our apps run on: real sockets, real aborted clients."""
 
+import asyncio
 import json
 import os
 import socket
@@ -53,7 +54,10 @@ def server(postgres_dsn: str, app_name: str, tmp_path_factory: pytest.TempPathFa
             yield url
         finally:
             proc.terminate()
-            proc.wait(timeout=10)
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
 
 
 async def test_normal_response(server: str) -> None:
@@ -68,12 +72,16 @@ async def test_aborted_client_cancels_the_query(server: str, postgres_dsn: str, 
     async def query_stopped() -> bool:
         return await active_queries(postgres_dsn, app_name) == 0
 
-    async with httpx.AsyncClient(timeout=1) as client:
-        with pytest.raises(httpx.ReadTimeout):  # the client gives up and drops the connection
-            await client.get(f"{server}/sleep")
+    async def client_gives_up() -> None:
+        async with httpx.AsyncClient(timeout=2) as client:
+            with pytest.raises(httpx.ReadTimeout):  # drops the connection
+                await client.get(f"{server}/sleep")
+
+    request = asyncio.create_task(client_gives_up())
+    assert await wait_until(query_running, timeout=5), "the query never started"
+    await request
 
     assert await wait_until(query_stopped, timeout=5), "the query kept running after the client left"
-    assert await wait_until(query_running, timeout=0.2) is False
 
 
 async def test_error_after_the_first_byte_ends_the_response_without_a_valid_json_array(server: str) -> None:

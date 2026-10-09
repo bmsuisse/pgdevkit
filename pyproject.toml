@@ -32,11 +32,8 @@ db = [
     "psycopg-pool>=3.3.0",
     "pydantic>=2.0",
 ]
-fastapi = [
-    "fastapi>=0.116.1",
-    "psycopg-pool>=3.3.0",  # pgdevkit.db (shared connection handling with fetch_all) imports it
-    "pydantic>=2.0",
-]
+# >= 0.118: a Depends with `yield` only releases its connection after the streaming response has been sent
+fastapi = ["pgdevkit[db]", "fastapi>=0.118.0"]
 mssql = ["mssql-python>=1.0.0"]
 
 [project.scripts]
@@ -50,7 +47,7 @@ dev = [
     "ty>=0.0.59",
 ]
 test = [
-    "fastapi>=0.116.1",
+    "fastapi>=0.118.0",
     "granian>=2.0",
     "httpx>=0.27",
     "psycopg[binary]>=3.3.0",

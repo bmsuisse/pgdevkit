@@ -243,7 +243,8 @@ async def fetch_all(
     borrowed, never committed, closed or returned to a pool. Without it, a connection is taken
     from `pool` or the pool registered via `set_default_pool()` and released afterwards.
 
-    Set `cancel` (an `asyncio.Event`, e.g. when the HTTP client disconnects) to abort a running
+    Set `cancel` (an `asyncio.Event`, e.g. when the HTTP client disconnects; to stream a large result
+    from FastAPI see `pgdevkit.fastapi.PostgresJsonResponse`, which does that wiring itself) to abort a running
     query on the server: `fetch_all` then raises `psycopg.errors.QueryCanceled`. If the awaiting
     task is cancelled instead, the query is cancelled server-side too and `CancelledError`
     propagates, so the query never keeps running unattended. `cancel` aborts whatever statement is

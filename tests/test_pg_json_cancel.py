@@ -1,6 +1,7 @@
 """PostgresJsonResponse cancels the Postgres query when the client goes away (verified in pg_stat_activity)."""
 
 import asyncio
+import contextlib
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -133,6 +134,20 @@ async def test_scope_cancellation_cancels_the_query_and_closes_the_connection(
         assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), timeout=3)
         if source_kind == "caller-owned":
             assert own_conn.closed
+
+
+async def test_a_second_cancellation_during_cleanup_does_not_skip_it(postgres_dsn: str, app_name: str) -> None:
+    """A server whose send() fails also reports http.disconnect: the watcher cancels the stream while the cancel
+    request is still being sent. That must not leave the connection mid-query (ACTIVE) for its owner."""
+    async with await AsyncConnection.connect(postgres_dsn, application_name=app_name, autocommit=True) as conn:
+        client = FakeClient()
+        client.fail_sends_after = 2
+        client.disconnect_when_send_fails = True
+        with contextlib.suppress(ClientDisconnect):  # raised, or swallowed as 'the client is gone': both fine
+            await client.call(PostgresJsonResponse(SLOW_STREAM, con=conn, batch_size=5))
+
+        assert conn.closed or conn.info.transaction_status == TransactionStatus.IDLE
+        assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), timeout=3)
 
 
 async def test_a_finished_query_is_left_alone(pool: AsyncConnectionPool) -> None:
