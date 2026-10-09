@@ -112,7 +112,7 @@ class _Receiver:
                 await self._messages.put(message)
                 if message["type"] == "http.disconnect":
                     return
-        except Exception as exc:  # a broken server: the handler sees it, the client is not treated as gone
+        except Exception as exc:  # noqa: BLE001 - a broken server: the handler sees it, the client is not treated as gone
             await self._messages.put(exc)
 
     async def receive(self) -> Message:
@@ -126,7 +126,7 @@ class _Receiver:
         return message
 
 
-async def _cancel(task: "asyncio.Task[Response]") -> None:
+async def _cancel(task: asyncio.Task[Response]) -> None:
     """Cancel ``task`` and wait until it has cleaned up (e.g. the server-side query cancel has been sent)."""
     task.cancel()
     try:
