@@ -1,16 +1,28 @@
 """CancelOnDisconnectRoute cancels the handler (and with it the Postgres query) when the client goes away."""
 
 import asyncio
+import contextvars
+import json
 import uuid
 from collections.abc import AsyncIterator
 
 import pytest
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from psycopg_pool import AsyncConnectionPool
 
 from pgdevkit.db import fetch_all
 from pgdevkit.fastapi import CancelOnDisconnectRoute
 from tests._asgi import active_queries, wait_until
+
+
+class Filter(BaseModel):
+    n: int
+
+
+current_user: contextvars.ContextVar[str] = contextvars.ContextVar("current_user")
 
 
 class HttpClient:
@@ -141,6 +153,21 @@ def app(pool: AsyncConnectionPool, events: list[str]) -> FastAPI:
     async def instant() -> dict:
         return {"done": True}
 
+    async def with_context() -> AsyncIterator[None]:  # set before, reset after the handler: needs one context
+        token = current_user.set("me")
+        try:
+            yield
+        finally:
+            current_user.reset(token)
+
+    @cancellable.get("/context", dependencies=[Depends(with_context)])
+    async def context() -> dict:
+        return {"user": current_user.get()}
+
+    @cancellable.post("/filter")
+    async def filter_(payload: Filter) -> Filter:
+        return payload
+
     @cancellable.get("/forbidden")
     async def forbidden() -> None:
         raise HTTPException(status_code=403, detail="no")
@@ -150,6 +177,11 @@ def app(pool: AsyncConnectionPool, events: list[str]) -> FastAPI:
         raise RuntimeError("boom")
 
     app = FastAPI()
+
+    @app.exception_handler(RequestValidationError)
+    async def log_the_body(request: Request, exc: RequestValidationError) -> JSONResponse:
+        return JSONResponse({"detail": "invalid", "body": (await request.body()).decode()}, status_code=422)
+
     app.include_router(cancellable)
     app.include_router(plain)
     return app
@@ -285,3 +317,16 @@ async def test_a_handler_that_finished_wins_over_a_disconnect_that_arrives_with_
     client.gone_after_body = True
     await client.call(app)
     assert (client.status, client.body) == (200, b'{"done":true}')
+
+
+async def test_context_variables_and_yield_dependencies_work_as_without_the_route(app: FastAPI) -> None:
+    client = HttpClient(path="/context")
+    await client.call(app)  # reset() in another context than set() would raise ValueError: 500
+    assert (client.status, client.body) == (200, b'{"user":"me"}')
+
+
+async def test_exception_handlers_can_still_read_the_body(app: FastAPI) -> None:
+    client = HttpClient("POST", "/filter", b'{"n": "x"}')
+    await asyncio.wait_for(client.call(app), timeout=3)  # used to wait for a body the reader had already taken
+    assert client.status == 422
+    assert json.loads(client.body)["body"] == '{"n": "x"}'

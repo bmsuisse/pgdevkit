@@ -579,7 +579,9 @@ reverse proxy and size the pool accordingly. Disconnect behaviour can only be te
 cancel a request handler when the client goes away, so a handler built on `fetch_all` (or a raw cursor, Meilisearch,
 ...) runs to the end and its result is thrown away, which defeats a frontend `AbortController`. Put such read
 endpoints on a router with `CancelOnDisconnectRoute`: it runs the handler as a task and cancels it on
-`http.disconnect`, and psycopg/pgdevkit then cancel the running statement on the server (see `fetch_all`'s `cancel`).
+`http.disconnect` (in the request's own task, with an `asyncio.timeout` as the cancel scope, as
+`PostgresJsonResponse` does), and psycopg/pgdevkit then cancel the running statement on the server (see `fetch_all`'s
+`cancel`).
 
 ```python
 from fastapi import APIRouter
@@ -606,12 +608,11 @@ app.include_router(cancellable)
 - The request body is **not** buffered: the handler reads it from a `Request` whose `receive()` is fed by a reader
   task that also spots the disconnect. That reader runs at most a few chunks ahead of the handler, so a route that
   never reads a large body can't pin it in memory, but a disconnect is then only noticed once the body is consumed.
-- The handler runs in its own task with a copy of the context: context variables set by a dependency are not visible
-  to middleware afterwards.
 - **Shared work must survive one caller's cancellation.** Await shared tasks and futures (single-flight caches,
   "refresh once, many wait" loaders) through `asyncio.shield`; otherwise one aborted request cancels the load every
   other request is waiting on.
-- A returned `StreamingResponse` is not covered (use `PostgresJsonResponse`). Threads (`asyncio.to_thread`) and
+- A returned `StreamingResponse` is not covered (Starlette watches for the disconnect there only on servers with ASGI
+  spec < 2.4; `PostgresJsonResponse` always does). Threads (`asyncio.to_thread`) and
   external services (Databricks statements, HTTP calls) keep running; only the awaiting stops.
 - Like the above, disconnects only show up over a real socket: see `tests/test_pg_json_granian.py` for a Granian test.
 
