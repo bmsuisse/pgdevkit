@@ -5,7 +5,7 @@ import uuid
 from collections.abc import AsyncIterator
 
 import pytest
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from psycopg_pool import AsyncConnectionPool
 
 from pgdevkit.db import fetch_all
@@ -16,20 +16,24 @@ from tests._asgi import active_queries, wait_until
 class HttpClient:
     """Drives an ASGI app by hand: sends one request, then stays connected until `disconnect` is set."""
 
-    def __init__(self, method: str = "GET", path: str = "/", body: bytes = b"") -> None:
-        self.method, self.path, self.request_body = method, path, body
+    def __init__(self, method: str = "GET", path: str = "/", body: bytes | list[bytes] = b"") -> None:
+        self.method, self.path = method, path
+        self.chunks = [body] if isinstance(body, bytes) else list(body)
+        self.chunks_read = 0
         self.disconnect = asyncio.Event()
         self.sent: list[dict] = []
-        self._body_sent = False
         self.gone_at_start = False  # the client disconnected before the body arrived
+        self.gone_after_body = False  # ... right after it
 
     async def receive(self) -> dict:
         if self.gone_at_start:
             return {"type": "http.disconnect"}
-        if not self._body_sent:
-            self._body_sent = True
-            return {"type": "http.request", "body": self.request_body, "more_body": False}
-        await self.disconnect.wait()
+        if self.chunks_read < max(len(self.chunks), 1):
+            chunk = self.chunks[self.chunks_read] if self.chunks else b""
+            self.chunks_read += 1
+            return {"type": "http.request", "body": chunk, "more_body": self.chunks_read < len(self.chunks)}
+        if not self.gone_after_body:
+            await self.disconnect.wait()
         return {"type": "http.disconnect"}
 
     async def send(self, message: dict) -> None:
@@ -44,7 +48,7 @@ class HttpClient:
             "path": self.path,
             "raw_path": self.path.encode(),
             "query_string": b"",
-            "headers": [(b"content-type", b"application/json")] if self.request_body else [],
+            "headers": [(b"content-type", b"application/json")] if self.chunks and self.method == "POST" else [],
             "client": ("testclient", 1),
             "server": ("testserver", 80),
             "scheme": "http",
@@ -102,6 +106,40 @@ def app(pool: AsyncConnectionPool, events: list[str]) -> FastAPI:
     @cancellable.post("/echo")
     async def echo(payload: dict) -> dict:  # the body was buffered for the watcher: the handler must still get it
         return payload
+
+    @cancellable.post("/size")  # reads a (large) body in the handler
+    async def size(request: Request) -> dict:
+        return {"size": len(await request.body())}
+
+    async def deny() -> None:
+        raise HTTPException(status_code=401, detail="no")
+
+    @cancellable.post("/denied", dependencies=[Depends(deny)])  # no body parameters, rejected before any body read
+    async def denied() -> None: ...
+
+    async def transaction() -> AsyncIterator[None]:
+        try:
+            yield
+        except BaseException as exc:
+            events.append(f"dependency saw {type(exc).__name__}")
+            raise
+        events.append("dependency saw success")
+
+    @cancellable.get("/in-transaction", dependencies=[Depends(transaction)])
+    async def in_transaction() -> list[dict]:
+        return await fetch_all("select pg_sleep(30) as slept", pool=pool)
+
+    @cancellable.get("/slow-cleanup")
+    async def slow_cleanup() -> None:
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            events.append("cleaning up")
+            await asyncio.sleep(30)
+
+    @cancellable.get("/instant")
+    async def instant() -> dict:
+        return {"done": True}
 
     @cancellable.get("/forbidden")
     async def forbidden() -> None:
@@ -195,8 +233,55 @@ async def test_no_task_is_left_behind(app: FastAPI) -> None:
 
 
 async def test_client_gone_before_the_handler_starts_is_not_an_error(app: FastAPI, events: list[str]) -> None:
-    client = HttpClient(path="/ok")
+    client = HttpClient("POST", "/size", b"x")
     client.gone_at_start = True
     await client.call(app)  # no ClientDisconnect / 500 / traceback
     assert client.status == 499
     assert events == []
+
+
+async def test_a_large_body_is_streamed_to_the_handler_not_cut_off(app: FastAPI) -> None:
+    client = HttpClient("POST", "/size", [b"x" * 65536] * 50)
+    await client.call(app)
+    assert (client.status, client.body) == (200, b'{"size":3276800}')
+
+
+async def test_an_unread_body_is_not_buffered(app: FastAPI) -> None:
+    """A route that rejects the request before reading the body must not pull the whole upload into memory."""
+    client = HttpClient("POST", "/denied", [b"x" * 65536] * 100)
+    await client.call(app)
+    assert client.status == 401
+    assert client.chunks_read <= 12, f"{client.chunks_read} of 100 chunks were read ahead"
+
+
+async def test_yield_dependencies_see_a_failure_not_a_success_after_a_disconnect(
+    app: FastAPI, events: list[str], postgres_dsn: str, app_name: str
+) -> None:
+    client = HttpClient(path="/in-transaction")
+    task = asyncio.create_task(client.call(app))
+    assert await wait_until(lambda: query_running(postgres_dsn, app_name))
+
+    client.disconnect.set()
+    await asyncio.wait_for(task, timeout=5)
+
+    assert events == ["dependency saw HTTPException"]
+    assert client.status == 499
+
+
+async def test_a_cancellation_during_the_handlers_cleanup_is_not_swallowed(app: FastAPI, events: list[str]) -> None:
+    client = HttpClient(path="/slow-cleanup")
+    task = asyncio.create_task(client.call(app))
+    await asyncio.sleep(0.2)
+    client.disconnect.set()
+    assert await wait_until(lambda: events == ["cleaning up"], timeout=3)
+
+    task.cancel()  # e.g. server shutdown or a timeout, while the handler is still cleaning up
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=3)
+
+
+async def test_a_handler_that_finished_wins_over_a_disconnect_that_arrives_with_it(app: FastAPI) -> None:
+    client = HttpClient(path="/instant")
+    client.gone_after_body = True
+    await client.call(app)
+    assert (client.status, client.body) == (200, b'{"done":true}')

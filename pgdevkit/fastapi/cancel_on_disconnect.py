@@ -10,19 +10,21 @@ friends (or any other awaitable work, raw psycopg cursors included) only stop wh
 """
 
 import asyncio
-import contextlib
 import logging
 from collections.abc import Callable, Coroutine
 from typing import Any
 
-from fastapi import Request, Response
+from fastapi import HTTPException, Request, Response
 from fastapi.routing import APIRoute
 from starlette.requests import ClientDisconnect
+from starlette.types import Message, Receive
 
 logger = logging.getLogger(__name__)
 
-# What a client that already left gets (nginx's code for it); nobody reads it, but the middleware stack needs a response.
+# What a client that already left gets (nginx's code for it); nobody reads it.
 CLIENT_CLOSED_REQUEST = 499
+# Body chunks read ahead of the handler: enough to never stall it, too few to buffer an upload in memory.
+_MAX_PENDING_MESSAGES = 8
 
 
 class CancelOnDisconnectRoute(APIRoute):
@@ -39,12 +41,18 @@ class CancelOnDisconnectRoute(APIRoute):
 
         app.include_router(cancellable)
 
-    A single route can opt in with ``router.add_api_route(..., route_class_override=CancelOnDisconnectRoute)``.
+    A single route can opt in with ``router.add_api_route(..., route_class_override=CancelOnDisconnectRoute)``
+    (``APIRouter`` only; the ``@router.get`` decorators don't take it).
 
     Things to know:
 
-    * The request body is read completely before the handler starts, so the disconnect watcher is the only reader of
-      ``receive()`` afterwards. Don't use it for streamed uploads.
+    * **Everything inside the route is cancelled**, dependencies included (authentication, audit logging, counters)
+      and so is ``BackgroundTasks`` registration, since the client gets no response. Don't rely on side effects that
+      must always happen; shield them or do them in a middleware. A ``Depends`` with ``yield`` sees the 499
+      ``HTTPException`` after the cancellation, so its cleanup rolls back instead of committing.
+    * The request body is not buffered: the handler reads it as usual, from a ``Request`` whose ``receive()`` is fed
+      by a reader task that also spots the disconnect. While the handler isn't reading a large body, the reader
+      stops after a few chunks, so a disconnect is only noticed once the handler has consumed the body.
     * The handler runs in its own task (with a copy of the current context), so context variables a dependency sets
       are not visible to middleware afterwards.
     * Work shared with other requests must survive the cancellation of one of them: await shared tasks and futures
@@ -60,38 +68,73 @@ class CancelOnDisconnectRoute(APIRoute):
         handler = super().get_route_handler()
 
         async def cancel_on_disconnect(request: Request) -> Response:
-            # Buffer the body first (Starlette caches it for the handler): afterwards receive() only yields the
-            # disconnect, which is all the watcher below needs.
+            receiver = _Receiver(request.receive)
+            reader = asyncio.create_task(receiver.read())
+            gone = asyncio.create_task(receiver.disconnected.wait())
+            task = asyncio.create_task(handler(Request(request.scope, receiver.receive)))
             try:
-                await request.body()
-            except ClientDisconnect:  # gone before the handler even started: nothing to run
-                return Response(status_code=CLIENT_CLOSED_REQUEST)
-            task = asyncio.ensure_future(handler(request))
-            watcher = asyncio.ensure_future(_wait_for_disconnect(request))
-            try:
-                await asyncio.wait({task, watcher}, return_when=asyncio.FIRST_COMPLETED)
+                await asyncio.wait({task, gone}, return_when=asyncio.FIRST_COMPLETED)
             except asyncio.CancelledError:  # the server or a middleware is tearing the request down
                 await _cancel(task)
                 raise
             finally:
-                watcher.cancel()
+                reader.cancel()
+                gone.cancel()
             if task.done():  # finished (or failed) before, or together with, the disconnect: its outcome wins
-                return task.result()
+                try:
+                    return task.result()
+                except ClientDisconnect:  # it was reading the body when the client left
+                    raise HTTPException(status_code=CLIENT_CLOSED_REQUEST, detail="Client closed the request") from None
             logger.debug("client disconnected, cancelling %s %s", request.method, request.url.path)
             await _cancel(task)
-            return Response(status_code=CLIENT_CLOSED_REQUEST)
+            # Raised, not returned: the dependencies' exit code (e.g. a transaction) must see a failure, not a success.
+            raise HTTPException(status_code=CLIENT_CLOSED_REQUEST, detail="Client closed the request")
 
         return cancel_on_disconnect
 
 
-async def _wait_for_disconnect(request: Request) -> None:
-    while (await request.receive())["type"] != "http.disconnect":
-        pass
+class _Receiver:
+    """Gives the handler's ``Request`` its own ``receive()`` while one reader task watches for the disconnect."""
+
+    def __init__(self, receive: Receive) -> None:
+        self._receive = receive
+        self._messages: asyncio.Queue[Message | Exception] = asyncio.Queue(maxsize=_MAX_PENDING_MESSAGES)
+        self._gone: Message | None = None
+        self.disconnected = asyncio.Event()
+
+    async def read(self) -> None:
+        """Pump the server's messages into the queue until the client is gone (the queue's limit is the back-pressure)."""
+        try:
+            while True:
+                message = await self._receive()
+                if message["type"] == "http.disconnect":
+                    self.disconnected.set()
+                await self._messages.put(message)
+                if message["type"] == "http.disconnect":
+                    return
+        except Exception as exc:  # a broken server: the handler sees it, the client is not treated as gone
+            await self._messages.put(exc)
+
+    async def receive(self) -> Message:
+        if self._gone is not None:  # the disconnect is final, whoever asks again
+            return self._gone
+        message = await self._messages.get()
+        if isinstance(message, Exception):
+            raise message
+        if message["type"] == "http.disconnect":
+            self._gone = message
+        return message
 
 
-async def _cancel(task: "asyncio.Future[Response]") -> None:
+async def _cancel(task: "asyncio.Task[Response]") -> None:
     """Cancel ``task`` and wait until it has cleaned up (e.g. the server-side query cancel has been sent)."""
     task.cancel()
-    # Whatever the handler turns the cancellation into (QueryCanceled, its own error handling), the client is gone.
-    with contextlib.suppress(asyncio.CancelledError, Exception):
+    try:
         await task
+    except asyncio.CancelledError:
+        # Expected, the handler was cancelled. Unless we are being cancelled ourselves (server shutdown, a timeout).
+        current = asyncio.current_task()
+        if current is not None and current.cancelling():
+            raise
+    except Exception:  # whatever the handler turns the cancellation into, the client is gone
+        logger.debug("handler failed while being cancelled", exc_info=True)
