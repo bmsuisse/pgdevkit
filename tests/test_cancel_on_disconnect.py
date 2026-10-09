@@ -10,8 +10,8 @@ import pytest
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 from psycopg_pool import AsyncConnectionPool
+from pydantic import BaseModel
 
 from pgdevkit.db import fetch_all
 from pgdevkit.fastapi import CancelOnDisconnectRoute
