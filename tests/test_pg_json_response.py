@@ -97,6 +97,19 @@ async def client(pool: AsyncConnectionPool) -> AsyncIterator[httpx.AsyncClient]:
     async def pid():
         return PostgresJsonResponse("select pg_backend_pid() as pid", pool=pool)
 
+    @app.get("/t-string")
+    async def t_string(n: int, evil: str = "x"):
+        column = "id"
+        return PostgresJsonResponse(
+            t"select i as {column:i}, {evil} as note from generate_series(1, {n}) i order by i", pool=pool
+        )
+
+    @app.get("/t-string-json")
+    async def t_string_json():
+        return PostgresJsonResponse(
+            t"select json_build_object('a', i)::text from generate_series(1, {2}) i", pool=pool, query_produces_json=True
+        )
+
     @app.get("/default-pool")
     async def default_pool_route():
         return PostgresJsonResponse("select 1 as a")
@@ -244,6 +257,21 @@ def test_batch_size_must_be_positive(pool: AsyncConnectionPool, batch_size: int)
         PostgresJsonResponse("select 1", pool=pool, batch_size=batch_size)
 
 
-def test_t_strings_are_rejected_with_a_clear_error(pool: AsyncConnectionPool) -> None:
+async def test_t_string_query_binds_values_and_quotes_identifiers(client: httpx.AsyncClient) -> None:
+    response = await client.get("/t-string", params={"n": 3})
+    assert response.json() == [{"id": i, "note": "x"} for i in (1, 2, 3)]
+
+
+async def test_t_string_value_stays_a_bound_parameter(client: httpx.AsyncClient) -> None:
+    evil = "x') from generate_series(1, 1) i; drop table t; --"
+    response = await client.get("/t-string", params={"n": 2, "evil": evil})
+    assert [r["note"] for r in response.json()] == [evil, evil]
+
+
+async def test_t_string_with_query_produces_json(client: httpx.AsyncClient) -> None:
+    assert (await client.get("/t-string-json")).json() == [{"a": 1}, {"a": 2}]
+
+
+def test_t_string_takes_no_params(pool: AsyncConnectionPool) -> None:
     with pytest.raises(TypeError, match="t-string"):
-        PostgresJsonResponse(t"select {1}", pool=pool)  # ty: ignore[invalid-argument-type]
+        PostgresJsonResponse(t"select {1}", {"x": 1}, pool=pool)

@@ -496,11 +496,12 @@ for a `Response`, and the rows are *not* validated against the model.
   starts and released when it ends. A `con` must stay open until the response has been sent, i.e. come from a `Depends`
   with `yield` (FastAPI >= 0.118); `async with pool.connection() as conn: return PostgresJsonResponse(q, con=conn)`
   closes it too early. Prefer the pool.
-- **Query** — a literal string, a `psycopg.sql` composable or a sqlglot expression, with values bound through `params`
-  (`%(name)s`). Passing only literals is enforced by the type checker, **not at runtime**: the query is wrapped
-  as a subquery, never parsed, so never build it from user input. For a data-modifying CTE, or custom JSON, pass
-  `query_produces_json=True` and return one *text* column per row (a `json` column or NULL fails). A trailing `;`
-  is fine, a `;` followed by a comment is not. t-strings aren't supported (they can't be wrapped).
+- **Query** — a literal string, a `psycopg.sql` composable, a sqlglot expression or a t-string, with values bound
+  through `params` (`%(name)s`; a t-string carries its own values and takes no `params`). Passing only literals
+  is enforced by the type checker, **not at runtime**: the query is wrapped as a subquery, never parsed, so never
+  build it from user input. For a data-modifying CTE, or custom JSON, pass `query_produces_json=True` and return one
+  *text* column per row (a `json` column or NULL fails). A trailing `;` is fine in a string, a `;` followed by a
+  comment is not.
 - **Options** — `batch_size` (rows per chunk, >= 1, default 1000; don't take it from user input),
   `statement_timeout` (seconds, see below), `status_code`, `headers` (e.g. `{"Cache-Control": "max-age=3600"}`).
 
