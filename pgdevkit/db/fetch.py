@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, LiteralString, Protocol, c
 from psycopg.connection_async import AsyncConnection
 from psycopg.rows import dict_row
 from psycopg.sql import Composable
-from sqlglot import exp
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
+    from sqlglot import exp  # imported lazily: only needed to type (and render) sqlglot queries
 
 # Same params shape psycopg's Cursor.execute() accepts: a %(name)s-style mapping,
 # or a positional %s-style sequence.
@@ -20,7 +20,7 @@ QueryParams = Mapping[str, Any] | Sequence[Any] | None
 # The only things a query may be: a literal string (e.g. from `SqlLoader.load_sql()`), a sqlglot
 # expression, or psycopg's own safe-composition types (`psycopg.sql` / a t-string). A plain `str`
 # is rejected by the type checker on purpose, so user-controlled text can't be concatenated in.
-SqlQuery = LiteralString | exp.Expression | Composable | Template
+type SqlQuery = LiteralString | exp.Expression | Composable | Template
 
 
 class ConnectionSource(Protocol):
@@ -56,8 +56,11 @@ async def _acquire(con: AsyncConnection | None, pool: ConnectionSource | None) -
 
 
 def _render(query: SqlQuery) -> Any:
-    # sqlglot's postgres dialect renders `exp.Placeholder("id")` as `%(id)s`.
-    return query.sql(dialect="postgres") if isinstance(query, exp.Expression) else query
+    if isinstance(query, (str, bytes, Composable, Template)):
+        return query
+    # Anything else is a sqlglot expression (no sqlglot import needed to know that); its postgres
+    # dialect renders `exp.Placeholder("id")` as `%(id)s`.
+    return query.sql(dialect="postgres")
 
 
 async def _fetch_dicts(
