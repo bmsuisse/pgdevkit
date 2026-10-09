@@ -3,6 +3,7 @@ from __future__ import annotations
 from string.templatelib import Interpolation, Template
 from typing import Any, Callable, Literal, Mapping, Optional, Sequence, Type, TypeVar
 
+from psycopg import AsyncCursor
 from psycopg.connection_async import AsyncConnection
 from psycopg.rows import dict_row
 from psycopg.sql import Literal as SqlLiteral
@@ -26,7 +27,7 @@ def _resolve_helper(con: AsyncConnection, complex_helper: ComplexHelperArg) -> C
 async def _select_list(
     con: AsyncConnection, table_name: tuple[str, str], complex_helper: ComplexHelperArg
 ) -> Composable:
-    """Column list for a SELECT, wrapping composite/enum/JSONB columns in
+    """Column list for a SELECT or RETURNING, wrapping composite/enum/JSONB columns in
     `to_jsonb(...)` so psycopg gets back plain Python values. Falls back to
     `SELECT *` (no extra query) when no ComplexHelper is given."""
     helper = _resolve_helper(con, complex_helper)
@@ -44,12 +45,14 @@ async def _select_list(
 
 async def _convert_complex_values(
     con: AsyncConnection,
+    cur: AsyncCursor[Any],
     table_name: tuple[str, str],
     data: dict,
     complex_helper: ComplexHelperArg,
 ) -> dict:
     """Convert dict/list values destined for composite/enum columns into the
-    psycopg-registered types those columns need. A no-op (no extra query)
+    psycopg types those columns need, and register those types on `cur` (the cursor that will run the
+    statement) only, never on the connection. A no-op (no extra query)
     unless `data` actually contains dict/list values."""
     helper = _resolve_helper(con, complex_helper)
     if helper is None:
@@ -61,12 +64,14 @@ async def _convert_complex_values(
     for k in candidate_keys:
         info = await helper.load_complex_type(table_name, k)
         if info is not None:
+            await helper.register_on(cur, info)
             converted[k] = await helper.recursive_convert(data[k], info, con)
     return converted
 
 
 async def _convert_complex_values_many(
     con: AsyncConnection,
+    cur: AsyncCursor[Any],
     table_name: tuple[str, str],
     rows: Sequence[dict],
     complex_helper: ComplexHelperArg,
@@ -81,6 +86,8 @@ async def _convert_complex_values_many(
     complex_keys = {k for k, info in infos.items() if info is not None}
     if not complex_keys:
         return rows
+    for k in complex_keys:
+        await helper.register_on(cur, infos[k])
     converted_rows = []
     for row in rows:
         new_row = dict(row)
@@ -224,14 +231,19 @@ async def pg_insert(
     *,
     complex_helper: ComplexHelperArg = None,
 ) -> dict[str, Any]:
-    """Insert one row and return the full row (RETURNING *)."""
-    data = await _convert_complex_values(con, table_name, data, complex_helper)
-    query = SQL("INSERT INTO {tbl} ({cols}) VALUES ({vals}) RETURNING *").format(
-        tbl=Identifier(*table_name),
-        cols=SQL(", ").join(Identifier(k) for k in data),
-        vals=SQL(", ").join(Placeholder(k) for k in data),
-    )
+    """Insert one row and return the full row (`RETURNING *`).
+
+    With a `complex_helper`, composite/enum/JSONB columns are returned as `to_jsonb(...)`, exactly like
+    `pg_retrieve` does: plain Python values (a composite as a dict, an enum as its label), whichever columns were
+    written. Without one it is a plain `RETURNING *` as psycopg reads it."""
     async with con.cursor(row_factory=dict_row) as cur:
+        data = await _convert_complex_values(con, cur, table_name, data, complex_helper)
+        query = SQL("INSERT INTO {tbl} ({cols}) VALUES ({vals}) RETURNING {returning}").format(
+            tbl=Identifier(*table_name),
+            cols=SQL(", ").join(Identifier(k) for k in data),
+            vals=SQL(", ").join(Placeholder(k) for k in data),
+            returning=await _select_list(con, table_name, complex_helper),
+        )
         await cur.execute(query, data)
         row = await cur.fetchone()
     assert row is not None
@@ -246,22 +258,26 @@ async def pg_update_dict(
     *,
     complex_helper: ComplexHelperArg = None,
 ) -> Any | None:
-    """Update a row identified by primary_keys. Returns the raw row tuple.
+    """Update a row identified by primary_keys. Returns the raw row tuple (in column order).
+
+    With a `complex_helper`, composite/enum/JSONB columns in it are plain Python values, like `pg_retrieve` returns
+    them (a composite as a dict, an enum as its label), whichever columns were written; without one, plain psycopg
+    behaviour (`RETURNING *`).
 
     Pass `complex_helper` when the table has composite/enum columns among the
-    values being set — omitted, this behaves exactly as before (plain values
-    passed straight through to psycopg)."""
-    data = await _convert_complex_values(con, table_name, data, complex_helper)
-    set_parts = [
-        SQL("{col} = {val}").format(col=Identifier(k), val=Placeholder(k)) for k in data if k not in primary_keys
-    ]
-    where_parts = [SQL("{col} = {val}").format(col=Identifier(pk), val=Placeholder(pk)) for pk in primary_keys]
-    query = SQL("UPDATE {tbl} SET {sets} WHERE {where} RETURNING *").format(
-        tbl=Identifier(*table_name),
-        sets=SQL(", ").join(set_parts),
-        where=SQL(" AND ").join(where_parts),
-    )
+    values being set — omitted, values are passed straight through to psycopg."""
     async with con.cursor() as cur:
+        data = await _convert_complex_values(con, cur, table_name, data, complex_helper)
+        set_parts = [
+            SQL("{col} = {val}").format(col=Identifier(k), val=Placeholder(k)) for k in data if k not in primary_keys
+        ]
+        where_parts = [SQL("{col} = {val}").format(col=Identifier(pk), val=Placeholder(pk)) for pk in primary_keys]
+        query = SQL("UPDATE {tbl} SET {sets} WHERE {where} RETURNING {returning}").format(
+            tbl=Identifier(*table_name),
+            sets=SQL(", ").join(set_parts),
+            where=SQL(" AND ").join(where_parts),
+            returning=await _select_list(con, table_name, complex_helper),
+        )
         await cur.execute(query, data)
         return await cur.fetchone()
 
@@ -283,20 +299,25 @@ async def pg_upsert_dict(
     *,
     complex_helper: ComplexHelperArg = None,
 ) -> dict:
-    """INSERT ... ON CONFLICT ... DO UPDATE, returns the row as a dict."""
-    data = await _convert_complex_values(con, table_name, data, complex_helper)
-    fields = list(data)
-    updates = [SQL("{col} = EXCLUDED.{col}").format(col=Identifier(k)) for k in fields]
-    query = SQL(
-        "INSERT INTO {tbl} ({cols}) VALUES ({vals}) ON CONFLICT ({pks}) DO UPDATE SET {updates} RETURNING *"
-    ).format(
-        tbl=Identifier(*table_name),
-        cols=SQL(", ").join(Identifier(k) for k in fields),
-        vals=SQL(", ").join(Placeholder(k) for k in fields),
-        pks=SQL(", ").join(Identifier(pk) for pk in primary_keys),
-        updates=SQL(", ").join(updates),
-    )
+    """INSERT ... ON CONFLICT ... DO UPDATE, returns the row as a dict.
+
+    With a `complex_helper`, composite/enum/JSONB columns in it are plain Python values, like `pg_retrieve` returns
+    them (a composite as a dict, an enum as its label), whichever columns were written; without one, plain psycopg
+    behaviour (`RETURNING *`)."""
     async with con.cursor(row_factory=dict_row) as cur:
+        data = await _convert_complex_values(con, cur, table_name, data, complex_helper)
+        fields = list(data)
+        updates = [SQL("{col} = EXCLUDED.{col}").format(col=Identifier(k)) for k in fields]
+        query = SQL(
+            "INSERT INTO {tbl} ({cols}) VALUES ({vals}) ON CONFLICT ({pks}) DO UPDATE SET {updates} RETURNING {returning}"
+        ).format(
+            tbl=Identifier(*table_name),
+            cols=SQL(", ").join(Identifier(k) for k in fields),
+            vals=SQL(", ").join(Placeholder(k) for k in fields),
+            pks=SQL(", ").join(Identifier(pk) for pk in primary_keys),
+            updates=SQL(", ").join(updates),
+            returning=await _select_list(con, table_name, complex_helper),
+        )
         await cur.execute(query, data)
         row = await cur.fetchone()
     assert row is not None
@@ -328,30 +349,34 @@ async def pg_upsert_many_dict(
     want a missing row to be a silent no-op rather than create one."""
     if not data:
         return
-    data = await _convert_complex_values_many(con, table_name, data, complex_helper)
-    fields = list(data[0])
-    if must_exist:
-        update_assignments = [
-            SQL("{col} = {val}").format(col=Identifier(k), val=Placeholder(k)) for k in fields if k not in primary_keys
-        ]
-        target_eq = SQL(" AND ").join(
-            SQL("t.{col} = {val}").format(col=Identifier(pk), val=Placeholder(pk)) for pk in primary_keys
-        )
-        query = SQL("UPDATE {tbl} t SET {updates} WHERE {target_eq}").format(
-            tbl=Identifier(*table_name),
-            updates=SQL(", ").join(update_assignments),
-            target_eq=target_eq,
-        )
-    else:
-        updates = [SQL("{col} = EXCLUDED.{col}").format(col=Identifier(k)) for k in fields if k not in primary_keys]
-        query = SQL("INSERT INTO {tbl} ({cols}) VALUES ({vals}) ON CONFLICT ({pks}) DO UPDATE SET {updates}").format(
-            tbl=Identifier(*table_name),
-            cols=SQL(", ").join(Identifier(k) for k in fields),
-            vals=SQL(", ").join(Placeholder(k) for k in fields),
-            pks=SQL(", ").join(Identifier(pk) for pk in primary_keys),
-            updates=SQL(", ").join(updates),
-        )
     async with con.cursor() as cur:
+        data = await _convert_complex_values_many(con, cur, table_name, data, complex_helper)
+        fields = list(data[0])
+        if must_exist:
+            update_assignments = [
+                SQL("{col} = {val}").format(col=Identifier(k), val=Placeholder(k))
+                for k in fields
+                if k not in primary_keys
+            ]
+            target_eq = SQL(" AND ").join(
+                SQL("t.{col} = {val}").format(col=Identifier(pk), val=Placeholder(pk)) for pk in primary_keys
+            )
+            query = SQL("UPDATE {tbl} t SET {updates} WHERE {target_eq}").format(
+                tbl=Identifier(*table_name),
+                updates=SQL(", ").join(update_assignments),
+                target_eq=target_eq,
+            )
+        else:
+            updates = [SQL("{col} = EXCLUDED.{col}").format(col=Identifier(k)) for k in fields if k not in primary_keys]
+            query = SQL(
+                "INSERT INTO {tbl} ({cols}) VALUES ({vals}) ON CONFLICT ({pks}) DO UPDATE SET {updates}"
+            ).format(
+                tbl=Identifier(*table_name),
+                cols=SQL(", ").join(Identifier(k) for k in fields),
+                vals=SQL(", ").join(Placeholder(k) for k in fields),
+                pks=SQL(", ").join(Identifier(pk) for pk in primary_keys),
+                updates=SQL(", ").join(updates),
+            )
         await cur.executemany(query, data)
 
 
@@ -378,14 +403,14 @@ async def pg_insert_many(
     if not data:
         return
     dict_data = [d if isinstance(d, dict) else d.model_dump() for d in data]
-    dict_data = await _convert_complex_values_many(con, table_name, dict_data, complex_helper)
-    fields = list(dict_data[0])
-    query = SQL("INSERT INTO {tbl} ({cols}) VALUES ({vals})").format(
-        tbl=Identifier(*table_name),
-        cols=SQL(", ").join(Identifier(k) for k in fields),
-        vals=SQL(", ").join(Placeholder(k) for k in fields),
-    )
     async with con.cursor() as cur:
+        dict_data = await _convert_complex_values_many(con, cur, table_name, dict_data, complex_helper)
+        fields = list(dict_data[0])
+        query = SQL("INSERT INTO {tbl} ({cols}) VALUES ({vals})").format(
+            tbl=Identifier(*table_name),
+            cols=SQL(", ").join(Identifier(k) for k in fields),
+            vals=SQL(", ").join(Placeholder(k) for k in fields),
+        )
         await cur.executemany(query, dict_data)
 
 

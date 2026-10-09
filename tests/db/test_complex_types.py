@@ -6,7 +6,18 @@ import psycopg
 import pytest
 from psycopg.types.enum import EnumInfo
 
-from pgdevkit.db import PostgresTableModel, pg_insert, pg_retrieve, pg_retrieve_many
+from pgdevkit.db import (
+    PostgresTableModel,
+    pg_insert,
+    pg_insert_many,
+    pg_retrieve,
+    pg_retrieve_many,
+    pg_update,
+    pg_update_dict,
+    pg_upsert,
+    pg_upsert_dict,
+    pg_upsert_many_dict,
+)
 from pgdevkit.db.complex_types import ComplexHelper
 from pgdevkit.db.crud import _select_list
 from pgdevkit.testdb import constants
@@ -53,8 +64,9 @@ async def test_array_of_enum_column_is_detected_and_converted(complex_types_test
         assert isinstance(info, EnumInfo)
 
         converted = await helper.recursive_convert(["happy", "sad"], info, con)
-        await con.execute("INSERT INTO gadget (id, moods) VALUES (1, %s)", (converted,))
         async with con.cursor() as cur:
+            await helper.register_on(cur, info)  # on this cursor only, never on the connection (#54)
+            await cur.execute("INSERT INTO gadget (id, moods) VALUES (1, %s)", (converted,))
             await cur.execute("SELECT moods FROM gadget WHERE id = 1")
             (moods,) = await cur.fetchone()
     assert [m.name for m in moods] == ["happy", "sad"]
@@ -127,7 +139,10 @@ async def test_jsonb_array_column_wraps_each_element_not_the_whole_list(complex_
 def test_helper_attributes_stay_assignable():
     helper = ComplexHelper(con=None)  # type: ignore[arg-type]
     helper.complex_types = {}
-    helper.registered = set()
+    with pytest.warns(DeprecationWarning, match="register_on"):
+        helper.registered = set()  # deprecated and ignored: nothing is registered on the connection any more
+    with pytest.warns(DeprecationWarning, match="register_on"):
+        assert helper.registered == set()
     helper.system_complex_type_dict = {}
     assert helper.system_complex_type_dict == {}
 
@@ -222,7 +237,7 @@ async def test_pg_retrieve_does_not_requery_the_catalog_for_every_call(complex_t
             lambda: pg_insert(con, ("public", "gadget"), {"id": 4, "mood": "sad", "dims": {"w": 1, "h": 2}}, complex_helper=ComplexHelper(con)),
         )
         assert count == 1
-        assert row["dims"].w == 1  # type: ignore[index]
+        assert row["dims"] == {"w": 1, "h": 2}  # type: ignore[index]  # RETURNING gives plain values, like pg_retrieve
 
 
 @requires_podman
@@ -277,7 +292,7 @@ async def test_complex_helper_auto_works_for_every_crud_helper(complex_types_tes
         await _setup_gadget(con)
         table = ("public", "gadget")
         row = await pg_insert(con, table, {"id": 5, "mood": "sad", "dims": {"w": 1, "h": 2}}, complex_helper="auto")
-        assert row["mood"] == "sad" and row["dims"].w == 1  # type: ignore[attr-defined]
+        assert row["mood"] == "sad" and row["dims"] == {"w": 1, "h": 2}  # type: ignore[index]
         await pg_update_dict(con, table, {"id": 5, "dims": {"w": 9, "h": 9}}, ["id"], complex_helper="auto")
         await pg_upsert_dict(con, table, {"id": 5, "mood": "happy"}, ["id"], complex_helper="auto")
         await pg_insert_many(con, table, [{"id": 6, "mood": "sad", "dims": {"w": 1, "h": 1}}, {"id": 7, "mood": "happy", "dims": {"w": 2, "h": 2}}], complex_helper="auto")
@@ -287,3 +302,157 @@ async def test_complex_helper_auto_works_for_every_crud_helper(complex_types_tes
         # one helper per call, yet the catalog was asked once: the next call is just the statement itself
         count, _ = await _queries_of(con, lambda: pg_retrieve(con, Gadget, {"id": 1}, complex_helper="auto"))
         assert count == 1
+
+
+# --- Fixes #54: a ComplexHelper must not change how *other* code on the same connection reads enums/composites ---
+
+
+async def _plain_read(con: psycopg.AsyncConnection):
+    """What unrelated code on `con` sees: an enum label, a composite and an enum array, read with a plain SELECT."""
+    async with con.cursor() as cur:
+        await cur.execute("SELECT 'sad'::mood, ROW(1, 2)::dims, ARRAY['happy']::mood[]")
+        return await cur.fetchone()
+
+
+@requires_podman
+async def test_pg_helpers_do_not_change_how_the_connection_reads_enums_and_composites(complex_types_test_db):
+    async with await _connect() as con:
+        await _setup_gadget(con)
+        table = ("public", "gadget")
+        before = await _plain_read(con)
+        assert before[0] == "sad" and isinstance(before[0], str)  # the label, as a str
+
+        async def check(what: str, call) -> None:
+            await call()
+            assert await _plain_read(con) == before, f"{what} changed how the connection reads enums/composites"
+
+        for helper_arg in ("auto", ComplexHelper(con), ComplexHelper(con, cache=False)):
+            kw = {"complex_helper": helper_arg}
+            await check("pg_retrieve", lambda: pg_retrieve(con, Gadget, {"id": 1}, **kw))
+            await check("pg_retrieve_many", lambda: pg_retrieve_many(con, Gadget, {}, limit=1, **kw))
+            await check("pg_insert", lambda: pg_insert(con, table, {"id": 10, "mood": "sad", "dims": {"w": 1, "h": 2}}, **kw))
+            await check("pg_insert (enum only)", lambda: pg_insert(con, table, {"id": 11, "mood": "happy"}, **kw))
+            await check("pg_update_dict", lambda: pg_update_dict(con, table, {"id": 10, "dims": {"w": 5, "h": 5}}, ["id"], **kw))
+            await check("pg_update", lambda: pg_update(con, Gadget(id=10, mood="happy", dims={"w": 6, "h": 6}), Gadget, **kw))
+            await check("pg_upsert_dict", lambda: pg_upsert_dict(con, table, {"id": 10, "dims": {"w": 7, "h": 7}}, ["id"], **kw))
+            await check("pg_upsert", lambda: pg_upsert(con, Gadget(id=12, mood="sad", dims={"w": 1, "h": 1}), Gadget, **kw))
+            await check(
+                "pg_insert_many",
+                lambda: pg_insert_many(con, table, [{"id": 20, "dims": {"w": 1, "h": 1}}, {"id": 21, "dims": {"w": 2, "h": 2}}], **kw),
+            )
+            await check(
+                "pg_upsert_many_dict",
+                lambda: pg_upsert_many_dict(con, table, [{"id": 20, "dims": {"w": 3, "h": 3}}, {"id": 22, "dims": None}], ["id"], **kw),
+            )
+            await check(
+                "pg_upsert_many_dict(must_exist)",
+                lambda: pg_upsert_many_dict(con, table, [{"id": 20, "dims": {"w": 4, "h": 4}}], ["id"], must_exist=True, **kw),
+            )
+            await con.execute("DELETE FROM gadget WHERE id >= 10")
+
+        # an enum *array* (a list converted to enum members) written through the helper
+        await con.execute("ALTER TABLE gadget ADD COLUMN moods mood[]")
+        helper_arg = ComplexHelper(con, cache=False)  # sees the new column
+        await check("pg_insert (enum array)", lambda: pg_insert(con, table, {"id": 40, "moods": ["happy", "sad"]}, complex_helper=helper_arg))
+        assert (await (await con.execute("SELECT moods FROM gadget WHERE id = 40")).fetchone()) == ("{happy,sad}",)
+
+        # the data written through the helper is right nevertheless
+        await pg_insert(con, table, {"id": 30, "mood": "sad", "dims": {"w": 8, "h": 9}}, complex_helper="auto")
+        got = await pg_retrieve(con, Gadget, {"id": 30}, complex_helper="auto")
+        assert got == Gadget(id=30, mood="sad", dims={"w": 8, "h": 9}, note=None)
+        assert await _plain_read(con) == before
+
+
+@requires_podman
+async def test_enum_label_survives_pg_retrieve_many_on_the_same_connection(complex_types_test_db):
+    async with await _connect() as con:
+        await _setup_gadget(con)
+
+        async def plain() -> tuple:
+            return await (await con.execute("select 'happy'::mood")).fetchone()  # type: ignore[return-value]
+
+        assert await plain() == ("happy",)
+        await pg_retrieve_many(con, Gadget, {}, limit=1, complex_helper=ComplexHelper(con))
+        assert await plain() == ("happy",)  # not <Mood.happy: 1>
+        row = await (await con.execute("select 'happy'::mood, ROW(1, 2)::dims")).fetchone()
+        assert row == ("happy", "(1,2)")  # a composite is still its text form, not a namedtuple
+
+
+@requires_podman
+async def test_registration_is_scoped_to_the_cursor_that_writes(complex_types_test_db):
+    # the public way to use `recursive_convert` yourself: register on the cursor that runs the statement
+    async with await _connect() as con:
+        await con.execute("CREATE TYPE mood AS ENUM ('happy', 'sad')")
+        await con.execute("CREATE TYPE dims AS (w int, h mood)")
+        await con.execute("CREATE TABLE gadget (id serial PRIMARY KEY, moods mood[], d dims, d2 dims[])")
+        helper = ComplexHelper(con)
+        types = await helper.load_all_complex_types(("public", "gadget"))
+        async with con.cursor() as cur:
+            for info in types.values():
+                await helper.register_on(cur, info)
+            await cur.execute(
+                "INSERT INTO gadget (moods, d, d2) VALUES (%s, %s, %s)",
+                (
+                    await helper.recursive_convert(["happy", "sad"], types["moods"], con),
+                    await helper.recursive_convert({"w": 1, "h": "sad"}, types["d"], con),
+                    await helper.recursive_convert([{"w": 2, "h": "happy"}], types["d2"], con),
+                ),
+            )
+            await cur.execute("SELECT moods, d, d2 FROM gadget")
+            moods, d, d2 = await cur.fetchone()  # type: ignore[misc]
+        assert [m.name for m in moods] == ["happy", "sad"]
+        assert (d.w, d.h.name) == (1, "sad") and (d2[0].w, d2[0].h.name) == (2, "happy")  # nested types registered too
+        # a plain SELECT on the connection (or on another cursor) is untouched
+        assert await (await con.execute("SELECT moods, d FROM gadget")).fetchone() == ("{happy,sad}", "(1,sad)")
+
+
+@requires_podman
+async def test_repeated_writes_do_not_grow_psycopgs_loader_class_cache(complex_types_test_db):
+    from psycopg.types import composite as psycopg_composite
+
+    async with await _connect() as con:
+        await _setup_gadget(con)
+        row = {"id": 1, "dims": {"w": 1, "h": 1}}
+        await pg_upsert_dict(con, ("public", "gadget"), row, ["id"], complex_helper="auto")
+        size = psycopg_composite._make_loader.cache_info().currsize
+        for i in range(5):
+            await pg_upsert_dict(con, ("public", "gadget"), {**row, "id": i + 2}, ["id"], complex_helper="auto")
+        assert psycopg_composite._make_loader.cache_info().currsize == size  # one registration per write, no new classes
+
+
+@requires_podman
+async def test_returning_rows_are_plain_values_whichever_columns_were_written(complex_types_test_db):
+    async with await _connect() as con:
+        await _setup_gadget(con)
+        table = ("public", "gadget")
+        full = {"id": 1, "mood": "happy", "dims": {"w": 3, "h": 4}, "note": "a"}
+        for helper in ("auto", ComplexHelper(con)):
+            # only the composite written: the enum (not converted) and the composite come back the same way ...
+            r1 = await pg_upsert_dict(con, table, {"id": 1, "dims": {"w": 3, "h": 4}}, ["id"], complex_helper=helper)
+            # ... as when only the enum is written, or both, or neither
+            r2 = await pg_upsert_dict(con, table, {"id": 1, "mood": "happy"}, ["id"], complex_helper=helper)
+            r3 = await pg_upsert_dict(con, table, {"id": 1, "mood": "happy", "dims": {"w": 3, "h": 4}}, ["id"], complex_helper=helper)
+            r4 = await pg_upsert_dict(con, table, {"id": 1, "note": "a"}, ["id"], complex_helper=helper)
+            r5 = await pg_insert(con, table, {"id": 9, "note": "z"}, complex_helper=helper)
+            await con.execute("DELETE FROM gadget WHERE id = 9")
+            assert r1 == r2 == r3 == r4 == full
+            assert r5 == {"id": 9, "mood": None, "dims": None, "note": "z"}
+            u1 = await pg_update_dict(con, table, {"id": 1, "dims": {"w": 3, "h": 4}}, ["id"], complex_helper=helper)
+            u2 = await pg_update_dict(con, table, {"id": 1, "note": "a"}, ["id"], complex_helper=helper)
+            assert u1 == u2 == (1, "happy", {"w": 3, "h": 4}, "a")  # the raw tuple, in column order
+        # without a helper nothing changes: RETURNING * as psycopg reads it
+        assert await pg_upsert_dict(con, table, {"id": 1, "note": "a"}, ["id"]) == {
+            "id": 1, "mood": "happy", "dims": "(3,4)", "note": "a"
+        }
+
+
+@requires_podman
+async def test_composite_whose_field_is_an_enum_array_is_converted(complex_types_test_db):
+    async with await _connect() as con:
+        await con.execute("CREATE TYPE mood AS ENUM ('happy', 'sad')")
+        await con.execute("CREATE TYPE onlyarr AS (ms mood[])")
+        await con.execute("CREATE TABLE holder (id int PRIMARY KEY, a onlyarr)")
+        row = await pg_insert(con, ("public", "holder"), {"id": 1, "a": {"ms": ["sad"]}}, complex_helper="auto")
+        assert row == {"id": 1, "a": {"ms": ["sad"]}}
+        got = await ComplexHelper(con).load_all_complex_types(("public", "holder"))
+        assert isinstance(got["a"], psycopg.types.composite.CompositeInfo)
