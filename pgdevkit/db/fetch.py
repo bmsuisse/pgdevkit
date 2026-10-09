@@ -1,19 +1,19 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from string.templatelib import Template
-from typing import TYPE_CHECKING, Any, AsyncIterator, LiteralString, Protocol, cast, overload
+from typing import TYPE_CHECKING, Any, LiteralString, Protocol, overload
 
 from psycopg.connection_async import AsyncConnection
 from psycopg.errors import QueryCanceled
 from psycopg.rows import dict_row
 from psycopg.sql import Composable
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
-    from pydantic import BaseModel
-    from sqlglot import exp  # imported lazily: only needed to type (and render) sqlglot queries
+    from sqlglot import exp  # imported lazily: only needed to type sqlglot queries (rendering is duck-typed)
 
 # Same params shape psycopg's Cursor.execute() accepts: a %(name)s-style mapping,
 # or a positional %s-style sequence.
@@ -50,7 +50,7 @@ async def _acquire(con: AsyncConnection | None, pool: ConnectionSource | None) -
             raise TypeError("Pass either `con` or `pool`, not both.")
         yield con
         return
-    source = pool or _default_source
+    source = pool if pool is not None else _default_source
     if source is None:
         raise RuntimeError("No connection: pass `con=`/`pool=`, or register a pool with `set_default_pool()`.")
     async with source.connection() as borrowed:
@@ -130,6 +130,8 @@ async def fetch_all(
     query: SqlQuery,
     params: QueryParams = None,
     *,
+    model: None = None,
+    row_mapper: None = None,
     con: AsyncConnection | None = None,
     pool: ConnectionSource | None = None,
     cancel: asyncio.Event | None = None,
@@ -156,11 +158,13 @@ async def fetch_all(
     from `pool` or the pool registered via `set_default_pool()` and released afterwards.
 
     Set `cancel` (an `asyncio.Event`, e.g. when the HTTP client disconnects) to abort a running
-    query on the server: `fetch_all` then raises `psycopg.errors.QueryCanceled`. Cancelling the
-    awaiting task does the same, so the query never keeps running server-side unattended.
+    query on the server: `fetch_all` then raises `psycopg.errors.QueryCanceled`. If the awaiting
+    task is cancelled instead, the query is cancelled server-side too and `CancelledError`
+    propagates, so the query never keeps running unattended.
 
     `query` must be a literal string, a sqlglot expression, a `psycopg.sql` composable or a
-    t-string -- never text built with f-strings/concatenation (`bdt lint` enforces this too).
+    t-string -- never text built with f-strings/concatenation (a plain `str` fails type checking).
+    In a sqlglot expression, write a literal `%` as `%%` when you also pass `params`.
     A t-string already carries its values, so it must not be combined with `params`.
     """
     if model is not None and row_mapper is not None:
@@ -172,4 +176,4 @@ async def fetch_all(
         return [model.model_validate(row) for row in rows]
     if row_mapper is not None:
         return [row_mapper(row) for row in rows]
-    return cast(list[Any], rows)
+    return rows

@@ -3,8 +3,8 @@ name: pgdevkit
 plugin: coding
 description: >
   Use pgdevkit for any PostgreSQL work in a Python project: a local
-  Docker/Podman test database (`pgdb testdb`), importable ORM-free CRUD
-  helpers (`pgdevkit.db`), and the `database/`-folder schema-as-code
+  Docker/Podman test database (`pgdb testdb`), importable ORM-free CRUD and
+  query helpers (`pgdevkit.db`: `pg_*`, `fetch_all`, `PgPool`, `SqlLoader`), and the `database/`-folder schema-as-code
   convention. Supersedes the old postgres-test-setup, postgres-best-practices,
   and database-in-source skills — pgdevkit is a real dependency now, not
   copy-pasted reference files. Use whenever the user wants to set up a local
@@ -33,7 +33,7 @@ Core rules for every piece of database code in a project using pgdevkit:
 - **Inline SQL** — trivial queries of **4 lines or fewer** may be written inline in Python. Anything with JOINs, subqueries, CTEs, aggregations, or multiple conditions lives in its own `.sql` file.
 - **Named parameters** — always `%(name)s` style, never positional `%s`.
 - **The `database/` folder is the source of truth for the schema** — see [docs/database-layout.md](../../docs/database-layout.md) for the layer/object-type/file-naming conventions.
-- **Result mapping** — every query result maps to a Pydantic model; table-mapped models extend `pgdevkit.db.PostgresTableModel`.
+- **Result mapping** — every query result maps to a Pydantic model (or is deliberately returned as dicts / through `row_mapper`); table-mapped models extend `pgdevkit.db.PostgresTableModel`.
 
 ---
 
@@ -113,12 +113,13 @@ SQL files live under `db/queries/<topic>/`. Every custom query gets its own file
 
 ```python
 # db/connection.py
-from pgdevkit.db import PgPool
+from pgdevkit.db import PgPool, set_default_pool
 
 pool = PgPool(env_prefix="APP_POSTGRES_")  # matches ensure_testdb()'s {env_prefix}POSTGRES_* vars
 
 async def startup():
     await pool.open()
+    set_default_pool(pool)  # lets `fetch_all()` borrow from it when no `con=`/`pool=` is given
 ```
 
 ### Models
@@ -170,7 +171,7 @@ from pgdevkit.db import pg_retrieve, pg_insert, pg_upsert, pg_delete
 | `pg_insert_many` | Batch insert via `executemany` |
 | `pg_delete` / `pg_delete_dict` | Delete by PK, returns deleted row |
 
-Use these for simple CRUD. For custom `WHERE` clauses, joins, aggregations, or ordering, write a dedicated `.sql` file and a repository method.
+Use these for simple CRUD. For custom `WHERE` clauses, joins, aggregations, or ordering, write a dedicated `.sql` file and run it with `fetch_all` (below) in a repository method.
 
 ### Loading `.sql` files
 
@@ -219,8 +220,8 @@ async with pool.connection() as conn:  # inside a transaction you already hold
 
 - `model=` validates each row into a Pydantic model; `row_mapper=` maps each dict row to anything else (exclusive with `model`).
 - Passing `con=` runs on *your* connection: `fetch_all` never commits, closes or releases it. Without it, a connection is borrowed from `pool=` (or the `set_default_pool()` pool) and released afterwards.
-- `cancel=` takes an `asyncio.Event`: set it (e.g. when the HTTP client disconnects) and the running query is cancelled on the server, raising `psycopg.errors.QueryCanceled`. Cancelling the awaiting task does the same, so no query keeps running unattended; a borrowed `con` is left clean (just `await con.rollback()`).
-- `query` is typed `SqlQuery`: a literal string (`SqlLoader.load_sql()`), a sqlglot expression, a `psycopg.sql` composable or a t-string. A plain `str` fails type checking on purpose, and `bdt lint` flags f-strings/concatenation/`%`/`.format()` passed to it just like for `.execute()`. A t-string carries its own values, so don't also pass `params`.
+- `cancel=` takes an `asyncio.Event`: set it (e.g. when the HTTP client disconnects) and the running query is cancelled on the server, raising `psycopg.errors.QueryCanceled`. If the awaiting task is cancelled instead, the server-side query is cancelled too and `CancelledError` propagates as usual (not `QueryCanceled`), so no query keeps running unattended. After `QueryCanceled` a borrowed `con` is usable again once you `await con.rollback()` (autocommit connections need nothing).
+- `query` is typed `SqlQuery`: a literal string (`SqlLoader.load_sql()`), a sqlglot expression, a `psycopg.sql` composable or a t-string. A plain `str` fails type checking on purpose, so don't build SQL with f-strings/concatenation. In a sqlglot expression, write a literal `%` as `%%` when you also pass `params`. A t-string carries its own values, so don't also pass `params`.
 
 ### Dynamic SQL
 
@@ -329,7 +330,7 @@ Reports drift between the `database/` `.sql` files and the actual schema — tab
 - [ ] Simple CRUD uses `pgdevkit.db`'s `pg_*` helpers; custom queries use `.sql` files loaded via `SqlLoader`
 - [ ] Inline SQL only for trivial queries ≤ 4 lines; anything with JOINs/CTEs/aggregations/subqueries uses a `.sql` file
 - [ ] All parameters use `%(name)s` style with a dict argument
-- [ ] Custom queries go through `fetch_all(..., model=...)` (pass `con=` when inside a transaction); results mapped to a Pydantic model; table-mapped models extend `PostgresTableModel`
+- [ ] Custom read queries use `fetch_all(...)` (`model=` where the shape is stable; pass `con=` inside a transaction); results mapped to a Pydantic model; table-mapped models extend `PostgresTableModel`
 - [ ] No `LATERAL JOIN` — use a CTE that groups/aggregates first, then joins it
 - [ ] `.<env>.sql` files (e.g. `.prod.sql`) are skipped by `pgdb testdb` unless it's run with a matching `--env`
 - [ ] Every table (and non-obvious column) has a `COMMENT ON`, placed in the object's own `.sql` file

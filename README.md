@@ -411,8 +411,9 @@ Install with the `db` extra: `pip install pgdevkit[db]`.
   Pydantic `model` instances, or through a `row_mapper`. Pass `con` to run on a
   connection you already hold (it is borrowed: never committed, closed or
   released); otherwise a connection is taken from `pool` or the pool registered
-  with `set_default_pool()`. Set the `cancel` `asyncio.Event` (or cancel the task) to abort
-  the query on the server with `QueryCanceled`. `query` must be a literal string, a sqlglot
+  with `set_default_pool()`. Set the `cancel` `asyncio.Event` to abort the query on the server
+  (`QueryCanceled`); cancelling the awaiting task cancels it there too, and
+  `CancelledError` propagates as usual. `query` must be a literal string, a sqlglot
   expression, a `psycopg.sql` composable or a t-string — never an f-string.
 - **CRUD functions** — `pg_retrieve`, `pg_retrieve_many`, `pg_insert`,
   `pg_insert_many`, `pg_update`, `pg_update_dict`, `pg_upsert`,

@@ -127,33 +127,44 @@ async def test_already_set_cancel_raises_before_touching_a_connection():
 
 async def _active_sleeps(pool: PgPool) -> int:
     async with pool.connection() as con:
-        cur = await con.execute("SELECT count(*) FROM pg_stat_activity WHERE query LIKE '%pg_sleep(30)%' AND state = 'active' AND pid <> pg_backend_pid()")
+        cur = await con.execute(
+            "SELECT count(*) FROM pg_stat_activity "
+            "WHERE query LIKE '%pg_sleep(30)%' AND state = 'active' AND pid <> pg_backend_pid()"
+        )
         row = await cur.fetchone()
         assert row is not None
         return row[0]
 
 
+async def _wait_for_active_sleeps(pool: PgPool, expected: int, timeout: float = 10) -> None:
+    deadline = time.monotonic() + timeout
+    while await _active_sleeps(pool) != expected:
+        assert time.monotonic() < deadline, f"expected {expected} active pg_sleep(30) queries"
+        await asyncio.sleep(0.05)
+
+
 @requires_podman
 async def test_cancel_event_aborts_running_query_and_keeps_borrowed_connection_usable(pool: PgPool):
     cancel = asyncio.Event()
-    asyncio.get_running_loop().call_later(0.3, cancel.set)
     async with pool.connection() as con:
+        task = asyncio.ensure_future(fetch_all("SELECT pg_sleep(30)", con=con, cancel=cancel))
+        await _wait_for_active_sleeps(pool, 1)  # really mid-query, not the "already set" early exit
         started = time.monotonic()
+        cancel.set()
         with pytest.raises(QueryCanceled):
-            await fetch_all("SELECT pg_sleep(30)", con=con, cancel=cancel)
+            await task
         assert time.monotonic() - started < 5
         await con.rollback()
         assert await fetch_all("SELECT 1 AS one", con=con) == [{"one": 1}]
-    assert await _active_sleeps(pool) == 0
+    await _wait_for_active_sleeps(pool, 0)
 
 
 @requires_podman
 async def test_cancelling_the_task_cancels_the_query_on_the_server(pool: PgPool):
     task = asyncio.ensure_future(fetch_all("SELECT pg_sleep(30)", pool=pool))
-    await asyncio.sleep(0.3)
-    assert await _active_sleeps(pool) == 1
+    await _wait_for_active_sleeps(pool, 1)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert await _active_sleeps(pool) == 0
+    await _wait_for_active_sleeps(pool, 0)
     assert await fetch_all("SELECT 1 AS one", pool=pool) == [{"one": 1}]
