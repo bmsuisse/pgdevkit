@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import os
-from typing import Literal
+from collections.abc import Awaitable, Callable
+from typing import Any, Literal
 
+from psycopg import AsyncConnection
+from psycopg.conninfo import make_conninfo
 from psycopg_pool import AsyncConnectionPool, AsyncNullConnectionPool
 
 from ..connection import detect_provider, get_azure_postgres_password, is_azure_postgres_host
@@ -26,6 +29,12 @@ class PgPool:
     auto-includes `prepare_threshold=None` too, since PgBouncer transaction
     mode doesn't support server-side prepared statements. Pass an explicit
     `use_null_pool`/`connection_kwargs` to override either.
+
+    `min_size`, `timeout` (seconds to wait for a free connection before the pool raises `PoolTimeout`),
+    `configure` (an async callable run on every new connection, e.g. to set session timeouts) and `check` (the
+    health check run when a connection is handed out; the default is the pool class' `check_connection`) are passed
+    through to the underlying psycopg pool when given (`min_size` defaults to 4, or `max_size` if that is smaller; a
+    null pool takes no `min_size`).
     """
 
     def __init__(
@@ -40,6 +49,10 @@ class PgPool:
         use_null_pool: bool | Literal["auto"] = "auto",
         connection_kwargs: dict | None = None,
         dsn_params: dict[str, str] | None = None,
+        min_size: int | None = None,
+        timeout: float | None = None,
+        configure: Callable[[AsyncConnection], Awaitable[None]] | None = None,
+        check: Callable[[AsyncConnection], Awaitable[None]] | None = None,
     ) -> None:
         self._env_prefix = env_prefix
         self._max_size = max_size
@@ -50,6 +63,12 @@ class PgPool:
         self._use_null_pool = use_null_pool
         self._connection_kwargs = connection_kwargs
         self._dsn_params = dsn_params or {}
+        # only what was given: the psycopg pool's own defaults apply to the rest
+        self._pool_options: dict[str, Any] = {
+            k: v for k, v in {"timeout": timeout, "configure": configure}.items() if v is not None
+        }
+        self._min_size = min_size
+        self._check = check
         self._pool: AsyncConnectionPool | AsyncNullConnectionPool | None = None
 
     def _is_azure_postgres(self, host: str) -> bool:
@@ -77,10 +96,8 @@ class PgPool:
                     exclude_interactive_browser_credential=self._exclude_interactive_browser_credential,
                 )
 
-        dsn = f"host={host} port={port} dbname={dbname} user={user} password={password}"
-        for key, value in self._dsn_params.items():
-            dsn += f" {key}={value}"
-        return dsn
+        # make_conninfo quotes values (a password with a space, backslash or quote would break a hand-built string)
+        return make_conninfo(host=host, port=port, dbname=dbname, user=user, password=password, **self._dsn_params)
 
     async def open(self) -> None:
         if self._pool is None:
@@ -93,13 +110,17 @@ class PgPool:
                 connection_kwargs = {"prepare_threshold": None} if is_azure_postgres else {}
             max_lifetime = 3600.0 if self._max_lifetime is None else self._max_lifetime
             if use_null_pool:
+                null_options: dict[str, Any] = dict(self._pool_options)
+                if self._min_size is not None:
+                    null_options["min_size"] = self._min_size
                 self._pool = AsyncNullConnectionPool(
                     conninfo=self._dsn,
                     open=False,
                     max_size=self._max_size,
                     max_lifetime=max_lifetime,
-                    check=AsyncNullConnectionPool.check_connection,
+                    check=self._check or AsyncNullConnectionPool.check_connection,
                     kwargs=connection_kwargs,
+                    **null_options,
                 )
             else:
                 self._pool = AsyncConnectionPool(
@@ -107,8 +128,11 @@ class PgPool:
                     open=False,
                     max_size=self._max_size,
                     max_lifetime=max_lifetime,
-                    check=AsyncConnectionPool.check_connection,
+                    check=self._check or AsyncConnectionPool.check_connection,
                     kwargs=connection_kwargs,
+                    # (psycopg's default min_size of 4 would reject a max_size below 4)
+                    min_size=min(4, self._max_size) if self._min_size is None else self._min_size,
+                    **self._pool_options,
                 )
         if not self._pool._opened:
             await self._pool.open()
