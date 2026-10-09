@@ -543,7 +543,7 @@ for a `Response`, and the rows are *not* validated against the model.
   starts and released when it ends. A `con` must stay open until the response has been sent, i.e. come from a `Depends`
   with `yield` (FastAPI >= 0.118); `async with pool.connection() as conn: return PostgresJsonResponse(q, con=conn)`
   closes it too early. Prefer the pool.
-- **Query** — a literal string, a `psycopg.sql` composable, a sqlglot expression or a t-string, with values bound
+- **Query** — a literal string, a `psycopg.sql` composable, a sqlglot expression (any `exp.Expr`, so Select, Union, Subquery and other `exp.Query` values are fine) or a t-string, with values bound
   through `params` (`%(name)s`; a t-string carries its own values and takes no `params`). Passing only literals
   is enforced by the type checker, **not at runtime**: the query is wrapped as a subquery, never parsed, so never
   build it from user input. For a data-modifying CTE, or custom JSON, pass `query_produces_json=True` and return one
