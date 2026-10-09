@@ -184,8 +184,7 @@ sql = SqlLoader(Path(__file__).parent / "queries")
 
 ```python
 # db/repositories/user_repository.py
-from psycopg.rows import dict_row
-from pgdevkit.db import pg_retrieve, pg_delete
+from pgdevkit.db import fetch_all, pg_retrieve, pg_delete
 from db.connection import pool
 from db.loader import sql
 from models.user_models import UserRow, UserSummary
@@ -196,11 +195,7 @@ class UserRepository:
             return await pg_retrieve(conn, UserRow, {"id": user_id})
 
     async def list_active(self, limit: int = 100) -> list[UserSummary]:
-        async with pool.connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute(sql.load_sql("users", "list_active_users"), {"limit": limit})
-                rows = await cur.fetchall()
-        return [UserSummary.model_validate(r) for r in rows]
+        return await fetch_all(sql.load_sql("users", "list_active_users"), {"limit": limit}, model=UserSummary)
 
     async def delete(self, user: UserRow) -> UserRow | None:
         async with pool.connection() as conn:
@@ -208,6 +203,23 @@ class UserRepository:
 ```
 
 Named parameters, `%(name)s` style, dict argument — never positional `%s`, never f-strings or `str.format()` for SQL text.
+
+### `fetch_all` — custom queries without cursor boilerplate
+
+```python
+from pgdevkit.db import fetch_all, set_default_pool
+
+set_default_pool(pool)  # once, at startup -- the connection source when none is passed
+
+users = await fetch_all(sql.load_sql("users", "list_active_users"), {"limit": 10}, model=UserSummary)  # list[UserSummary]
+rows = await fetch_all(sql.load_sql("users", "list_active_users"), {"limit": 10})                      # list[dict]
+async with pool.connection() as conn:  # inside a transaction you already hold
+    users = await fetch_all(query, params, model=UserSummary, con=conn)
+```
+
+- `model=` validates each row into a Pydantic model; `row_mapper=` maps each dict row to anything else (exclusive with `model`).
+- Passing `con=` runs on *your* connection: `fetch_all` never commits, closes or releases it. Without it, a connection is borrowed from `pool=` (or the `set_default_pool()` pool) and released afterwards.
+- `query` is typed `SqlQuery`: a literal string (`SqlLoader.load_sql()`), a sqlglot expression, a `psycopg.sql` composable or a t-string. A plain `str` fails type checking on purpose, and `bdt lint` flags f-strings/concatenation/`%`/`.format()` passed to it just like for `.execute()`. A t-string carries its own values, so don't also pass `params`.
 
 ### Dynamic SQL
 
@@ -316,7 +328,7 @@ Reports drift between the `database/` `.sql` files and the actual schema — tab
 - [ ] Simple CRUD uses `pgdevkit.db`'s `pg_*` helpers; custom queries use `.sql` files loaded via `SqlLoader`
 - [ ] Inline SQL only for trivial queries ≤ 4 lines; anything with JOINs/CTEs/aggregations/subqueries uses a `.sql` file
 - [ ] All parameters use `%(name)s` style with a dict argument
-- [ ] Results mapped to a Pydantic model; table-mapped models extend `PostgresTableModel`
+- [ ] Custom queries go through `fetch_all(..., model=...)` (pass `con=` when inside a transaction); results mapped to a Pydantic model; table-mapped models extend `PostgresTableModel`
 - [ ] No `LATERAL JOIN` — use a CTE that groups/aggregates first, then joins it
 - [ ] `.<env>.sql` files (e.g. `.prod.sql`) are skipped by `pgdb testdb` unless it's run with a matching `--env`
 - [ ] Every table (and non-obvious column) has a `COMMENT ON`, placed in the object's own `.sql` file

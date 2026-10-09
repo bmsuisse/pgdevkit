@@ -406,6 +406,13 @@ Install with the `db` extra: `pip install pgdevkit[db]`.
   `--entra-user`. For Lakebase hosts, also set the
   `{env_prefix}DATABRICKS_WORKSPACE_HOST` and `{env_prefix}DATABRICKS_INSTANCE`
   env vars.
+- **`fetch_all(query, params=None, *, model=None, row_mapper=None, con=None, pool=None)`**
+  — run one custom query and get every row back as dicts, as validated
+  Pydantic `model` instances, or through a `row_mapper`. Pass `con` to run on a
+  connection you already hold (it is borrowed: never committed, closed or
+  released); otherwise a connection is taken from `pool` or the pool registered
+  with `set_default_pool()`. `query` must be a literal string, a sqlglot
+  expression, a `psycopg.sql` composable or a t-string — never an f-string.
 - **CRUD functions** — `pg_retrieve`, `pg_retrieve_many`, `pg_insert`,
   `pg_insert_many`, `pg_update`, `pg_update_dict`, `pg_upsert`,
   `pg_upsert_dict`, `pg_upsert_many`, `pg_upsert_many_dict`, `pg_delete`,
