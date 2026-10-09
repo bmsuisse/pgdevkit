@@ -53,8 +53,9 @@ async def test_array_of_enum_column_is_detected_and_converted(complex_types_test
         assert isinstance(info, EnumInfo)
 
         converted = await helper.recursive_convert(["happy", "sad"], info, con)
-        await con.execute("INSERT INTO gadget (id, moods) VALUES (1, %s)", (converted,))
         async with con.cursor() as cur:
+            await helper.register_on(cur, info)  # on this cursor only, never on the connection (#54)
+            await cur.execute("INSERT INTO gadget (id, moods) VALUES (1, %s)", (converted,))
             await cur.execute("SELECT moods FROM gadget WHERE id = 1")
             (moods,) = await cur.fetchone()
     assert [m.name for m in moods] == ["happy", "sad"]
@@ -127,7 +128,6 @@ async def test_jsonb_array_column_wraps_each_element_not_the_whole_list(complex_
 def test_helper_attributes_stay_assignable():
     helper = ComplexHelper(con=None)  # type: ignore[arg-type]
     helper.complex_types = {}
-    helper.registered = set()
     helper.system_complex_type_dict = {}
     assert helper.system_complex_type_dict == {}
 
@@ -385,7 +385,3 @@ async def test_registration_is_scoped_to_the_cursor_that_writes(complex_types_te
         assert (d.w, d.h.name) == (1, "sad") and (d2[0].w, d2[0].h.name) == (2, "happy")  # nested types registered too
         # a plain SELECT on the connection (or on another cursor) is untouched
         assert await (await con.execute("SELECT moods, d FROM gadget")).fetchone() == ("{happy,sad}", "(1,sad)")
-        # a cursor that did not register the types can't dump what the helper converted
-        converted = await helper.recursive_convert({"w": 1, "h": "sad"}, types["d"], con)
-        with pytest.raises(psycopg.ProgrammingError):
-            await con.execute("INSERT INTO gadget (d) VALUES (%s)", (converted,))

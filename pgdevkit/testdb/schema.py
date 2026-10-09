@@ -260,6 +260,9 @@ async def _insert_test_data(
                     await copy.write_row(tuple(row[c] for c in col_names))
             return
 
+        for col in col_names:
+            # registered on this cursor only, never on the (possibly pooled) connection
+            await complex_helper.register_on(cur, complex_types.get(col))
         for row in rows:
             for col in col_names:
                 info = complex_types.get(col)

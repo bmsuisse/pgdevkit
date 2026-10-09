@@ -446,8 +446,17 @@ Install with the `db` extra: `pip install pgdevkit[db]`.
   `SELECT` privileges, and consider `statement_timeout=at_most(...)`.
 - **`ComplexHelper`** — handles composite, enum and JSONB columns for the CRUD functions: pass
   `complex_helper=ComplexHelper(con)` (optionally with `normalizers`), or `complex_helper="auto"` for a default one,
-  to any `pg_*` function that takes the argument. What it learns from the catalog (types, column types, adapter
-  registrations) is cached per connection, so a helper created per call queries the catalog only the first time a
+  to any `pg_*` function that takes the argument. **Nothing is registered on the connection:** psycopg's type
+  registration is global to a connection (and so to the next user of a pooled one: a plain `SELECT` of an enum would
+  return psycopg's auto-numbered `Enum` member instead of the label, #54), so the helpers only register the
+  enum/composite adapters on the *cursor* that runs a write statement (insert/update/upsert, `*_many`), and only
+  when a dict/list value had to be converted. Reads (`pg_retrieve*`) select such columns as `to_jsonb(...)` and need
+  no registration. After any `pg_*` call the connection reads enums as label strings and composites as before.
+  (`RETURNING` rows of `pg_insert`/`pg_update_dict`/`pg_upsert_dict` come from that same cursor, so a column whose
+  value was converted comes back as the registered Python object, e.g. a composite as a namedtuple.) If you call
+  `recursive_convert` yourself, register the types on the cursor that sends the values:
+  `await helper.register_on(cur, info)` (passing the connection instead restores psycopg's global behaviour).
+  What it learns from the catalog (types and column types) is cached per connection, so a helper created per call queries the catalog only the first time a
   connection is used (the SELECT/INSERT itself is then the only query). The cache cannot see later DDL, nor DDL that
   was rolled back after it had been cached: call `helper.clear_cache()` after `CREATE TYPE`/`ALTER TYPE`/column
   changes or rollbacks of those (typical for tests that create types inside a rolled-back transaction on a reused

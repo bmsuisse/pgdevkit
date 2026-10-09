@@ -268,7 +268,16 @@ when you pass `complex_helper="auto"` (or `complex_helper=ComplexHelper(con, nor
 before conversion, keyed by composite type name, e.g. backfilling missing locale keys); without it values are not
 converted and reads are a plain `SELECT *`.
 
-What the helper learns from the catalog (types, column types, adapter registrations) is cached **per connection**, so
+**The helper never registers types on the connection** (psycopg's registration is connection-global and would stick
+to a pooled connection: a plain `SELECT` of an enum would return psycopg's `Enum` member instead of the label, #54).
+Writes register the enum/composite adapters on the one cursor that runs the statement, only when a dict/list value
+needed converting; reads (`pg_retrieve*`) use `to_jsonb(...)` and register nothing. So after any `pg_*` call the
+connection reads enums as label strings and composites as before. `RETURNING` rows of `pg_insert`/`pg_update_dict`/
+`pg_upsert_dict` come from that cursor: a converted column is the registered Python object (composite namedtuple).
+Using `recursive_convert` yourself: `await helper.register_on(cur, info)` on your cursor first (the connection as
+context would be a global registration again).
+
+What the helper learns from the catalog (types and column types) is cached **per connection**, so
 creating a `ComplexHelper(con)` per call (`pg_retrieve(con, M, pks, complex_helper=ComplexHelper(con))`) queries the
 catalog only on that connection's first use, not every time. The cache cannot see later schema changes
 (`CREATE TYPE`, `ALTER TYPE ... ADD VALUE`, new columns), nor DDL that was rolled back after it had been cached (test

@@ -5,6 +5,9 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from psycopg import AsyncConnection
+from psycopg import adapters as _psycopg_adapters
+from psycopg.abc import AdaptContext
+from psycopg.adapt import AdaptersMap
 from psycopg.rows import dict_row
 from psycopg.sql import Identifier
 from psycopg.types.composite import CompositeInfo, register_composite
@@ -28,12 +31,11 @@ ComplexTypeInfo = CompositeInfo | EnumInfo | type[Jsonb] | type[JsonbArray] | No
 @dataclass
 class _TypeCache:
     """What a `ComplexHelper` has learned about one connection's database: the catalog's complex types, the
-    CompositeInfo/EnumInfo objects built from them (they carry that database's OIDs), which of those are registered
-    on the connection (an adapter registration lives and dies with the connection), and each table column's type."""
+    CompositeInfo/EnumInfo objects built from them (they carry that database's OIDs) and each table column's type.
+    Never "what is registered where": nothing is registered on the connection (see `ComplexHelper.register_on`)."""
 
     system_complex_type_dict: dict[Any, tuple[str, str]] | None = None
     complex_types: dict[tuple[str, str], CompositeInfo | EnumInfo] = field(default_factory=dict)
-    registered: set[CompositeInfo | EnumInfo] = field(default_factory=set)
     columns: dict[tuple[tuple[str, str], bool], dict[str, ComplexTypeInfo]] = field(default_factory=dict)
     column: dict[tuple[tuple[str, str], str], ComplexTypeInfo] = field(default_factory=dict)
     shared: bool = False  # whether other helpers on the same connection use it too (then column lookups are cached)
@@ -52,6 +54,15 @@ def _cache_for(con: AsyncConnection) -> _TypeCache:
         return _TypeCache()
 
 
+class _Scope:
+    """An `AdaptContext` of its own (a copy of psycopg's defaults, shared with nothing)."""
+
+    connection = None
+
+    def __init__(self) -> None:
+        self.adapters = AdaptersMap(_psycopg_adapters)
+
+
 class ComplexHelper:
     """psycopg adapter for PostgreSQL composite types, enums, and JSONB.
 
@@ -65,7 +76,14 @@ class ComplexHelper:
     this is intentionally the only project-specific extension point; nothing
     else about a project's types is hardcoded here.
 
-    What it learns from the catalog (the types, the columns' types, which ones are registered on the connection) is
+    **It never registers anything on the connection.** psycopg's adapter registration is global for the connection
+    (and so for the next user of a pooled connection: a plain `SELECT` of an enum would start returning psycopg's
+    `Enum` members instead of the label, see issue #54). What `recursive_convert` returns is sent through a cursor
+    that has the types registered for itself only (`register_on(cursor, info)`; the `pg_*` helpers do this for the
+    cursor that runs their statement), and the connection behaves exactly as before. Reads need no registration at
+    all: the `pg_retrieve*` helpers select complex columns as `to_jsonb(...)`.
+
+    What it learns from the catalog (the types and the columns' types) is
     cached per connection, for as long as that connection lives: a helper created for every call, on a connection
     that is reused (e.g. from a pool), only queries the catalog the first time. The cache can't see schema changes
     made afterwards (`CREATE TYPE`, `ALTER TYPE ... ADD VALUE`, altered columns), nor DDL that was rolled back after
@@ -104,19 +122,10 @@ class ComplexHelper:
     def complex_types(self, value: dict[tuple[str, str], CompositeInfo | EnumInfo]) -> None:
         self._cache.complex_types = value
 
-    @property
-    def registered(self) -> set[CompositeInfo | EnumInfo]:
-        return self._cache.registered
-
-    @registered.setter
-    def registered(self, value: set[CompositeInfo | EnumInfo]) -> None:
-        self._cache.registered = value
-
     def clear_cache(self) -> None:
         """Forget what was learned about this connection's database (see the class docstring)."""
         self._cache.system_complex_type_dict = None
         self._cache.complex_types.clear()
-        self._cache.registered.clear()
         self._cache.columns.clear()
         self._cache.column.clear()
 
@@ -154,9 +163,7 @@ class ComplexHelper:
             return None
         udt_schema: str = res["udt_schema"]
         udt_name: str = res["udt_name"]
-        c = await self._get_complex_type(f"{udt_schema}.{udt_name}", res["is_enum"], self.con)
-        await self._recurse_register(c, self.con)
-        return c
+        return await self._get_complex_type(f"{udt_schema}.{udt_name}", res["is_enum"], self.con)
 
     async def load_all_complex_types(
         self, table_name: tuple[str, str], include_generated: bool = False
@@ -236,24 +243,43 @@ class ComplexHelper:
         if (schema, type_name) not in self.complex_types:
             ci = await (EnumInfo if is_enum else CompositeInfo).fetch(con, Identifier(schema, type_name))
             assert ci is not None, f"{'Enum' if is_enum else 'Complex'} type {name} not found in database"
+            # `recursive_convert` needs the Python types (`ci.enum`, `ci.python_type`) that psycopg only creates when
+            # a type is registered: do that in a scratch scope that no connection or cursor ever sees.
+            scratch = _Scope()
+            if isinstance(ci, EnumInfo):
+                register_enum(ci, scratch)
+            else:
+                register_composite(ci, scratch)
             self.complex_types[(schema, type_name)] = ci
         return self.complex_types[(schema, type_name)]
 
-    async def _recurse_register(self, info: CompositeInfo | EnumInfo, con: AsyncConnection) -> None:
+    async def register_on(self, context: AdaptContext, info: ComplexTypeInfo) -> None:
+        """Register the psycopg adapters for `info` (and every composite/enum nested in it) in `context`, so that
+        what `recursive_convert` returns for it can be sent by statements run through that context, and values of
+        those types come back as those Python objects.
+
+        Pass the **cursor** that runs the statement: psycopg gives each cursor its own copy of the adapters, so the
+        registration lasts as long as the cursor and nothing else on the connection (hence on a pooled one) is
+        affected. Passing the connection itself registers globally for that connection, for good (psycopg's
+        default); that is not what the `pg_*` helpers do. A no-op for JSONB (`info` being `Jsonb`/`JsonbArray`) and
+        for `None`."""
+        if isinstance(info, (CompositeInfo, EnumInfo)):
+            await self._recurse_register(info, context, set())
+
+    async def _recurse_register(self, info: CompositeInfo | EnumInfo, context: AdaptContext, seen: set) -> None:
         assert self.system_complex_type_dict is not None, "System complex type dictionary not loaded"
-        if info not in self.registered:
-            if isinstance(info, EnumInfo):
-                register_enum(info, con)
-            else:
-                register_composite(info, con)
-            self.registered.add(info)
-        if isinstance(info, EnumInfo):
+        if info in seen:
             return
+        seen.add(info)
+        if isinstance(info, EnumInfo):
+            register_enum(info, context, enum=info.enum)
+            return
+        register_composite(info, context, factory=info.python_type)
         for t in info.field_types:
             if t in self.system_complex_type_dict:
                 name, typtype = self.system_complex_type_dict[t]
-                ci = await self._get_complex_type(name, typtype == "e", con)
-                await self._recurse_register(ci, con)
+                ci = await self._get_complex_type(name, typtype == "e", self.con)
+                await self._recurse_register(ci, context, seen)
 
     async def recursive_convert(
         self,

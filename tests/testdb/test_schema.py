@@ -137,8 +137,9 @@ async def test_apply_schema_seeds_composite_enum_and_jsonb_columns(schema_test_d
         async with con.cursor() as cur:
             await cur.execute("SELECT mood, size, tags FROM app.gadget WHERE id = 1")
             mood, size, tags = await cur.fetchone()
-    assert mood.name == "happy"
-    assert size == (10, 20)
+    # read back with a plain SELECT: seeding must not leave psycopg type registrations on the connection (#54)
+    assert mood == "happy"
+    assert size == "(10,20)"
     assert tags == ["small", "shiny"]
 
 
