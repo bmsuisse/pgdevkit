@@ -267,3 +267,23 @@ async def test_the_cache_is_per_connection_and_skips_missing_tables(complex_type
         await helper_a.load_all_complex_types(("public", "gadget"))
         assert helper_b.system_complex_type_dict is None  # b has learned nothing from a
         assert ComplexHelper(con_a).complex_types is helper_a.complex_types  # a's helpers share
+
+
+@requires_podman
+async def test_complex_helper_auto_works_for_every_crud_helper(complex_types_test_db):
+    from pgdevkit.db import pg_insert_many, pg_update_dict, pg_upsert_dict
+
+    async with await _connect() as con:
+        await _setup_gadget(con)
+        table = ("public", "gadget")
+        row = await pg_insert(con, table, {"id": 5, "mood": "sad", "dims": {"w": 1, "h": 2}}, complex_helper="auto")
+        assert row["mood"] == "sad" and row["dims"].w == 1  # type: ignore[attr-defined]
+        await pg_update_dict(con, table, {"id": 5, "dims": {"w": 9, "h": 9}}, ["id"], complex_helper="auto")
+        await pg_upsert_dict(con, table, {"id": 5, "mood": "happy"}, ["id"], complex_helper="auto")
+        await pg_insert_many(con, table, [{"id": 6, "mood": "sad", "dims": {"w": 1, "h": 1}}, {"id": 7, "mood": "happy", "dims": {"w": 2, "h": 2}}], complex_helper="auto")
+        got = await pg_retrieve(con, Gadget, {"id": 5}, complex_helper="auto")
+        assert got == Gadget(id=5, mood="happy", dims={"w": 9, "h": 9}, note=None)
+        assert {g.id for g in await pg_retrieve_many(con, Gadget, {"mood": "happy"}, complex_helper="auto")} == {1, 5, 7}
+        # one helper per call, yet the catalog was asked once: the next call is just the statement itself
+        count, _ = await _queries_of(con, lambda: pg_retrieve(con, Gadget, {"id": 1}, complex_helper="auto"))
+        assert count == 1

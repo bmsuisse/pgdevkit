@@ -14,16 +14,25 @@ from .model import PostgresTableModel
 
 T = TypeVar("T", bound=PostgresTableModel)
 
+# `complex_helper=` of every function below: a `ComplexHelper` you configured (e.g. with `normalizers`), `"auto"` for
+# a default one on the connection (what it learns is cached per connection), or None for plain psycopg behaviour.
+type ComplexHelperArg = ComplexHelper | Literal["auto"] | None
+
+
+def _resolve_helper(con: AsyncConnection, complex_helper: ComplexHelperArg) -> ComplexHelper | None:
+    return ComplexHelper(con) if complex_helper == "auto" else complex_helper
+
 
 async def _select_list(
-    con: AsyncConnection, table_name: tuple[str, str], complex_helper: ComplexHelper | None
+    con: AsyncConnection, table_name: tuple[str, str], complex_helper: ComplexHelperArg
 ) -> Composable:
     """Column list for a SELECT, wrapping composite/enum/JSONB columns in
     `to_jsonb(...)` so psycopg gets back plain Python values. Falls back to
     `SELECT *` (no extra query) when no ComplexHelper is given."""
-    if complex_helper is None:
+    helper = _resolve_helper(con, complex_helper)
+    if helper is None:
         return SQL("*")
-    complex_types = await complex_helper.load_all_complex_types(table_name, include_generated=True)
+    complex_types = await helper.load_all_complex_types(table_name, include_generated=True)
     if not complex_types:
         return SQL("*")
     parts = [
@@ -37,21 +46,22 @@ async def _convert_complex_values(
     con: AsyncConnection,
     table_name: tuple[str, str],
     data: dict,
-    complex_helper: ComplexHelper | None,
+    complex_helper: ComplexHelperArg,
 ) -> dict:
     """Convert dict/list values destined for composite/enum columns into the
     psycopg-registered types those columns need. A no-op (no extra query)
     unless `data` actually contains dict/list values."""
-    if complex_helper is None:
+    helper = _resolve_helper(con, complex_helper)
+    if helper is None:
         return data
     candidate_keys = [k for k, v in data.items() if isinstance(v, (dict, list))]
     if not candidate_keys:
         return data
     converted = dict(data)
     for k in candidate_keys:
-        info = await complex_helper.load_complex_type(table_name, k)
+        info = await helper.load_complex_type(table_name, k)
         if info is not None:
-            converted[k] = await complex_helper.recursive_convert(data[k], info, con)
+            converted[k] = await helper.recursive_convert(data[k], info, con)
     return converted
 
 
@@ -59,14 +69,15 @@ async def _convert_complex_values_many(
     con: AsyncConnection,
     table_name: tuple[str, str],
     rows: Sequence[dict],
-    complex_helper: ComplexHelper | None,
+    complex_helper: ComplexHelperArg,
 ) -> Sequence[dict]:
-    if complex_helper is None or not rows:
+    helper = _resolve_helper(con, complex_helper)
+    if helper is None or not rows:
         return rows
     candidate_keys = {k for row in rows for k, v in row.items() if isinstance(v, (dict, list))}
     if not candidate_keys:
         return rows
-    infos = {k: await complex_helper.load_complex_type(table_name, k) for k in candidate_keys}
+    infos = {k: await helper.load_complex_type(table_name, k) for k in candidate_keys}
     complex_keys = {k for k, info in infos.items() if info is not None}
     if not complex_keys:
         return rows
@@ -75,7 +86,7 @@ async def _convert_complex_values_many(
         new_row = dict(row)
         for k in complex_keys:
             if isinstance(new_row.get(k), (dict, list)):
-                new_row[k] = await complex_helper.recursive_convert(new_row[k], infos[k], con)
+                new_row[k] = await helper.recursive_convert(new_row[k], infos[k], con)
         converted_rows.append(new_row)
     return converted_rows
 
@@ -85,13 +96,14 @@ async def pg_retrieve(
     data_type: Type[T],
     pks: dict,
     *,
-    complex_helper: ComplexHelper | None = None,
+    complex_helper: ComplexHelperArg = None,
 ) -> T | None:
     """Fetch a single row by primary key(s).
 
     Pass `complex_helper` (a `ComplexHelper`, optionally configured with
-    `normalizers`) when the table has composite/enum columns; omitted, this
-    behaves exactly like a plain `SELECT *`."""
+    `normalizers`, or `"auto"` for a default one) when the table has
+    composite/enum columns; omitted, this behaves exactly like a plain
+    `SELECT *`."""
     async with con.cursor(row_factory=dict_row) as cur:
         table_name = data_type.get_table_name()
         select_cols = await _select_list(con, table_name, complex_helper)
@@ -133,7 +145,7 @@ async def pg_retrieve_many(
     filters: dict,
     *,
     from_dict: Optional[Callable[[Mapping], T]] = None,
-    complex_helper: ComplexHelper | None = None,
+    complex_helper: ComplexHelperArg = None,
     where: Composable | Template | None = None,
     params: Mapping[str, Any] | None = None,
     order_by: OrderBy | None = None,
@@ -210,7 +222,7 @@ async def pg_insert(
     table_name: tuple[str, str],
     data: dict,
     *,
-    complex_helper: ComplexHelper | None = None,
+    complex_helper: ComplexHelperArg = None,
 ) -> dict[str, Any]:
     """Insert one row and return the full row (RETURNING *)."""
     data = await _convert_complex_values(con, table_name, data, complex_helper)
@@ -232,7 +244,7 @@ async def pg_update_dict(
     data: dict,
     primary_keys: Sequence[str],
     *,
-    complex_helper: ComplexHelper | None = None,
+    complex_helper: ComplexHelperArg = None,
 ) -> Any | None:
     """Update a row identified by primary_keys. Returns the raw row tuple.
 
@@ -255,7 +267,7 @@ async def pg_update_dict(
 
 
 async def pg_update(
-    con: AsyncConnection, data: T, data_type: type[T], *, complex_helper: ComplexHelper | None = None
+    con: AsyncConnection, data: T, data_type: type[T], *, complex_helper: ComplexHelperArg = None
 ) -> Any | None:
     """Update a typed model instance."""
     return await pg_update_dict(
@@ -269,7 +281,7 @@ async def pg_upsert_dict(
     data: dict,
     primary_keys: Sequence[str],
     *,
-    complex_helper: ComplexHelper | None = None,
+    complex_helper: ComplexHelperArg = None,
 ) -> dict:
     """INSERT ... ON CONFLICT ... DO UPDATE, returns the row as a dict."""
     data = await _convert_complex_values(con, table_name, data, complex_helper)
@@ -292,7 +304,7 @@ async def pg_upsert_dict(
 
 
 async def pg_upsert(
-    con: AsyncConnection, data: T, data_type: type[T], *, complex_helper: ComplexHelper | None = None
+    con: AsyncConnection, data: T, data_type: type[T], *, complex_helper: ComplexHelperArg = None
 ) -> dict:
     """Upsert a typed model instance."""
     return await pg_upsert_dict(
@@ -307,7 +319,7 @@ async def pg_upsert_many_dict(
     primary_keys: Sequence[str],
     *,
     must_exist: bool = False,
-    complex_helper: ComplexHelper | None = None,
+    complex_helper: ComplexHelperArg = None,
 ) -> None:
     """Batch upsert — one round-trip via executemany.
 
@@ -344,7 +356,7 @@ async def pg_upsert_many_dict(
 
 
 async def pg_upsert_many(
-    con: AsyncConnection, data: Sequence[T], data_type: type[T], *, complex_helper: ComplexHelper | None = None
+    con: AsyncConnection, data: Sequence[T], data_type: type[T], *, complex_helper: ComplexHelperArg = None
 ) -> None:
     await pg_upsert_many_dict(
         con,
@@ -360,7 +372,7 @@ async def pg_insert_many(
     table_name: tuple[str, str],
     data: Sequence[dict | BaseModel],
     *,
-    complex_helper: ComplexHelper | None = None,
+    complex_helper: ComplexHelperArg = None,
 ) -> None:
     """Batch insert — no RETURNING, one round-trip via executemany."""
     if not data:
