@@ -70,7 +70,10 @@ async def test_normal_response(server: str) -> None:
         assert (await client.get(f"{server}/ok")).json() == [{"i": 1}, {"i": 2}, {"i": 3}]
 
 
-async def test_aborted_client_cancels_the_query(server: str, postgres_dsn: str, app_name: str) -> None:
+async def test_aborted_client_cancels_the_query(
+    server: str, server_log: Path, postgres_dsn: str, app_name: str
+) -> None:
+    log_start = len(server_log.read_text())
     async def query_running() -> bool:
         return await active_queries(postgres_dsn, app_name) == 1
 
@@ -87,6 +90,7 @@ async def test_aborted_client_cancels_the_query(server: str, postgres_dsn: str, 
     await request
 
     assert await wait_until(query_stopped, timeout=5), "the query kept running after the client left"
+    assert "Traceback" not in server_log.read_text()[log_start:]  # e.g. BaseHTTPMiddleware: "No response returned."
 
 
 async def test_error_after_the_first_byte_ends_the_response_without_a_valid_json_array(server: str) -> None:

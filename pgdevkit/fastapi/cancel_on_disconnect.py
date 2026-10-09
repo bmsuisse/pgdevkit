@@ -19,10 +19,10 @@ from fastapi.routing import APIRoute
 from starlette.requests import ClientDisconnect
 from starlette.types import Message, Receive
 
+from .json_response import CLIENT_CLOSED_REQUEST
+
 logger = logging.getLogger(__name__)
 
-# What a client that already left gets (nginx's code for it); nobody reads it.
-CLIENT_CLOSED_REQUEST = 499
 # Body chunks read ahead of the handler: enough to never stall it, too few to buffer an upload in memory.
 _MAX_PENDING_MESSAGES = 8
 
