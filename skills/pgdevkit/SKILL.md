@@ -3,8 +3,8 @@ name: pgdevkit
 plugin: coding
 description: >
   Use pgdevkit for any PostgreSQL work in a Python project: a local
-  Docker/Podman test database (`pgdb testdb`), importable ORM-free CRUD
-  helpers (`pgdevkit.db`), and the `database/`-folder schema-as-code
+  Docker/Podman test database (`pgdb testdb`), importable ORM-free CRUD and
+  query helpers (`pgdevkit.db`: `pg_*`, `fetch_all`, `PgPool`, `SqlLoader`), and the `database/`-folder schema-as-code
   convention. Supersedes the old postgres-test-setup, postgres-best-practices,
   and database-in-source skills — pgdevkit is a real dependency now, not
   copy-pasted reference files. Use whenever the user wants to set up a local
@@ -33,7 +33,7 @@ Core rules for every piece of database code in a project using pgdevkit:
 - **Inline SQL** — trivial queries of **4 lines or fewer** may be written inline in Python. Anything with JOINs, subqueries, CTEs, aggregations, or multiple conditions lives in its own `.sql` file.
 - **Named parameters** — always `%(name)s` style, never positional `%s`.
 - **The `database/` folder is the source of truth for the schema** — see [docs/database-layout.md](../../docs/database-layout.md) for the layer/object-type/file-naming conventions.
-- **Result mapping** — every query result maps to a Pydantic model; table-mapped models extend `pgdevkit.db.PostgresTableModel`.
+- **Result mapping** — every query result maps to a Pydantic model (or is deliberately returned as dicts / through `row_mapper`); table-mapped models extend `pgdevkit.db.PostgresTableModel`.
 
 ---
 
@@ -113,12 +113,13 @@ SQL files live under `db/queries/<topic>/`. Every custom query gets its own file
 
 ```python
 # db/connection.py
-from pgdevkit.db import PgPool
+from pgdevkit.db import PgPool, set_default_pool
 
 pool = PgPool(env_prefix="APP_POSTGRES_")  # matches ensure_testdb()'s {env_prefix}POSTGRES_* vars
 
 async def startup():
     await pool.open()
+    set_default_pool(pool)  # lets `fetch_all()` borrow from it when no `con=`/`pool=` is given
 ```
 
 ### Models
@@ -170,7 +171,7 @@ from pgdevkit.db import pg_retrieve, pg_insert, pg_upsert, pg_delete
 | `pg_insert_many` | Batch insert via `executemany` |
 | `pg_delete` / `pg_delete_dict` | Delete by PK, returns deleted row |
 
-Use these for simple CRUD. For custom `WHERE` clauses, joins, aggregations, or ordering, write a dedicated `.sql` file and a repository method.
+Use these for simple CRUD. For custom `WHERE` clauses, joins, aggregations, or ordering, write a dedicated `.sql` file and run it with `fetch_all` (below) in a repository method.
 
 ### Loading `.sql` files
 
@@ -184,8 +185,7 @@ sql = SqlLoader(Path(__file__).parent / "queries")
 
 ```python
 # db/repositories/user_repository.py
-from psycopg.rows import dict_row
-from pgdevkit.db import pg_retrieve, pg_delete
+from pgdevkit.db import fetch_all, pg_retrieve, pg_delete
 from db.connection import pool
 from db.loader import sql
 from models.user_models import UserRow, UserSummary
@@ -196,11 +196,7 @@ class UserRepository:
             return await pg_retrieve(conn, UserRow, {"id": user_id})
 
     async def list_active(self, limit: int = 100) -> list[UserSummary]:
-        async with pool.connection() as conn:
-            async with conn.cursor(row_factory=dict_row) as cur:
-                await cur.execute(sql.load_sql("users", "list_active_users"), {"limit": limit})
-                rows = await cur.fetchall()
-        return [UserSummary.model_validate(r) for r in rows]
+        return await fetch_all(sql.load_sql("users", "list_active_users"), {"limit": limit}, model=UserSummary)
 
     async def delete(self, user: UserRow) -> UserRow | None:
         async with pool.connection() as conn:
@@ -208,6 +204,24 @@ class UserRepository:
 ```
 
 Named parameters, `%(name)s` style, dict argument — never positional `%s`, never f-strings or `str.format()` for SQL text.
+
+### `fetch_all` — custom queries without cursor boilerplate
+
+```python
+from pgdevkit.db import fetch_all, set_default_pool
+
+set_default_pool(pool)  # once, at startup -- the connection source when none is passed
+
+users = await fetch_all(sql.load_sql("users", "list_active_users"), {"limit": 10}, model=UserSummary)  # list[UserSummary]
+rows = await fetch_all(sql.load_sql("users", "list_active_users"), {"limit": 10})                      # list[dict]
+async with pool.connection() as conn:  # inside a transaction you already hold
+    users = await fetch_all(query, params, model=UserSummary, con=conn)
+```
+
+- `model=` validates each row into a Pydantic model; `row_mapper=` maps each dict row to anything else (exclusive with `model`).
+- Passing `con=` runs on *your* connection: `fetch_all` never commits, closes or releases it. Without it, a connection is borrowed from `pool=` (or the `set_default_pool()` pool) and released afterwards.
+- `cancel=` takes an `asyncio.Event`: set it (e.g. when the HTTP client disconnects) and the running query is cancelled on the server, raising `psycopg.errors.QueryCanceled`. If the awaiting task is cancelled instead, the server-side query is cancelled too and `CancelledError` propagates as usual (not `QueryCanceled`), so no query keeps running unattended. Don't use `cancel=` on a `con` that concurrent tasks share (it aborts whatever statement is running on it); if the cancel request itself can't be delivered, the connection is closed. After `QueryCanceled` a borrowed `con` is usable again once you `await con.rollback()` (autocommit connections need nothing).
+- `query` is typed `SqlQuery`: a literal string (`SqlLoader.load_sql()`), a sqlglot expression, a `psycopg.sql` composable or a t-string. A plain `str` fails type checking on purpose, so don't build SQL with f-strings/concatenation. A sqlglot expression is only as safe as the strings it was built from (its builders parse plain strings as SQL): pass user values as `exp.Placeholder` + `params`, never as literals/raw text, and write a literal `%` as `%%` when you also pass `params`. A t-string carries its own values, so don't also pass `params`.
 
 ### Dynamic SQL
 
@@ -243,22 +257,23 @@ before conversion (e.g. backfilling missing locale keys).
 
 ### Streaming JSON from FastAPI — `pgdevkit.fastapi`
 
-For large/grid-style read endpoints, return a `PostgresJsonResponse` instead of `fetchall()` + a list of dicts: Postgres
-builds the JSON, rows are streamed, and the query is **cancelled in Postgres when the client disconnects**. Needs
-`uv add pgdevkit[fastapi]`.
+For large/grid-style read endpoints, return a `PostgresJsonResponse` instead of `fetch_all()`/`fetchall()` + a list of
+dicts: Postgres builds the JSON, rows are streamed, and the query is **cancelled in Postgres when the client
+disconnects**. Needs `uv add pgdevkit[fastapi]`.
 
 ```python
+from pgdevkit.db import set_default_pool          # once at startup; shared with fetch_all
 from pgdevkit.fastapi import PostgresJsonResponse
 
 @router.get("/articles")
 async def articles(lng: str):
-    return PostgresJsonResponse(get_pg_connection, "select ... where lng = %(lng)s", parameters={"lng": lng})
+    return PostgresJsonResponse("select ... where lng = %(lng)s", {"lng": lng})
 ```
 
-- First argument: a callable returning an async context manager of a connection (`get_pg_connection`, `pool.connection`). A connection you opened yourself must outlive the response (`Depends` with `yield`) -- never `async with ... as conn: return PostgresJsonResponse(conn, ...)`.
-- Query: literal string or `psycopg.sql`, values via `parameters` (`%(name)s`), never f-strings. Data-modifying CTE or custom JSON: `query_produces_json=True` (one text column per row).
+- Connections as in `fetch_all`: default pool (`set_default_pool`), `pool=`, or `con=`. A `con` you opened must outlive the response (`Depends` with `yield`) -- never `async with ... as conn: return PostgresJsonResponse(q, con=conn)`.
+- Query: literal string, `psycopg.sql` or sqlglot expression (no t-strings), values via `params` (`%(name)s`), never f-strings. Data-modifying CTE or custom JSON: `query_produces_json=True` (one text column per row).
 - Errors show as `{"error": "Internal Server Error"}` (500); subclass with `expose_errors = IS_DEV` to see the text. An error after the first byte leaves the array unterminated, so clients fail to parse it.
-- It bypasses `response_model` validation and does no authorization; keep model-mapped endpoints on `fetchall()` + Pydantic.
+- It bypasses `response_model` validation and does no authorization; keep model-mapped endpoints on `fetch_all(model=...)`.
 - Full reference: the `pgdevkit.fastapi` section of the README.
 
 ### SQL formatting
@@ -336,7 +351,7 @@ Reports drift between the `database/` `.sql` files and the actual schema — tab
 - [ ] Simple CRUD uses `pgdevkit.db`'s `pg_*` helpers; custom queries use `.sql` files loaded via `SqlLoader`
 - [ ] Inline SQL only for trivial queries ≤ 4 lines; anything with JOINs/CTEs/aggregations/subqueries uses a `.sql` file
 - [ ] All parameters use `%(name)s` style with a dict argument
-- [ ] Results mapped to a Pydantic model; table-mapped models extend `PostgresTableModel` (large/grid reads may use `pgdevkit.fastapi.PostgresJsonResponse` instead)
+- [ ] Custom read queries use `fetch_all(...)` (`model=` where the shape is stable; pass `con=` inside a transaction); results mapped to a Pydantic model; table-mapped models extend `PostgresTableModel` (large/grid reads streamed from FastAPI may use `pgdevkit.fastapi.PostgresJsonResponse` instead)
 - [ ] No `LATERAL JOIN` — use a CTE that groups/aggregates first, then joins it
 - [ ] `.<env>.sql` files (e.g. `.prod.sql`) are skipped by `pgdb testdb` unless it's run with a matching `--env`
 - [ ] Every table (and non-obvious column) has a `COMMENT ON`, placed in the object's own `.sql` file

@@ -23,18 +23,18 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/ok")
 async def ok():
-    return PostgresJsonResponse(pool.connection, "select i from generate_series(1, 3) i")
+    return PostgresJsonResponse("select i from generate_series(1, 3) i", pool=pool)
 
 
 @app.get("/sleep")
 async def sleep():
-    return PostgresJsonResponse(pool.connection, "select pg_sleep(30) as slept")
+    return PostgresJsonResponse("select pg_sleep(30) as slept", pool=pool)
 
 
 @app.get("/fails-midway")
 async def fails_midway():
     return PostgresJsonResponse(
-        pool.connection,
         "select i, repeat('x', 100) as pad, 1 / (case when i = 1500 then 0 else 1 end) as boom "
         "from generate_series(1, 2000) i",
+        pool=pool,
     )

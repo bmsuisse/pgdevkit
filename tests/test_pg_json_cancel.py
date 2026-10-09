@@ -45,7 +45,7 @@ async def test_disconnect_before_the_first_byte_cancels_the_query(
     pool: AsyncConnectionPool, postgres_dsn: str, app_name: str
 ) -> None:
     client = FakeClient()
-    task = asyncio.create_task(client.call(PostgresJsonResponse(pool.connection, SLEEP_30S)))
+    task = asyncio.create_task(client.call(PostgresJsonResponse(SLEEP_30S, pool=pool)))
     assert await wait_until(lambda: query_running(postgres_dsn, app_name))
 
     started = time.monotonic()
@@ -63,7 +63,7 @@ async def test_disconnect_while_streaming_cancels_the_query(
     pool: AsyncConnectionPool, postgres_dsn: str, app_name: str
 ) -> None:
     client = FakeClient()
-    task = asyncio.create_task(client.call(PostgresJsonResponse(pool.connection, SLOW_STREAM, batch_size=5)))
+    task = asyncio.create_task(client.call(PostgresJsonResponse(SLOW_STREAM, pool=pool, batch_size=5)))
     assert await wait_until(lambda: len(client.sent) >= 2)  # response started, first rows sent
 
     client.disconnect.set()
@@ -77,7 +77,7 @@ async def test_cancelling_the_request_task_cancels_the_query(
     pool: AsyncConnectionPool, postgres_dsn: str, app_name: str
 ) -> None:
     client = FakeClient()
-    task = asyncio.create_task(client.call(PostgresJsonResponse(pool.connection, SLEEP_30S)))
+    task = asyncio.create_task(client.call(PostgresJsonResponse(SLEEP_30S, pool=pool)))
     assert await wait_until(lambda: query_running(postgres_dsn, app_name))
 
     task.cancel()
@@ -93,7 +93,7 @@ async def test_send_failing_mid_stream_cancels_the_query(
     client = FakeClient()
     client.fail_sends_after = 2  # what servers speaking ASGI spec >= 2.4 do instead of sending http.disconnect
     with pytest.raises(ClientDisconnect):
-        await client.call(PostgresJsonResponse(pool.connection, SLOW_STREAM, batch_size=5))
+        await client.call(PostgresJsonResponse(SLOW_STREAM, pool=pool, batch_size=5))
 
     assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), timeout=3)
 
@@ -102,7 +102,7 @@ async def test_disconnect_leaves_a_caller_owned_connection_usable_or_closed(post
     """Never hand the owner a connection stuck mid-query (ACTIVE): its own cleanup, e.g. commit(), would fail."""
     async with await AsyncConnection.connect(postgres_dsn, application_name=app_name, autocommit=True) as conn:
         client = FakeClient()
-        task = asyncio.create_task(client.call(PostgresJsonResponse(conn, SLEEP_30S)))
+        task = asyncio.create_task(client.call(PostgresJsonResponse(SLEEP_30S, con=conn)))
         assert await wait_until(lambda: query_running(postgres_dsn, app_name))
 
         client.disconnect.set()
@@ -119,10 +119,14 @@ async def test_scope_cancellation_cancels_the_query_and_closes_the_connection(
     """Cancellation by an anyio scope (e.g. a middleware) is re-delivered at every await, which defeats psycopg's
     own cleanup: the connection stays ACTIVE and Postgres keeps running the query unless we cancel it, shielded."""
     async with await AsyncConnection.connect(postgres_dsn, application_name=app_name, autocommit=True) as own_conn:
-        source = pool.connection if source_kind == "pool" else own_conn
+        response = (
+            PostgresJsonResponse(SLEEP_30S, pool=pool)
+            if source_kind == "pool"
+            else PostgresJsonResponse(SLEEP_30S, con=own_conn)
+        )
         client = FakeClient()
         async with anyio.create_task_group() as tg:
-            tg.start_soon(client.call, PostgresJsonResponse(source, SLEEP_30S))
+            tg.start_soon(client.call, response)
             assert await wait_until(lambda: query_running(postgres_dsn, app_name))
             tg.cancel_scope.cancel()
 

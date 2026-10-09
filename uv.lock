@@ -451,7 +451,7 @@ wheels = [
 
 [[package]]
 name = "pgdevkit"
-version = "0.13.0"
+version = "0.14.0"
 source = { editable = "." }
 dependencies = [
     { name = "docker" },
@@ -474,6 +474,8 @@ db = [
 ]
 fastapi = [
     { name = "fastapi" },
+    { name = "psycopg-pool" },
+    { name = "pydantic" },
 ]
 mssql = [
     { name = "mssql-python" },
@@ -500,9 +502,11 @@ requires-dist = [
     { name = "docker", specifier = ">=7.1.0" },
     { name = "fastapi", marker = "extra == 'fastapi'", specifier = ">=0.116.1" },
     { name = "mssql-python", marker = "extra == 'mssql'", specifier = ">=1.0.0" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.2.0" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.3.0" },
     { name = "psycopg-pool", marker = "extra == 'db'", specifier = ">=3.3.0" },
+    { name = "psycopg-pool", marker = "extra == 'fastapi'", specifier = ">=3.3.0" },
     { name = "pydantic", marker = "extra == 'db'", specifier = ">=2.0" },
+    { name = "pydantic", marker = "extra == 'fastapi'", specifier = ">=2.0" },
     { name = "rich", marker = "extra == 'cli'", specifier = ">=13.0.0" },
     { name = "sqlglot", specifier = ">=30.11.0" },
     { name = "tqdm", marker = "extra == 'cli'", specifier = ">=4.66.0" },
@@ -516,7 +520,7 @@ test = [
     { name = "fastapi", specifier = ">=0.116.1" },
     { name = "granian", specifier = ">=2.0" },
     { name = "httpx", specifier = ">=0.27" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.2.0" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.3.0" },
     { name = "psycopg-pool", specifier = ">=3.3.0" },
     { name = "pytest", specifier = ">=9.1.0" },
     { name = "pytest-asyncio", specifier = ">=0.24.0" },

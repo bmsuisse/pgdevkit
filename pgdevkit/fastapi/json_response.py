@@ -6,26 +6,21 @@ Requires the ``fastapi`` extra: ``pip install pgdevkit[fastapi]``.
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Callable, Mapping
-from contextlib import AbstractAsyncContextManager, AsyncExitStack
-from typing import Any, LiteralString
+from collections.abc import AsyncIterator, Mapping
+from typing import Any
 
 import anyio
 from fastapi.responses import StreamingResponse
 from psycopg import AsyncConnection, pq
 from psycopg.pq import TransactionStatus
-from psycopg.sql import SQL, Composed
+from psycopg.sql import SQL, Composable, Composed
 from starlette.exceptions import HTTPException
 from starlette.requests import ClientDisconnect
 from starlette.types import Message, Receive, Scope, Send
 
-logger = logging.getLogger(__name__)
+from ..db.fetch import ConnectionSource, QueryParams, SqlQueryNoTemplate, _acquire, _render
 
-ConnectionSource = AsyncConnection | Callable[[], AbstractAsyncContextManager[AsyncConnection]]
-"""Either a connection the caller opened (it must stay open until the response is sent, e.g. a ``Depends`` with
-``yield``; ``async with get_pg_connection() as conn: return Response(conn, ...)`` would close it too early), or a
-zero-argument callable returning an async context manager of a connection, e.g. ``pool.connection`` or an app's
-``get_pg_connection``. In the latter case the connection is acquired when streaming starts and released when it ends."""
+logger = logging.getLogger(__name__)
 
 _CANCEL_TIMEOUT_SECONDS = 5.0
 # libpq < 17 has no chunked rows mode: stream() then has to run in single-row mode.
@@ -35,19 +30,23 @@ _CHUNKED_ROWS = pq.version() >= 170000
 class PostgresJsonResponse(StreamingResponse):
     """Run ``query`` and stream its rows as ``[{...},\\n{...}]`` (``row_to_json`` per row, computed by Postgres).
 
-    The query is only executed once the response is sent, so a connection is held exactly as long as the client
-    receives data. If the client disconnects (or the request is cancelled) while the query is still running, the
-    query is cancelled in Postgres and a connection we acquired is closed instead of being returned to the pool.
+    Connections work as in ``pgdevkit.db.fetch_all``: pass ``con`` (one you opened; it must stay open until the
+    response has been sent, e.g. a ``Depends`` with ``yield``), or ``pool`` (anything with ``.connection()``), or
+    register the app's pool once with ``set_default_pool()``. A pooled connection is acquired when streaming starts
+    and released when it ends. ``query`` and ``params`` are those of ``fetch_all`` too (a literal string, a
+    ``psycopg.sql`` composable or a sqlglot expression; never a t-string) with values bound via ``params``.
 
-    ``query`` must be a literal or a ``psycopg.sql`` ``SQL``/``Composed`` with values passed via ``parameters`` (``%(name)s``).
-    It is wrapped as a subquery, so it cannot be a data-modifying CTE; for that (or for custom JSON) pass
-    ``query_produces_json=True`` and make the query return one *text* column holding the JSON of each row.
+    The query is wrapped as a subquery, so it cannot be a data-modifying CTE; for that (or for custom JSON) pass
+    ``query_produces_json=True`` and make it return one *text* column holding the JSON of each row.
+
+    If the client disconnects (or the request is cancelled) while the query is still running, the query is
+    cancelled in Postgres. A connection that was mid-query at that point is closed instead of being reused.
 
     Errors before the first byte become a JSON ``{"error": ...}`` response (status 500, or the status of a raised
-    ``HTTPException``). Errors after that are re-raised so the server aborts the response instead of ending it as
-    if it were complete. Subclass and set ``expose_errors = True`` (e.g. in dev/test) to include ``str(error)``.
+    ``HTTPException``). After that the status line is gone: the error is logged and re-raised, and the response
+    ends without its closing ``]``, so clients can't mistake it for a complete array. Subclass and set
+    ``expose_errors = True`` (e.g. in dev/test) to include ``str(error)`` in the 500 response.
 
-    A connection on which a query had to be cancelled is closed, also when you passed it in yourself.
     Postgres sends rows in 8 kB buffers, so a slow query with small rows delivers its first bytes late.
     """
 
@@ -55,18 +54,23 @@ class PostgresJsonResponse(StreamingResponse):
 
     def __init__(
         self,
-        source: ConnectionSource,
-        query: LiteralString | SQL | Composed,
+        query: SqlQueryNoTemplate,
+        params: QueryParams = None,
         *,
-        parameters: Mapping[str, Any] | None = None,
+        con: AsyncConnection | None = None,
+        pool: ConnectionSource | None = None,
         query_produces_json: bool = False,
         batch_size: int = 1000,
         status_code: int = 200,
         headers: Mapping[str, str] | None = None,
     ) -> None:
-        self.source = source
-        self.query = query if query_produces_json else _as_json_rows(query)
-        self.parameters = parameters
+        if con is not None and pool is not None:
+            raise TypeError("Pass either `con` or `pool`, not both.")
+        rendered = _render(query)
+        self.query = rendered if query_produces_json else _as_json_rows(rendered)
+        self.params = params
+        self.con = con
+        self.pool = pool
         self.batch_size = batch_size
         # The body is produced by stream_response() itself, so the base class' iterator is never used.
         super().__init__((), status_code=status_code, headers=headers, media_type="application/json")
@@ -100,11 +104,7 @@ class PostgresJsonResponse(StreamingResponse):
     async def stream_response(self, send: Send) -> None:
         started = False
         try:
-            async with AsyncExitStack() as stack:
-                if isinstance(self.source, AsyncConnection):
-                    conn = self.source
-                else:
-                    conn = await stack.enter_async_context(self.source())
+            async with _acquire(self.con, self.pool) as conn:
                 try:
                     async for chunk in self._chunks(conn):
                         if not started:
@@ -146,7 +146,7 @@ class PostgresJsonResponse(StreamingResponse):
         batch: list[str] = []
         prefix = "["
         async with conn.cursor() as cur:
-            rows = cur.stream(self.query, self.parameters, size=self.batch_size if _CHUNKED_ROWS else 1)
+            rows = cur.stream(self.query, self.params, size=self.batch_size if _CHUNKED_ROWS else 1)
             async for (row_json,) in rows:
                 batch.append(row_json)
                 if len(batch) >= self.batch_size:
@@ -158,11 +158,11 @@ class PostgresJsonResponse(StreamingResponse):
             yield b"]"
 
 
-def _as_json_rows(query: LiteralString | SQL | Composed) -> Composed:
-    if isinstance(query, (SQL, Composed)):
+def _as_json_rows(query: Any) -> Composed:
+    if isinstance(query, Composable):
         inner = query
     else:
-        # bdt-lint: ignore sql-unverified-call -- LiteralString by signature; wrapped, values stay bound
+        # bdt-lint: ignore sql-unverified-call -- a literal or a rendered sqlglot expression; wrapped, values stay bound
         inner = SQL(query.strip().rstrip(";"))
     # newline before the closing paren: the query may end in a line comment
     return SQL("select row_to_json(s)::text from (\n{}\n) s").format(inner)

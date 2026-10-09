@@ -406,6 +406,17 @@ Install with the `db` extra: `pip install pgdevkit[db]`.
   `--entra-user`. For Lakebase hosts, also set the
   `{env_prefix}DATABRICKS_WORKSPACE_HOST` and `{env_prefix}DATABRICKS_INSTANCE`
   env vars.
+- **`fetch_all(query, params=None, *, model=None, row_mapper=None, con=None, pool=None, cancel=None)`**
+  — run one custom query and get every row back as dicts, as validated
+  Pydantic `model` instances, or through a `row_mapper`. Pass `con` to run on a
+  connection you already hold (it is borrowed: never committed, closed or
+  released); otherwise a connection is taken from `pool` or the pool registered
+  with `set_default_pool()`. Set the `cancel` `asyncio.Event` to abort the query on the server
+  (`QueryCanceled`); cancelling the awaiting task cancels it there too, and
+  `CancelledError` propagates as usual. `query` must be a literal string, a sqlglot
+  expression, a `psycopg.sql` composable or a t-string — never an f-string (a sqlglot
+  expression is only as safe as the strings it was built from: pass user values as
+  `exp.Placeholder` + `params`).
 - **CRUD functions** — `pg_retrieve`, `pg_retrieve_many`, `pg_insert`,
   `pg_insert_many`, `pg_update`, `pg_update_dict`, `pg_upsert`,
   `pg_upsert_dict`, `pg_upsert_many`, `pg_upsert_many_dict`, `pg_delete`,
@@ -457,27 +468,30 @@ Requires the `fastapi` extra: `pip install pgdevkit[fastapi]`.
 `PostgresJsonResponse` runs a query and streams its rows to the client as a JSON array. Postgres builds the JSON
 (`row_to_json`), so there is no row-by-row Python serialization and no pydantic round trip, and memory use stays flat
 for big results. **If the client goes away, the query is cancelled in Postgres** instead of running to completion.
+(For queries whose rows you need in Python, `fetch_all(..., cancel=event)` gives you the same cancellation.)
 
 ```python
+from pgdevkit.db import set_default_pool
 from pgdevkit.fastapi import PostgresJsonResponse
+
+set_default_pool(pool)  # once at startup, shared with fetch_all
 
 @router.get("/articles")
 async def articles(lng: str):
     return PostgresJsonResponse(
-        get_pg_connection,  # or pool.connection -- see below
         "select id, name from articles where lng = %(lng)s order by name",
-        parameters={"lng": lng},
+        {"lng": lng},
     )
 ```
 
-- **Connection source** — a zero-argument callable returning an async context manager of an `AsyncConnection`:
-  `PgPool.connection`, a psycopg pool's `.connection`, or an app's `get_pg_connection`. The connection is acquired
-  when streaming starts and released when it ends. You can also pass an `AsyncConnection` you opened yourself, but it
-  must stay open until the response has been sent (a `Depends` with `yield`);
-  `async with get_pg_connection() as conn: return PostgresJsonResponse(conn, ...)` closes it too early.
-- **Query** — a literal string (so f-strings are rejected by the type checker) or a `psycopg.sql` `SQL`/`Composed`, with
-  values bound through `parameters` (`%(name)s`). It is wrapped as a subquery; for a data-modifying CTE, or custom
-  JSON, pass `query_produces_json=True` and return one *text* column per row.
+- **Connections** work as in `fetch_all`: the pool registered with `set_default_pool()`, an explicit `pool=` (anything
+  with `.connection()`, e.g. `PgPool`), or a `con=` you opened yourself. A pooled connection is acquired when streaming
+  starts and released when it ends. A `con` must stay open until the response has been sent (a `Depends` with
+  `yield`); `async with pool.connection() as conn: return PostgresJsonResponse(q, con=conn)` closes it too early.
+- **Query** — a literal string (f-strings are rejected by the type checker), a `psycopg.sql` composable or a sqlglot
+  expression, with values bound through `params` (`%(name)s`). It is wrapped as a subquery; for a data-modifying
+  CTE, or custom JSON, pass `query_produces_json=True` and return one *text* column per row. t-strings aren't
+  supported (they can't be wrapped).
 - **Options** — `batch_size` (rows per chunk, default 1000), `status_code`, `headers`
   (e.g. `{"Cache-Control": "max-age=3600"}`).
 
@@ -485,8 +499,8 @@ async def articles(lng: str):
 
 The response watches for `http.disconnect` itself (Starlette only does that for ASGI spec < 2.4), also while the
 query is still running and nothing has been sent yet. It then cancels the query with `cancel_safe()`, shielded from
-the cancellation that is tearing the request down, and closes the connection: a pool opens a fresh one instead of
-reusing a connection that was mid-query. Only a query that is still running is cancelled, so a late cancel can never
+the cancellation that is tearing the request down, and closes the connection if it was left mid-query: a pool opens a
+fresh one instead of reusing it. Only a query that is still running is cancelled, so a late cancel can never
 hit the next statement on a reused connection. A frontend `AbortController` / closed tab therefore frees the database.
 
 ### Errors
@@ -500,7 +514,8 @@ class AppJsonResponse(PostgresJsonResponse):
 ```
 
 After the first byte the status line is gone: the error is logged and re-raised, and the response ends **without
-the closing `]`**, so clients fail to parse it rather than accepting a silently shortened array.
+the closing `]`**, so clients fail to parse it rather than accepting a silently shortened array. (Granian ends such a
+response cleanly; uvicorn aborts the connection. Either way the body is not valid JSON.)
 
 ### When not to use it
 
