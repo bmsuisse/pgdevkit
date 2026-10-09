@@ -6,9 +6,10 @@ Requires the ``fastapi`` extra: ``pip install pgdevkit[fastapi]``.
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Mapping
+from contextlib import aclosing
+from collections.abc import AsyncGenerator, Mapping
 from string.templatelib import Template
-from typing import Any
+from typing import Any, cast
 
 import anyio
 from fastapi.responses import StreamingResponse
@@ -129,11 +130,14 @@ class PostgresJsonResponse(StreamingResponse):
         try:
             async with _acquire(self.con, self.pool) as conn:
                 try:
-                    async for chunk in self._chunks(conn):
-                        if not started:
-                            await _send(send, self._start_message(self.status_code, self.raw_headers))
-                            started = True
-                        await _send(send, {"type": "http.response.body", "body": chunk, "more_body": True})
+                    # aclosing: an `async for` leaves its generator suspended when the body fails (e.g. send()
+                    # raising); the event loop would finalize it later, after the connection is closed.
+                    async with aclosing(self._chunks(conn)) as chunks:
+                        async for chunk in chunks:
+                            if not started:
+                                await _send(send, self._start_message(self.status_code, self.raw_headers))
+                                started = True
+                            await _send(send, {"type": "http.response.body", "body": chunk, "more_body": True})
                 finally:
                     # Runs for completion too, but only acts if the query is still in flight.
                     await _cancel_if_running(conn)
@@ -172,7 +176,7 @@ class PostgresJsonResponse(StreamingResponse):
         await _send(send, self._start_message(status, headers))
         await _send(send, {"type": "http.response.body", "body": body, "more_body": False})
 
-    async def _chunks(self, conn: AsyncConnection) -> AsyncIterator[bytes]:
+    async def _chunks(self, conn: AsyncConnection) -> AsyncGenerator[bytes]:
         """Yield the JSON array in pieces of ``batch_size`` rows. Nothing is yielded before the first batch is
         complete, so a failing query surfaces before any byte (and the status line) is sent."""
         if self.statement_timeout is not None and conn.autocommit:
@@ -184,12 +188,15 @@ class PostgresJsonResponse(StreamingResponse):
             _statement_timeout(conn, self.statement_timeout),
             conn.cursor(row_factory=tuple_row) as cur,  # whatever the connection was configured with
         ):
-            rows = cur.stream(self.query, self.params, size=self.batch_size if _CHUNKED_ROWS else 1)
-            async for (row_json,) in rows:
-                batch.append(row_json)
-                if len(batch) >= self.batch_size:
-                    yield (prefix + ",\n".join(batch)).encode()
-                    batch, prefix = [], ","
+            # (typed as an iterator, but it is an async generator, which is what aclosing() needs)
+            size = self.batch_size if _CHUNKED_ROWS else 1
+            rows = cast("AsyncGenerator[tuple[Any, ...]]", cur.stream(self.query, self.params, size=size))
+            async with aclosing(rows):  # same reason as in stream_response(): finish psycopg's cleanup in order
+                async for (row_json,) in rows:
+                    batch.append(row_json)
+                    if len(batch) >= self.batch_size:
+                        yield (prefix + ",\n".join(batch)).encode()
+                        batch, prefix = [], ","
         if batch or prefix == "[":  # remaining rows, or an empty result
             yield (prefix + ",\n".join(batch) + "]").encode()
         else:  # the last batch was full and has been sent already

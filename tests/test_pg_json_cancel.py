@@ -2,6 +2,8 @@
 
 import asyncio
 import contextlib
+import gc
+import inspect
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -14,6 +16,7 @@ from psycopg_pool import AsyncConnectionPool
 from starlette.requests import ClientDisconnect
 
 from pgdevkit.fastapi import PostgresJsonResponse
+from pgdevkit.fastapi import json_response
 from pgdevkit.fastapi.json_response import _cancel_if_running
 from tests._asgi import FakeClient, active_queries, wait_until
 
@@ -157,3 +160,40 @@ async def test_a_finished_query_is_left_alone(pool: AsyncConnectionPool) -> None
         await _cancel_if_running(conn)
         assert not conn.closed
         assert await (await conn.execute("select 2")).fetchone() == (2,)
+
+
+def _suspended_row_generators() -> list[str]:
+    return [
+        o.ag_code.co_name
+        for o in gc.get_objects()
+        if inspect.isasyncgen(o) and o.ag_frame is not None and o.ag_code.co_name in ("_chunks", "stream")
+    ]
+
+
+@pytest.mark.parametrize("failure", ["send fails", "client disconnects"])
+async def test_row_generators_are_finished_before_the_connection_is_closed(
+    pool: AsyncConnectionPool, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    """A generator left suspended is finalized later by the event loop, when its connection is long closed: its
+    cleanup then registers the dead socket's fd number, which may belong to a new connection by then, and asyncio's
+    selector fails with FileNotFoundError (seen once in CI). So they must be closed before the connection is."""
+    suspended_at_cleanup: list[str] = []
+    original = json_response._cancel_if_running
+
+    async def spy(conn: AsyncConnection) -> None:
+        suspended_at_cleanup.extend(_suspended_row_generators())
+        await original(conn)
+
+    monkeypatch.setattr(json_response, "_cancel_if_running", spy)
+    client = FakeClient()
+    if failure == "send fails":
+        client.fail_sends_after = 2
+    task = asyncio.create_task(client.call(PostgresJsonResponse(SLOW_STREAM, pool=pool, batch_size=5)))
+    if failure == "client disconnects":
+        assert await wait_until(lambda: len(client.sent) >= 2)
+        client.disconnect.set()
+    with contextlib.suppress(ClientDisconnect):
+        await asyncio.wait_for(task, timeout=5)
+
+    assert suspended_at_cleanup == []
+    assert _suspended_row_generators() == []
