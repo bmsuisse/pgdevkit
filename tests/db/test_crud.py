@@ -4,6 +4,8 @@ from typing import Sequence
 
 import psycopg
 import pytest
+from psycopg.sql import SQL, Placeholder
+from psycopg.sql import Literal as SqlLiteral
 from pydantic import ConfigDict
 
 from pgdevkit.db import (
@@ -268,3 +270,63 @@ async def test_update_dict_composite_column_requires_complex_helper(pool: PgPool
         fetched = await pg_retrieve(con, Gizmo, {"id": gizmo_id}, complex_helper=helper)
         assert fetched is not None
         assert fetched.label == {"en": "Bye", "de": "Tschuess"}
+
+
+@requires_podman
+async def test_pg_retrieve_many_where_order_by_and_limit(pool: PgPool):
+    async with pool.connection() as con:
+        await pg_insert_many(con, ("public", "widget"), [{"name": n} for n in ("cog", "sprocket", "spring", "50% off", "gear")])
+        names = lambda rows: [r.name for r in rows]  # noqa: E731
+
+        # unchanged: equality filters only
+        assert names(await pg_retrieve_many(con, Widget, {"name": "cog"})) == ["cog"]
+
+        # order_by: a column, several, a direction, or a composable
+        assert names(await pg_retrieve_many(con, Widget, {}, order_by="name")) == ["50% off", "cog", "gear", "spring", "sprocket"]
+        assert names(await pg_retrieve_many(con, Widget, {}, order_by=[("name", "desc")], limit=2)) == ["sprocket", "spring"]
+        assert names(await pg_retrieve_many(con, Widget, {}, order_by=["name"], limit=0)) == []
+        by_length = SQL("length(name) DESC, name")
+        assert names(await pg_retrieve_many(con, Widget, {}, order_by=by_length, limit=2)) == ["sprocket", "50% off"]
+
+        # where as a t-string: values are bound, a literal % is no problem, filters are ANDed in
+        pattern = "sp%"
+        assert names(await pg_retrieve_many(con, Widget, {}, where=t"name LIKE {pattern}", order_by="name")) == ["spring", "sprocket"]
+        assert names(await pg_retrieve_many(con, Widget, {"name": "spring"}, where=t"name LIKE {pattern}")) == ["spring"]
+        assert names(await pg_retrieve_many(con, Widget, {}, where=t"name LIKE '50%' OR name = {'cog'}", order_by="name")) == ["50% off", "cog"]
+        minimum = 0
+        assert len(await pg_retrieve_many(con, Widget, {}, where=t"id > {minimum}", limit=3)) == 3
+        assert await pg_retrieve_many(con, Widget, {}, where=t"false") == []
+
+        # where as a composable (+ params), also together with filters
+        like = SQL("name LIKE {p}").format(p=Placeholder("pattern"))
+        assert names(await pg_retrieve_many(con, Widget, {}, where=like, params={"pattern": "sp%"}, order_by="name")) == ["spring", "sprocket"]
+        assert names(await pg_retrieve_many(con, Widget, {"name": "cog"}, where=like, params={"pattern": "c%"})) == ["cog"]
+        literal = SQL("name LIKE {p}").format(p=SqlLiteral("50%"))  # no params at all: % is not parsed
+        assert names(await pg_retrieve_many(con, Widget, {}, where=literal)) == ["50% off"]
+
+        with pytest.raises(ValueError, match="collides"):
+            await pg_retrieve_many(con, Widget, {"name": "cog"}, where=like, params={"name": "x", "pattern": "x"})
+        with pytest.raises(TypeError, match="t-string"):
+            await pg_retrieve_many(con, Widget, {}, where=t"true", params={"x": 1})
+        with pytest.raises(ValueError, match="direction"):
+            await pg_retrieve_many(con, Widget, {}, order_by=[("name", "sideways")])  # type: ignore[list-item]
+        for bad in (-1, True, "3", 1.5):
+            with pytest.raises(ValueError, match="limit"):
+                await pg_retrieve_many(con, Widget, {}, limit=bad)  # type: ignore[arg-type]
+        # a column name is an identifier, never SQL
+        with pytest.raises(psycopg.errors.UndefinedColumn):
+            await pg_retrieve_many(con, Widget, {}, order_by="name; DROP TABLE widget")
+        await con.rollback()
+
+
+@requires_podman
+async def test_pg_retrieve_many_where_with_complex_helper(pool: PgPool):
+    async with pool.connection() as con:
+        await pg_insert_many(con, ("public", "gadget"), [{"status": "active"}, {"status": "inactive"}, {"status": "active"}])
+        rows = await pg_retrieve_many(
+            con, Gadget, {"status": "active"}, complex_helper=ComplexHelper(con), order_by=[("id", "desc")], limit=1
+        )
+        assert [(r.id, r.status) for r in rows] == [(3, "active")]
+        status = "inactive"
+        rows = await pg_retrieve_many(con, Gadget, {}, complex_helper=ComplexHelper(con), where=t"status = {status}")
+        assert [(r.id, r.status) for r in rows] == [(2, "inactive")]

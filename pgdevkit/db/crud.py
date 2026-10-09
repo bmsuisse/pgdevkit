@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping, Optional, Sequence, Type, TypeVar
+from string.templatelib import Interpolation, Template
+from typing import Any, Callable, Literal, Mapping, Optional, Sequence, Type, TypeVar
 
 from psycopg.connection_async import AsyncConnection
 from psycopg.rows import dict_row
-from psycopg.sql import SQL, Composable, Identifier, Placeholder
+from psycopg.sql import Literal as SqlLiteral
+from psycopg.sql import SQL, Composable, Composed, Identifier, Placeholder
 from pydantic import BaseModel
 
 from .complex_types import ComplexHelper
@@ -103,6 +105,24 @@ async def pg_retrieve(
     return data_type(**row) if row else None
 
 
+type OrderBy = str | Sequence[str | tuple[str, Literal["asc", "desc"]]] | Composable
+
+
+def _order_by_sql(order_by: OrderBy) -> Composable | None:
+    """` ORDER BY ...` for `pg_retrieve_many(order_by=...)`: column names (quoted as identifiers, optionally
+    as `(name, "desc")`), or a `psycopg.sql` composable for anything else (an expression, `NULLS LAST`, ...)."""
+    if isinstance(order_by, Composable):
+        return SQL(" ORDER BY {}").format(order_by)
+    items = [order_by] if isinstance(order_by, str) else list(order_by)
+    parts: list[Composable] = []
+    for item in items:
+        column, direction = (item, "asc") if isinstance(item, str) else item
+        if direction not in ("asc", "desc"):
+            raise ValueError(f"order_by direction must be 'asc' or 'desc', got {direction!r}")
+        parts.append(SQL("{} DESC" if direction == "desc" else "{} ASC").format(Identifier(column)))
+    return SQL(" ORDER BY {}").format(SQL(", ").join(parts)) if parts else None
+
+
 async def pg_retrieve_many(
     con: AsyncConnection,
     data_type: Type[T],
@@ -110,22 +130,70 @@ async def pg_retrieve_many(
     *,
     from_dict: Optional[Callable[[Mapping], T]] = None,
     complex_helper: ComplexHelper | None = None,
+    where: Composable | Template | None = None,
+    params: Mapping[str, Any] | None = None,
+    order_by: OrderBy | None = None,
+    limit: int | None = None,
 ) -> Sequence[T]:
-    """Fetch multiple rows matching all filter key=value pairs."""
+    """Fetch multiple rows matching all filter key=value pairs.
+
+    Beyond those equality `filters` (`{}` for none), the query can be narrowed and shaped with:
+
+    - `where=`: more conditions, ANDed with the filters -- a t-string (`t"price > {minimum} AND name LIKE {pattern}"`,
+      values are bound for you), or a `psycopg.sql` composable, whose own `sql.Placeholder("name")`s are bound from
+      `params=` (as with psycopg, write a literal `%` as `%%` there when there are params or filters).
+    - `order_by=`: a column name, a list of them (each a name or `(name, "asc" | "desc")`, quoted as
+      identifiers), or a composable for anything fancier.
+    - `limit=`: at most that many rows.
+
+    Without those it behaves exactly as before. For joins or other shapes use `fetch_all` instead."""
+    table_name = data_type.get_table_name()
+    select_cols = await _select_list(con, table_name, complex_helper)
+    tail: list[Composable] = []
+    if order_by is not None and (order := _order_by_sql(order_by)) is not None:
+        tail.append(order)
+    if limit is not None:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
+            raise ValueError(f"limit must be a non-negative integer, got {limit!r}")
+        tail.append(SQL(" LIMIT {}").format(SqlLiteral(limit)))
+    query: Template | Composed
+    query_params: Mapping[str, Any] | None
+    if isinstance(where, Template):
+        if params:
+            raise TypeError("A t-string `where` carries its own values; don't pass `params` with it.")
+        parts: list[str | Interpolation] = [
+            "SELECT ",
+            Interpolation(select_cols, "cols", None, "q"),
+            " FROM ",
+            Interpolation(Identifier(*table_name), "tbl", None, "i"),
+            " WHERE ",
+        ]
+        for k, v in filters.items():
+            parts += [Interpolation(Identifier(k), k, None, "i"), " = ", Interpolation(v, k, None, ""), " AND "]
+        parts += ["(", Interpolation(where, "where", None, "q"), ")"]
+        parts += [Interpolation(t, "tail", None, "q") for t in tail]
+        query, query_params = Template(*parts), None
+    else:
+        conditions: list[Composable] = [
+            SQL("{col} = {val}").format(col=Identifier(k), val=Placeholder(k)) for k in filters
+        ]
+        if where is not None:
+            conditions.append(SQL("({})").format(where))
+        query_params = {**filters}
+        for name, value in (params or {}).items():
+            if name in query_params:
+                raise ValueError(f"`params` key {name!r} collides with a filter of the same name")
+            query_params[name] = value
+        query = SQL("SELECT {cols} FROM {tbl}").format(cols=select_cols, tbl=Identifier(*table_name))
+        if conditions:
+            query = SQL("{} WHERE {}").format(query, SQL(" AND ").join(conditions))
+        query = Composed([query, *tail])
+        query_params = query_params or None  # an empty dict would make psycopg parse `%` for nothing
     async with con.cursor(row_factory=dict_row) as cur:
-        table_name = data_type.get_table_name()
-        select_cols = await _select_list(con, table_name, complex_helper)
-        if filters:
-            query = SQL("SELECT {cols} FROM {tbl} WHERE {where}").format(
-                cols=select_cols,
-                tbl=Identifier(*table_name),
-                where=SQL(" AND ").join(
-                    SQL("{col} = {val}").format(col=Identifier(k), val=Placeholder(k)) for k in filters
-                ),
-            )
+        if isinstance(query, Template):
+            await cur.execute(query)
         else:
-            query = SQL("SELECT {cols} FROM {tbl}").format(cols=select_cols, tbl=Identifier(*table_name))
-        await cur.execute(query, filters)
+            await cur.execute(query, query_params)
         rows = await cur.fetchall()
     fn = from_dict or (lambda d: data_type(**d))
     return [fn(r) for r in rows]
