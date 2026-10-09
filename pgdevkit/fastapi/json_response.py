@@ -13,6 +13,7 @@ from typing import Any
 import anyio
 from fastapi.responses import StreamingResponse
 from psycopg import AsyncConnection, pq
+from psycopg.errors import QueryCanceled
 from psycopg.pq import TransactionStatus
 from psycopg.rows import tuple_row
 from psycopg.sql import SQL, Composable, Composed
@@ -20,7 +21,15 @@ from starlette.exceptions import HTTPException
 from starlette.requests import ClientDisconnect
 from starlette.types import Message, Receive, Scope, Send
 
-from ..db.fetch import ConnectionSource, QueryParams, SqlQueryNoTemplate, _acquire, _render
+from ..db.fetch import (
+    ConnectionSource,
+    QueryParams,
+    SqlQueryNoTemplate,
+    _acquire,
+    _check_statement_timeout,
+    _render,
+    _statement_timeout,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +53,12 @@ class PostgresJsonResponse(StreamingResponse):
     If the client disconnects (or the request is cancelled) while the query is still running, the query is
     cancelled in Postgres. A connection that was mid-query at that point is closed instead of being reused.
 
+    ``statement_timeout`` (seconds) lets Postgres abort the query after that long, as in ``fetch_all``: before the
+    first byte that is a 504 ``{"error": "Query timed out"}``, later the response is cut short like any other
+    error. It limits query execution only: a client that stops reading is *not* freed by it (Postgres defers the
+    cancel while blocked writing), so keep a write timeout in the reverse proxy. Needs a connection that is not in
+    autocommit mode.
+
     Errors before the first byte become a JSON ``{"error": ...}`` response (status 500, or the status of a raised
     ``HTTPException``). After that the status line is gone: the error is logged and re-raised, and the response
     ends without its closing ``]``, so clients can't mistake it for a complete array. Subclass and set
@@ -63,6 +78,7 @@ class PostgresJsonResponse(StreamingResponse):
         pool: ConnectionSource | None = None,
         query_produces_json: bool = False,
         batch_size: int = 1000,
+        statement_timeout: float | None = None,
         status_code: int = 200,
         headers: Mapping[str, str] | None = None,
     ) -> None:
@@ -70,6 +86,7 @@ class PostgresJsonResponse(StreamingResponse):
             raise TypeError("Pass either `con` or `pool`, not both.")
         if batch_size < 1:
             raise ValueError(f"batch_size must be >= 1, got {batch_size}")
+        _check_statement_timeout(statement_timeout)
         if isinstance(query, Template):
             raise TypeError("t-strings can't be wrapped in a subquery: use a literal string or psycopg.sql with params")
         rendered = _render(query)
@@ -78,6 +95,7 @@ class PostgresJsonResponse(StreamingResponse):
         self.con = con
         self.pool = pool
         self.batch_size = batch_size
+        self.statement_timeout = statement_timeout
         # The body is produced by stream_response() itself, so the base class' iterator is never used.
         super().__init__((), status_code=status_code, headers=headers, media_type="application/json")
 
@@ -124,8 +142,11 @@ class PostgresJsonResponse(StreamingResponse):
             if started:
                 logger.exception("Postgres query failed after the response had started; it is cut short")
                 raise
+            if self.statement_timeout is not None and isinstance(err, QueryCanceled):
+                logger.warning("Postgres query exceeded the statement_timeout of %ss", self.statement_timeout)
+                err = HTTPException(status_code=504, detail="Query timed out")
             if isinstance(err, HTTPException):
-                logger.info("Connection source refused the request: %s", err.detail)
+                logger.info("Request refused: %s", err.detail)
             else:
                 logger.exception("Error executing Postgres query")
             await self._send_error(send, err)
@@ -153,9 +174,15 @@ class PostgresJsonResponse(StreamingResponse):
     async def _chunks(self, conn: AsyncConnection) -> AsyncIterator[bytes]:
         """Yield the JSON array in pieces of ``batch_size`` rows. Nothing is yielded before the first batch is
         complete, so a failing query surfaces before any byte (and the status line) is sent."""
+        if self.statement_timeout is not None and conn.autocommit:
+            # (a transaction block would try to roll back a connection that a disconnect left mid-query)
+            raise TypeError("statement_timeout needs a connection that is not in autocommit mode")
         batch: list[str] = []
         prefix = "["
-        async with conn.cursor(row_factory=tuple_row) as cur:  # whatever the connection was configured with
+        async with (
+            _statement_timeout(conn, self.statement_timeout),
+            conn.cursor(row_factory=tuple_row) as cur,  # whatever the connection was configured with
+        ):
             rows = cur.stream(self.query, self.params, size=self.batch_size if _CHUNKED_ROWS else 1)
             async for (row_json,) in rows:
                 batch.append(row_json)

@@ -406,7 +406,7 @@ Install with the `db` extra: `pip install pgdevkit[db]`.
   `--entra-user`. For Lakebase hosts, also set the
   `{env_prefix}DATABRICKS_WORKSPACE_HOST` and `{env_prefix}DATABRICKS_INSTANCE`
   env vars.
-- **`fetch_all(query, params=None, *, model=None, row_mapper=None, con=None, pool=None, cancel=None)`**
+- **`fetch_all(query, params=None, *, model=None, row_mapper=None, con=None, pool=None, cancel=None, statement_timeout=None)`**
   — run one custom query and get every row back as dicts, as validated
   Pydantic `model` instances, or through a `row_mapper`. Pass `con` to run on a
   connection you already hold (it is borrowed: never committed, closed or
@@ -414,7 +414,9 @@ Install with the `db` extra: `pip install pgdevkit[db]`.
   with `set_default_pool()`. Set the `cancel` `asyncio.Event` to abort the query on the server
   (`QueryCanceled`; to stream a result as JSON from FastAPI see `PostgresJsonResponse`, which watches for the
   disconnect itself); cancelling the awaiting task cancels it there too, and
-  `CancelledError` propagates as usual. `query` must be a literal string, a sqlglot
+  `CancelledError` propagates as usual. `statement_timeout=<seconds>` lets Postgres abort the query after that
+  long (`QueryCanceled`, "canceling statement due to statement timeout"); it is applied per call with `SET LOCAL`
+  semantics, so it never outlives the call (a borrowed `con` gets its previous setting back). `query` must be a literal string, a sqlglot
   expression, a `psycopg.sql` composable or a t-string — never an f-string (a sqlglot
   expression is only as safe as the strings it was built from: pass user values as
   `exp.Placeholder` + `params`).
@@ -499,8 +501,8 @@ for a `Response`, and the rows are *not* validated against the model.
   as a subquery, never parsed, so never build it from user input. For a data-modifying CTE, or custom JSON, pass
   `query_produces_json=True` and return one *text* column per row (a `json` column or NULL fails). A trailing `;`
   is fine, a `;` followed by a comment is not. t-strings aren't supported (they can't be wrapped).
-- **Options** — `batch_size` (rows per chunk, >= 1, default 1000; don't take it from user input), `status_code`,
-  `headers` (e.g. `{"Cache-Control": "max-age=3600"}`).
+- **Options** — `batch_size` (rows per chunk, >= 1, default 1000; don't take it from user input),
+  `statement_timeout` (seconds, see below), `status_code`, `headers` (e.g. `{"Cache-Control": "max-age=3600"}`).
 
 ### Cancellation
 
@@ -515,9 +517,21 @@ either left in an aborted transaction (idle, with autocommit) or closed, dependi
 Postgres or for the client.
 Don't use it afterwards, and don't count on earlier writes in that transaction.
 
-Connections are held while the client reads, so a client that reads very slowly pins one. Enforce a write timeout in
-the reverse proxy and size the pool accordingly. Disconnect behaviour can only be tested over a real socket
+Connections are held while the client reads, so a client that reads very slowly pins one (`statement_timeout` does not
+help, see below). Enforce a write timeout in the reverse proxy and size the pool accordingly. Disconnect behaviour can only be tested over a real socket
 (`httpx.ASGITransport` never sends `http.disconnect`); see `tests/test_pg_json_granian.py`.
+
+### Statement timeout
+
+`statement_timeout=<seconds>` (optional, also on `fetch_all`) lets **Postgres** abort the query after that long. It
+is set with `SET LOCAL` semantics for this one query: transaction-scoped, so it can't leak into the pool and works
+behind PgBouncer's transaction pooling, and a `con` you passed gets its previous setting back. Before the first byte
+the client gets a `504 {"error": "Query timed out"}`; after that the response is cut short like any other error. It
+needs a connection that is not in autocommit mode. Without it, the connection's own `statement_timeout` applies.
+
+It limits *query execution*, nothing else: Postgres defers a cancel while it is blocked writing to a client that
+has stopped reading, so a stalled reader keeps its connection regardless (a backend was observed staying `active`
+in `ClientWrite` well past a 1 s timeout). For that, use a write timeout in the reverse proxy.
 
 ### Errors
 

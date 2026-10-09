@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, suppress
 from string.templatelib import Template
 from typing import TYPE_CHECKING, Any, LiteralString, Protocol, overload
 
@@ -84,8 +85,37 @@ def _render(query: SqlQuery) -> Any:
     return query.sql(dialect="postgres")
 
 
-async def _run_query(c: AsyncConnection, query: Any, params: QueryParams) -> list[dict[str, Any]]:
-    async with c.cursor(row_factory=dict_row) as cur:
+def _check_statement_timeout(statement_timeout: float | None) -> None:
+    if statement_timeout is not None and statement_timeout <= 0:
+        raise ValueError(f"statement_timeout must be a positive number of seconds, got {statement_timeout}")
+
+
+@asynccontextmanager
+async def _statement_timeout(c: AsyncConnection, seconds: float | None) -> AsyncIterator[None]:
+    """Run the block under Postgres' `statement_timeout`, set with `set_config(..., is_local => true)`: it is
+    scoped to the current transaction (so it can't leak into a pool, and it is safe behind PgBouncer's
+    transaction pooling) and put back afterwards for a borrowed connection that stays in its transaction.
+    `None` leaves the connection's own setting alone."""
+    if seconds is None:
+        yield
+        return
+    async with AsyncExitStack() as stack:
+        if c.autocommit:
+            await stack.enter_async_context(c.transaction())  # a local setting needs a transaction to live in
+        cur = await c.execute(
+            "SELECT current_setting('statement_timeout'), set_config('statement_timeout', %(ms)s, true)",
+            {"ms": str(max(1, math.ceil(seconds * 1000)))},
+        )
+        row = await cur.fetchone()
+        assert row is not None
+        yield
+        await c.execute("SELECT set_config('statement_timeout', %(previous)s, true)", {"previous": row[0]})
+
+
+async def _run_query(
+    c: AsyncConnection, query: Any, params: QueryParams, statement_timeout: float | None
+) -> list[dict[str, Any]]:
+    async with _statement_timeout(c, statement_timeout), c.cursor(row_factory=dict_row) as cur:
         await cur.execute(query, params)
         return await cur.fetchall()
 
@@ -129,11 +159,12 @@ async def _fetch_dicts(
     con: AsyncConnection | None,
     pool: ConnectionSource | None,
     cancel: asyncio.Event | None,
+    statement_timeout: float | None,
 ) -> list[dict[str, Any]]:
     if cancel is not None and cancel.is_set():
         raise QueryCanceled("fetch_all: cancelled before the query started")
     async with _acquire(con, pool) as c:
-        work = asyncio.ensure_future(_run_query(c, query, params))
+        work = asyncio.ensure_future(_run_query(c, query, params, statement_timeout))
         stop = asyncio.ensure_future(cancel.wait()) if cancel is not None else None
         try:
             await asyncio.wait([work, *([stop] if stop else [])], return_when=asyncio.FIRST_COMPLETED)
@@ -162,6 +193,7 @@ async def fetch_all[M: BaseModel](
     con: AsyncConnection | None = None,
     pool: ConnectionSource | None = None,
     cancel: asyncio.Event | None = None,
+    statement_timeout: float | None = None,
 ) -> list[M]: ...
 
 
@@ -174,6 +206,7 @@ async def fetch_all[T](
     con: AsyncConnection | None = None,
     pool: ConnectionSource | None = None,
     cancel: asyncio.Event | None = None,
+    statement_timeout: float | None = None,
 ) -> list[T]: ...
 
 
@@ -187,6 +220,7 @@ async def fetch_all(
     con: AsyncConnection | None = None,
     pool: ConnectionSource | None = None,
     cancel: asyncio.Event | None = None,
+    statement_timeout: float | None = None,
 ) -> list[dict[str, Any]]: ...
 
 
@@ -198,6 +232,7 @@ async def fetch_all[M: BaseModel](
     con: AsyncConnection | None = None,
     pool: ConnectionSource | None = None,
     cancel: asyncio.Event | None = None,
+    statement_timeout: float | None = None,
 ) -> list[M]: ...
 
 
@@ -209,6 +244,7 @@ async def fetch_all[T](
     con: AsyncConnection | None = None,
     pool: ConnectionSource | None = None,
     cancel: asyncio.Event | None = None,
+    statement_timeout: float | None = None,
 ) -> list[T]: ...
 
 
@@ -221,6 +257,7 @@ async def fetch_all(
     con: AsyncConnection | None = None,
     pool: ConnectionSource | None = None,
     cancel: asyncio.Event | None = None,
+    statement_timeout: float | None = None,
 ) -> list[dict[str, Any]]: ...
 
 
@@ -233,11 +270,18 @@ async def fetch_all(
     con: AsyncConnection | None = None,
     pool: ConnectionSource | None = None,
     cancel: asyncio.Event | None = None,
+    statement_timeout: float | None = None,
 ) -> list[Any]:
     """Run one query and return every row.
 
     Rows come back as plain dicts, or, with `model=` (a Pydantic model class), validated into
     that model; `row_mapper=` converts each dict row into any other shape. The two are exclusive.
+
+    Pass `statement_timeout` (seconds) to let Postgres abort the query after that long: `fetch_all` then
+    raises `psycopg.errors.QueryCanceled` ("canceling statement due to statement timeout"). It is applied
+    with `SET LOCAL` semantics, i.e. for this query's transaction only; a borrowed `con` in autocommit mode
+    gets a short transaction around the query, and any other borrowed `con` gets its previous setting back.
+    Without it, the connection's own `statement_timeout` (default: none) applies.
 
     Pass `con` to run on a connection you already hold (e.g. inside a transaction): it is
     borrowed, never committed, closed or returned to a pool. Without it, a connection is taken
@@ -262,7 +306,8 @@ async def fetch_all(
         raise TypeError("Pass either `model` or `row_mapper`, not both.")
     if isinstance(query, Template) and params is not None:
         raise TypeError("A t-string query carries its own values; don't pass `params` with it.")
-    rows = await _fetch_dicts(_render(query), params, con, pool, cancel)
+    _check_statement_timeout(statement_timeout)
+    rows = await _fetch_dicts(_render(query), params, con, pool, cancel, statement_timeout)
     if model is not None:
         return [model.model_validate(row) for row in rows]
     if row_mapper is not None:
