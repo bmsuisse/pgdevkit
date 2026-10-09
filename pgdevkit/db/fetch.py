@@ -4,6 +4,7 @@ import asyncio
 import logging
 import math
 import re
+import uuid
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, suppress
 from string.templatelib import Template
@@ -77,7 +78,11 @@ async def _acquire(con: AsyncConnection | None, pool: ConnectionSource | None) -
 _PLACEHOLDER_NAME = re.compile(r"\w+")
 
 
-def _render(query: SqlQuery, *, caller: str = "fetch_all") -> Any:
+def _render(query: SqlQuery, params: QueryParams = None, *, caller: str = "fetch_all") -> Any:
+    """Turn `query` into something psycopg executes. A sqlglot expression becomes postgres-dialect SQL; when
+    `params` is not None, psycopg also parses `%` in the text, so every literal `%` of the expression (in a
+    string literal such as `LIKE '50%'`, a quoted identifier, the modulo operator) is doubled -- but not the
+    `%(name)s`/`%s` placeholders sqlglot renders for `exp.Placeholder` nodes."""
     if isinstance(query, (str, Composable, Template)):
         return query
     if not hasattr(query, "sql"):
@@ -92,7 +97,27 @@ def _render(query: SqlQuery, *, caller: str = "fetch_all") -> Any:
             raise ValueError(f"{caller}: raw sqlglot Command nodes are not allowed")
         if isinstance(node, exp.Placeholder) and node.name and not _PLACEHOLDER_NAME.fullmatch(node.name):
             raise ValueError(f"{caller}: invalid placeholder name {node.name!r}")
-    return query.sql(dialect="postgres")
+    if params is None:  # psycopg doesn't look at `%` without params
+        return query.sql(dialect="postgres")
+    # Render the placeholders as unique tokens, double every `%`, then put the placeholders back: telling
+    # `%(id)s` apart from a literal `'%(id)s'` in the rendered text would be guesswork.
+    nonce = uuid.uuid4().hex
+    placeholders: dict[str, str] = {}
+    root = query.copy()
+    for node in list(root.find_all(exp.Placeholder)):
+        if node.args.get("jdbc"):  # renders as `?`
+            continue
+        token = f"pgdevkit_ph_{nonce}_{len(placeholders)}"
+        placeholders[token] = node.sql(dialect="postgres")
+        replacement = exp.Var(this=token)
+        if node is root:
+            root = replacement
+        else:
+            node.replace(replacement)
+    rendered: str = root.sql(dialect="postgres").replace("%", "%%")
+    for token, placeholder in placeholders.items():
+        rendered = rendered.replace(token, placeholder)
+    return rendered
 
 
 def _check_statement_timeout(statement_timeout: float | None) -> None:
@@ -243,7 +268,7 @@ def _prepare(
     if isinstance(query, Template) and params is not None:
         raise TypeError("A t-string query carries its own values; don't pass `params` with it.")
     _check_statement_timeout(statement_timeout)
-    return _render(query, caller=caller)
+    return _render(query, params, caller=caller)
 
 
 def _convert(
@@ -371,7 +396,9 @@ async def fetch_all(
     t-string -- never text built with f-strings/concatenation (a plain `str` fails type checking).
     A sqlglot expression is only as safe as the strings it was built from (the builders parse plain
     strings as SQL): pass user values as `exp.Placeholder` + `params`, never as literals/raw text.
-    In one, write a literal `%` as `%%` when you also pass `params`.
+    A literal `%` in one (`LIKE '50%'`, the modulo operator) is fine with or without `params`; it is escaped for
+    psycopg when needed. (A plain string or `psycopg.sql` composable is passed on as is: with `params`, write
+    `%%` there.)
     A t-string already carries its values, so it must not be combined with `params`.
     """
     rendered = _prepare("fetch_all", query, params, model, row_mapper, statement_timeout)

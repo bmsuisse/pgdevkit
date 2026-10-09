@@ -91,7 +91,7 @@ class PostgresJsonResponse(StreamingResponse):
         _check_statement_timeout(statement_timeout)
         if isinstance(query, Template) and params is not None:
             raise TypeError("A t-string query carries its own values; don't pass `params` with it.")
-        rendered = _render(query)
+        rendered = _render(query, params)
         self.query = rendered if query_produces_json else _as_json_rows(rendered)
         self.params = params
         self.con = con

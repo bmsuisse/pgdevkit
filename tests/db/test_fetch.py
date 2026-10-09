@@ -11,6 +11,7 @@ from psycopg.errors import QueryCanceled
 from pydantic import BaseModel
 from sqlglot import exp, select
 
+from pgdevkit.db.fetch import _render
 from pgdevkit.db import PgPool, execute, fetch_all, fetch_one, fetch_scalar, set_default_pool
 from pgdevkit.testdb import constants
 from pgdevkit.testdb.container import ensure_container
@@ -343,3 +344,51 @@ async def test_default_pool_may_be_a_plain_callable(pool: PgPool):
     set_default_pool(lambda: pool.connection())
     assert await fetch_scalar("SELECT count(*) FROM widget") == 2
     assert await fetch_one("SELECT name FROM widget WHERE id = 1") == {"name": "sprocket"}
+
+
+# --- literal `%` in sqlglot expressions ----------------------------------------------------------
+
+
+def test_render_leaves_percent_alone_without_params():
+    query = select("a").from_("t").where(exp.column("a").like("50%"))
+    assert _render(query) == "SELECT a FROM t WHERE a LIKE '50%'"
+    assert _render(query, None) == "SELECT a FROM t WHERE a LIKE '50%'"
+
+
+@pytest.mark.parametrize("params", [{}, {"id": 1}])
+def test_render_doubles_literal_percent_but_not_placeholders_when_params_are_given(params):
+    query = (
+        select(exp.column("50%"), exp.column("a") % 2)
+        .from_("t")
+        .where(exp.column("a").like("50%"))
+        .where(exp.column("b").eq("%(id)s"))  # a literal that merely looks like a placeholder
+        .where(exp.column("c").eq(exp.Placeholder(this="id")))
+    )
+    assert _render(query, params) == (
+        "SELECT \"50%%\", a %% 2 FROM t WHERE (a LIKE '50%%' AND b = '%%(id)s') AND c = %(id)s"
+    )
+    # the query object itself is left untouched
+    assert "pgdevkit_ph_" not in query.sql(dialect="postgres")
+    assert query.sql(dialect="postgres").count("%(id)s") == 2  # the placeholder and the literal
+
+
+def test_render_percent_escaping_leaves_other_query_types_alone():
+    assert _render("SELECT '50%%'", {}) == "SELECT '50%%'"
+    composed = sql.SQL("SELECT {}").format(sql.Literal("50%"))
+    assert _render(composed, {}) is composed
+
+
+@requires_podman
+async def test_percent_in_sqlglot_string_literals_works_with_and_without_params(pool: PgPool):
+    like = select("name").from_("widget").where(exp.column("name").like("sp%"))
+    assert await fetch_all(like, pool=pool) == [{"name": "sprocket"}]
+    assert await fetch_all(like, {}, pool=pool) == [{"name": "sprocket"}]
+    with_placeholder = like.where(exp.column("id").eq(exp.Placeholder(this="id")))
+    assert await fetch_all(with_placeholder, {"id": 1}, pool=pool) == [{"name": "sprocket"}]
+    assert await fetch_all(with_placeholder, {"id": 2}, pool=pool) == []
+    assert await fetch_scalar(select(exp.Literal.string("50%").as_("pct")), {}, pool=pool) == "50%"
+    assert await fetch_scalar(select(exp.Literal.string("50%").as_("pct")), pool=pool) == "50%"
+    # the modulo operator, and a literal that looks like a placeholder
+    modulo = select((exp.column("id") % 2).as_("odd")).from_("widget").where(exp.column("id").eq(exp.Placeholder(this="id")))
+    assert await fetch_scalar(modulo, {"id": 1}, pool=pool) == 1
+    assert await fetch_scalar(select(exp.Literal.string("%(id)s")), {}, pool=pool) == "%(id)s"
