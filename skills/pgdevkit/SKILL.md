@@ -317,6 +317,8 @@ async def articles(lng: str) -> PostgresJsonResponse:
     return PostgresJsonResponse(sql.load_sql("articles", "list_articles"), {"lng": lng})
 ```
 
+**Cancel `fetch_all`-based read endpoints when the client leaves:** Granian does not cancel handlers on disconnect, so a frontend abort only stops `PostgresJsonResponse`. Put other read endpoints (including POSTs that only read, e.g. grid/search) on `APIRouter(route_class=CancelOnDisconnectRoute)` (`from pgdevkit.fastapi import CancelOnDisconnectRoute`): the handler task is cancelled on `http.disconnect` and the statement is cancelled in Postgres. Never for writes. Await shared single-flight work through `asyncio.shield`, or one aborted request cancels it for all waiters.
+
 - Query: from a `.sql` file via `SqlLoader` like any non-trivial query (or `psycopg.sql`, sqlglot or a t-string for dynamic SQL), values via `params` (`%(name)s`; none with a t-string, it carries its own). That it is a literal is enforced by the type checker only: never build it from user input. Data-modifying CTE or custom JSON: `query_produces_json=True` (one text column per row).
 - `responses={200: {"model": ...}}` keeps the OpenAPI schema typed for the generated frontend client; `response_model` is ignored and rows are **not validated**.
 - Connections as in `fetch_all`: default pool, `pool=`, or `con=`. Prefer the pool: a `con` you opened must outlive the response (`Depends` with `yield`, never `async with ... as conn: return PostgresJsonResponse(q, con=conn)`), and a disconnect aborts its transaction.

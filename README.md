@@ -571,6 +571,40 @@ big results, can use up the pool and make every other request wait for a connect
 reverse proxy and size the pool accordingly. Disconnect behaviour can only be tested over a real socket
 (`httpx.ASGITransport` never sends `http.disconnect`); see `tests/test_pg_json_granian.py`.
 
+### Cancelling other endpoints when the client leaves
+
+`PostgresJsonResponse` is the only thing that notices a disconnect by itself. ASGI servers such as Granian do **not**
+cancel a request handler when the client goes away, so a handler built on `fetch_all` (or a raw cursor, Meilisearch,
+...) runs to the end and its result is thrown away, which defeats a frontend `AbortController`. Put such read
+endpoints on a router with `CancelOnDisconnectRoute`: it runs the handler as a task and cancels it on
+`http.disconnect`, and psycopg/pgdevkit then cancel the running statement on the server (see `fetch_all`'s `cancel`).
+
+```python
+from fastapi import APIRouter
+from pgdevkit.fastapi import CancelOnDisconnectRoute
+
+cancellable = APIRouter(route_class=CancelOnDisconnectRoute)  # or add_api_route(..., route_class_override=...)
+
+@cancellable.post("/customers/overview")  # a POST that only reads
+async def overview(payload: Filter) -> Page:
+    return await fetch_all(...)  # aborted in Postgres when the client leaves
+
+app.include_router(cancellable)
+```
+
+- **Opt-in, reads only.** A cancelled write is rolled back at best and half-applied at worst. Don't select routes by
+  HTTP method: search and grid endpoints are often POSTs.
+- The client that left gets a 499 nobody reads; the middleware stack sees a normal response (no
+  `No response returned`).
+- The body is buffered before the handler runs, so it is not for streamed uploads. The handler runs in its own task
+  with a copy of the context: context variables set by a dependency are not visible to middleware afterwards.
+- **Shared work must survive one caller's cancellation.** Await shared tasks and futures (single-flight caches,
+  "refresh once, many wait" loaders) through `asyncio.shield`; otherwise one aborted request cancels the load every
+  other request is waiting on.
+- A returned `StreamingResponse` is not covered (use `PostgresJsonResponse`). Threads (`asyncio.to_thread`) and
+  external services (Databricks statements, HTTP calls) keep running; only the awaiting stops.
+- Like the above, disconnects only show up over a real socket: see `tests/test_pg_json_granian.py` for a Granian test.
+
 ### Statement timeout
 
 `statement_timeout=<seconds>` (optional, also on `fetch_all`) lets **Postgres** abort the query after that long. It
