@@ -184,10 +184,8 @@ async def test_insert_many_accepts_model_instances(pool: PgPool):
 async def test_insert_retrieve_composite_column_with_normalizer(pool: PgPool):
     # label_pair mirrors a real project's locale-labels composite type: a
     # normalizer backfills a missing locale before the value is converted
-    # into the psycopg-registered composite type for INSERT. `RETURNING *`
-    # gives back the psycopg-generated composite instance directly (since
-    # register_composite() also wires up decoding); pg_retrieve's to_jsonb()
-    # wrapping instead unwraps it back into a plain dict.
+    # into the psycopg composite type for INSERT. Both RETURNING and
+    # pg_retrieve select complex columns as to_jsonb(), i.e. a plain dict.
     def backfill_de(value: dict) -> dict:
         if not value.get("de"):
             value = {**value, "de": f"[{value['en']}]"}
@@ -196,8 +194,7 @@ async def test_insert_retrieve_composite_column_with_normalizer(pool: PgPool):
     async with pool.connection() as con:
         helper = ComplexHelper(con, normalizers={"label_pair": backfill_de})
         inserted = await pg_insert(con, ("public", "gizmo"), {"label": {"en": "Hello"}}, complex_helper=helper)
-        assert inserted["label"].en == "Hello"
-        assert inserted["label"].de == "[Hello]"
+        assert inserted["label"] == {"en": "Hello", "de": "[Hello]"}  # RETURNING: plain values, like pg_retrieve
         gizmo_id = inserted["id"]
 
         fetched = await pg_retrieve(con, Gizmo, {"id": gizmo_id}, complex_helper=helper)
@@ -337,3 +334,35 @@ async def test_pg_retrieve_many_where_with_complex_helper(pool: PgPool):
         status = "inactive"
         rows = await pg_retrieve_many(con, Gadget, {}, complex_helper=ComplexHelper(con), where=t"status = {status}")
         assert [(r.id, r.status) for r in rows] == [(2, "inactive")]
+
+
+@requires_podman
+async def test_pooled_connection_is_unchanged_after_pg_helpers_with_complex_helper(pool: PgPool):
+    # Fixes #54: type registration used to stick to the physical connection and so to the next pool user.
+    single = PgPool(env_prefix=ENV_PREFIX, max_size=1, min_size=1)
+    await single.open()
+    try:
+        plain = "SELECT 'active'::gadget_status, ROW('a', 'b')::label_pair"
+
+        async def plain_read() -> tuple[int, tuple]:
+            async with single.connection() as con:
+                row = await (await con.execute(plain)).fetchone()
+                return con.pgconn.backend_pid, row  # type: ignore[return-value]
+
+        pid, before = await plain_read()
+        assert before == ("active", "(a,b)")
+
+        async with single.connection() as con:
+            assert con.pgconn.backend_pid == pid  # one physical connection: the next user gets this one again
+            helper = ComplexHelper(con)
+            await pg_insert(con, ("public", "gadget"), {"status": "active"}, complex_helper=helper)
+            await pg_insert(con, ("public", "gizmo"), {"label": {"en": "Hi", "de": "Hallo"}}, complex_helper="auto")
+            await pg_upsert_many_dict(con, ("public", "gizmo"), [{"id": 1, "label": {"en": "a", "de": "b"}}], ["id"], complex_helper=helper)
+            assert [g.status for g in await pg_retrieve_many(con, Gadget, {}, complex_helper=helper)] == ["active"]
+            assert (await pg_retrieve(con, Gizmo, {"id": 1}, complex_helper="auto")) is not None
+            # inside the same checkout, too
+            assert await (await con.execute(plain)).fetchone() == before
+
+        assert await plain_read() == (pid, before)  # after release and re-acquire
+    finally:
+        await single.close()

@@ -260,12 +260,15 @@ async def _insert_test_data(
                     await copy.write_row(tuple(row[c] for c in col_names))
             return
 
+        for col in col_names:
+            # registered on this cursor only, never on the (possibly pooled) connection
+            await complex_helper.register_on(cur, complex_types.get(col))
         for row in rows:
             for col in col_names:
                 info = complex_types.get(col)
                 if info is not None and isinstance(row[col], (dict, list)):
-                    # composite/enum/JSONB: needs psycopg-registered-type
-                    # conversion. Anything else (plain scalars, and native
+                    # composite/enum/JSONB: needs conversion to the
+                    # Python objects registered on `cur` above. Anything else (plain scalars, and native
                     # Postgres arrays like text[], which aren't "complex" —
                     # psycopg already adapts a Python list to those natively)
                     # is left untouched.
