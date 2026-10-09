@@ -9,6 +9,7 @@ from psycopg import AsyncConnection
 from psycopg.errors import QueryCanceled
 from psycopg_pool import AsyncConnectionPool
 
+from pgdevkit.db import at_most
 from pgdevkit.fastapi import PostgresJsonResponse
 from tests._asgi import FakeClient
 
@@ -88,3 +89,16 @@ async def test_autocommit_connection_is_refused_with_a_clear_error(postgres_dsn:
 def test_statement_timeout_must_be_positive(pool: AsyncConnectionPool, seconds: float) -> None:
     with pytest.raises(ValueError, match="statement_timeout"):
         PostgresJsonResponse("select 1", pool=pool, statement_timeout=seconds)
+
+
+async def test_at_most_never_loosens_a_caller_owned_connections_timeout(postgres_dsn: str) -> None:
+    async with await AsyncConnection.connect(postgres_dsn) as conn:
+        await conn.execute("select set_config('statement_timeout', '600s', false)")
+        await conn.commit()
+        query = "select setting::bigint as ms from pg_settings where name = 'statement_timeout'"
+        for timeout, expected in ((at_most(900), 600_000), (at_most(120), 120_000), (900, 900_000)):
+            client = FakeClient()
+            await client.call(PostgresJsonResponse(query, con=conn, statement_timeout=timeout))
+            assert json.loads(client.body) == [{"ms": expected}]
+        await conn.execute("select set_config('statement_timeout', '0', false)")
+        await conn.commit()

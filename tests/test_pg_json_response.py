@@ -13,6 +13,7 @@ from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 from psycopg.sql import SQL, Literal
 from psycopg_pool import AsyncConnectionPool
+from sqlglot import exp, select
 from starlette.exceptions import HTTPException
 
 from pgdevkit.db import fetch, set_default_pool
@@ -22,6 +23,10 @@ from tests._asgi import FakeClient
 
 class VerboseResponse(PostgresJsonResponse):
     expose_errors = True
+
+
+class DetailResponse(PostgresJsonResponse):
+    error_key = "detail"
 
 
 class ForbiddenPool:
@@ -121,6 +126,24 @@ async def client(pool: AsyncConnectionPool) -> AsyncIterator[httpx.AsyncClient]:
     @app.get("/stacked")
     async def stacked():
         return VerboseResponse("select 1 as a) s; select 2 as b from (select 1", pool=pool)
+
+    @app.get("/syntax-error-detail")
+    async def syntax_error_detail():
+        return DetailResponse("selec 1", pool=pool)
+
+    @app.get("/forbidden-detail")
+    async def forbidden_detail():
+        return DetailResponse("select 1", pool=ForbiddenPool())
+
+    @app.get("/sqlglot-like")
+    async def sqlglot_like(prefix: str):
+        query = (
+            select("name")
+            .from_("(select 'a%' as name union all select 'ab' union all select 'b') s")
+            .where(exp.column("name").like("a%"))
+            .where(exp.column("name").neq(exp.Placeholder(this="prefix")))
+        )
+        return PostgresJsonResponse(query, {"prefix": prefix}, pool=pool)
 
     @app.get("/syntax-error")
     async def syntax_error():
@@ -275,3 +298,18 @@ async def test_t_string_with_query_produces_json(client: httpx.AsyncClient) -> N
 def test_t_string_takes_no_params(pool: AsyncConnectionPool) -> None:
     with pytest.raises(TypeError, match="t-string"):
         PostgresJsonResponse(t"select {1}", {"x": 1}, pool=pool)
+
+
+async def test_literal_percent_in_a_sqlglot_query_with_params(client: httpx.AsyncClient) -> None:
+    response = await client.get("/sqlglot-like", params={"prefix": "ab"})
+    assert response.json() == [{"name": "a%"}]
+
+
+async def test_error_key_can_be_switched_to_detail(client: httpx.AsyncClient) -> None:
+    response = await client.get("/syntax-error-detail")
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Internal Server Error"}
+    response = await client.get("/forbidden-detail")
+    assert response.status_code == 403
+    assert response.json() == {"detail": "no access"}
+    assert response.headers["www-authenticate"] == "Bearer"

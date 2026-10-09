@@ -62,7 +62,8 @@ class PostgresJsonResponse(StreamingResponse):
     autocommit mode.
 
     Errors before the first byte become a JSON ``{"error": ...}`` response (status 500, or the status of a raised
-    ``HTTPException``). After that the status line is gone: the error is logged and re-raised, and the response
+    ``HTTPException``); FastAPI's own handlers use ``{"detail": ...}``, so a subclass can set ``error_key = "detail"``
+    to keep an existing frontend's error handling working. After that the status line is gone: the error is logged and re-raised, and the response
     ends without its closing ``]``, so clients can't mistake it for a complete array. Subclass and set
     ``expose_errors = True`` (e.g. in dev/test) to include ``str(error)`` in the 500 response.
 
@@ -70,6 +71,7 @@ class PostgresJsonResponse(StreamingResponse):
     """
 
     expose_errors: bool = False
+    error_key: str = "error"  # the key of the message in the JSON body of an error response
 
     def __init__(
         self,
@@ -169,7 +171,7 @@ class PostgresJsonResponse(StreamingResponse):
             status, message = err.status_code, err.detail
         else:
             status, message = 500, str(err) if self.expose_errors else "Internal Server Error"
-        body = json.dumps({"error": message}).encode()
+        body = json.dumps({self.error_key: message}).encode()
         headers = [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]
         if isinstance(err, HTTPException) and err.headers:
             headers += [(k.lower().encode(), v.encode()) for k, v in err.headers.items()]
