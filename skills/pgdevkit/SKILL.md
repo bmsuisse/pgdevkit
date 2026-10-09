@@ -4,7 +4,7 @@ plugin: coding
 description: >
   Use pgdevkit for any PostgreSQL work in a Python project: a local
   Docker/Podman test database (`pgdb testdb`), importable ORM-free CRUD and
-  query helpers (`pgdevkit.db`: `pg_*`, `fetch_all`, `PgPool`, `SqlLoader`), streaming a query as JSON from a
+  query helpers (`pgdevkit.db`: `pg_*`, `fetch_all`/`fetch_one`/`fetch_scalar`/`execute`, `readonly_transaction`, `PgPool`, `SqlLoader`), streaming a query as JSON from a
   FastAPI endpoint with query cancellation on client disconnect (`pgdevkit.fastapi.PostgresJsonResponse`: large grid
   endpoints), and the `database/`-folder schema-as-code convention. Supersedes the old postgres-test-setup, postgres-best-practices,
   and database-in-source skills — pgdevkit is a real dependency now, not
@@ -120,8 +120,12 @@ pool = PgPool(env_prefix="APP_POSTGRES_")  # matches ensure_testdb()'s {env_pref
 
 async def startup():
     await pool.open()
-    set_default_pool(pool)  # lets `fetch_all()` borrow from it when no `con=`/`pool=` is given
+    set_default_pool(pool)  # lets `fetch_all()` & co. borrow from it when no `con=`/`pool=` is given
 ```
+
+`set_default_pool()` takes anything with a `.connection()` method (`PgPool`), or a plain callable returning an async
+connection context manager (`set_default_pool(lambda: my_pool.connection())`). `await pool.open()` is idempotent but
+still has to run once at startup; there is no lazy auto-open.
 
 ### Models
 
@@ -164,7 +168,7 @@ from pgdevkit.db import pg_retrieve, pg_insert, pg_upsert, pg_delete
 | Helper | Purpose |
 |--------|---------|
 | `pg_retrieve` | Fetch single row by PK |
-| `pg_retrieve_many` | Fetch rows matching filter dict |
+| `pg_retrieve_many` | Fetch rows matching a filter dict; optional `where=` (t-string / `psycopg.sql` + `params=`), `order_by=`, `limit=` |
 | `pg_insert` | Insert one row, `RETURNING *` |
 | `pg_update` / `pg_update_dict` | Update by PK |
 | `pg_upsert` / `pg_upsert_dict` | `INSERT ... ON CONFLICT ... DO UPDATE` |
@@ -172,7 +176,7 @@ from pgdevkit.db import pg_retrieve, pg_insert, pg_upsert, pg_delete
 | `pg_insert_many` | Batch insert via `executemany` |
 | `pg_delete` / `pg_delete_dict` | Delete by PK, returns deleted row |
 
-Use these for simple CRUD. For custom `WHERE` clauses, joins, aggregations, or ordering, write a dedicated `.sql` file and run it with `fetch_all` (below) in a repository method.
+Use these for simple CRUD. `pg_retrieve_many(con, Model, {"status": "open"}, where=t"price > {minimum}", order_by=[("created", "desc")], limit=50)` covers a bit more than equality; for joins, aggregations or anything bigger write a dedicated `.sql` file and run it with `fetch_all` (below) in a repository method.
 
 ### Loading `.sql` files
 
@@ -206,7 +210,7 @@ class UserRepository:
 
 Named parameters, `%(name)s` style, dict argument — never positional `%s`, never f-strings or `str.format()` for SQL text.
 
-### `fetch_all` — custom queries without cursor boilerplate
+### `fetch_all`, `fetch_one`, `fetch_scalar`, `execute` — custom queries without cursor boilerplate
 
 ```python
 from pgdevkit.db import fetch_all, set_default_pool
@@ -219,11 +223,12 @@ async with pool.connection() as conn:  # inside a transaction you already hold
     users = await fetch_all(query, params, model=UserSummary, con=conn)
 ```
 
+- Siblings with the same keywords (`con=`, `pool=`, `cancel=`, `statement_timeout=`, t-string queries): `fetch_one(...)` returns the first row or `None` (`model=`/`row_mapper=` work as in `fetch_all`; add `LIMIT 1` yourself), `fetch_scalar(...)` the first column of the first row or `None` (e.g. `await fetch_scalar("SELECT count(*) FROM users")`), `execute(...)` the row count of a write without `RETURNING` (`await execute("DELETE FROM sessions WHERE expires < now()")`; on a pooled connection it commits, on your `con=` it does not).
 - `model=` validates each row into a Pydantic model; `row_mapper=` maps each dict row to anything else (exclusive with `model`).
 - Passing `con=` runs on *your* connection: `fetch_all` never commits, closes or releases it. Without it, a connection is borrowed from `pool=` (or the `set_default_pool()` pool) and released afterwards.
-- `statement_timeout=<seconds>` (optional) lets Postgres abort the query after that long, raising `QueryCanceled`; it is applied with `SET LOCAL` semantics for this call only (a borrowed `con` gets its previous value back).
+- `statement_timeout=<seconds>` (optional) lets Postgres abort the query after that long, raising `QueryCanceled`; it is applied with `SET LOCAL` semantics for this call only (a borrowed `con` gets its previous value back). A plain value *replaces* the connection's own setting in both directions, so a per-call 900 s overrides a database-level safety net of 600 s; `statement_timeout=at_most(120)` (`from pgdevkit.db import at_most`) never loosens it: the effective timeout is `min(current, 120)`.
 - `cancel=` takes an `asyncio.Event`: set it (e.g. when the HTTP client disconnects) and the running query is cancelled on the server, raising `psycopg.errors.QueryCanceled`. If the awaiting task is cancelled instead, the server-side query is cancelled too and `CancelledError` propagates as usual (not `QueryCanceled`), so no query keeps running unattended. Don't use `cancel=` on a `con` that concurrent tasks share (it aborts whatever statement is running on it); if the cancel request itself can't be delivered, the connection is closed. After `QueryCanceled` a borrowed `con` is usable again once you `await con.rollback()` (autocommit connections need nothing). To stream a whole result as JSON from FastAPI (it wires the disconnect itself) see `PostgresJsonResponse` below.
-- `query` is typed `SqlQuery`: a literal string (`SqlLoader.load_sql()`), a sqlglot expression, a `psycopg.sql` composable or a t-string. A plain `str` fails type checking on purpose, so don't build SQL with f-strings/concatenation. A sqlglot expression is only as safe as the strings it was built from (its builders parse plain strings as SQL): pass user values as `exp.Placeholder` + `params`, never as literals/raw text, and write a literal `%` as `%%` when you also pass `params`. A t-string carries its own values, so don't also pass `params`.
+- `query` is typed `SqlQuery`: a literal string (`SqlLoader.load_sql()`), a sqlglot expression, a `psycopg.sql` composable or a t-string. A plain `str` fails type checking on purpose, so don't build SQL with f-strings/concatenation. A sqlglot expression is only as safe as the strings it was built from (its builders parse plain strings as SQL): pass user values as `exp.Placeholder` + `params`, never as literals/raw text. A literal `%` in a sqlglot expression (`LIKE 'a%'`, modulo) just works, with or without `params`; in a plain string or `psycopg.sql` composable it is psycopg's rule: write `%%` when you pass `params`. A t-string carries its own values, so don't also pass `params`.
 
 ### Dynamic SQL
 
@@ -257,6 +262,27 @@ test-data seeding and `pgdevkit.db.crud`'s CRUD helpers. Pass a `normalizers`
 dict (keyed by composite type name) if a project needs to reshape a value
 before conversion (e.g. backfilling missing locale keys).
 
+What the helper learns from the catalog (types, column types, adapter registrations) is cached **per connection**, so
+creating a `ComplexHelper(con)` per call (`pg_retrieve(con, M, pks, complex_helper=ComplexHelper(con))`) queries the
+catalog only on that connection's first use, not every time. The cache cannot see later schema changes
+(`CREATE TYPE`, `ALTER TYPE ... ADD VALUE`, new columns): call `helper.clear_cache()` after such DDL, or create the
+helper with `cache=False`.
+
+### Read-only transactions — `readonly_transaction`
+
+To run untrusted (e.g. LLM-written) SQL, let Postgres refuse writes instead of parsing the SQL:
+
+```python
+from pgdevkit.db import fetch_all, readonly_transaction
+
+async with pool.connection() as con, readonly_transaction(con):
+    rows = await fetch_all(generated_sql, con=con)  # a write raises psycopg.errors.ReadOnlySqlTransaction
+```
+
+It sets `read_only` before the transaction (committed on success, rolled back on error) and **always** resets it in a
+`finally`, so a pooled connection is never handed on read-only. `con` must not be inside a transaction already
+(psycopg refuses to change `read_only` then).
+
 ### Streaming JSON from FastAPI — `pgdevkit.fastapi`
 
 For large/grid-style read endpoints, return a `PostgresJsonResponse` instead of `fetch_all()` + a list of
@@ -275,7 +301,9 @@ async def articles(lng: str) -> PostgresJsonResponse:
 - Query: from a `.sql` file via `SqlLoader` like any non-trivial query (or `psycopg.sql`, sqlglot or a t-string for dynamic SQL), values via `params` (`%(name)s`; none with a t-string, it carries its own). That it is a literal is enforced by the type checker only: never build it from user input. Data-modifying CTE or custom JSON: `query_produces_json=True` (one text column per row).
 - `responses={200: {"model": ...}}` keeps the OpenAPI schema typed for the generated frontend client; `response_model` is ignored and rows are **not validated**.
 - Connections as in `fetch_all`: default pool, `pool=`, or `con=`. Prefer the pool: a `con` you opened must outlive the response (`Depends` with `yield`, never `async with ... as conn: return PostgresJsonResponse(q, con=conn)`), and a disconnect aborts its transaction.
-- Errors show as `{"error": "Internal Server Error"}` (500); `expose_errors = IS_DEV` in a subclass shows the text (leaks SQL/values: never in prod). An error after the first byte leaves the array unterminated, so clients fail to parse it.
+- Errors show as `{"error": "Internal Server Error"}` (500), not FastAPI's `{"detail": ...}`: set `error_key = "detail"` in a subclass if the frontend expects that. `expose_errors = IS_DEV` in a subclass shows the text (leaks SQL/values: never in prod). An error after the first byte leaves the array unterminated, so clients fail to parse it.
+- A pooled connection is held until the client has read the whole body, so slow readers (and many parallel streams) can exhaust the pool (`PgPool` defaults to 40): size it for that and enforce a proxy write timeout.
+- `timestamptz` columns come out as `2026-01-01T10:00:00+00:00` (Postgres' `row_to_json`), where FastAPI/Pydantic emit `...Z`: equivalent for any ISO-8601 parser, but a frontend comparing strings sees a difference.
 - `statement_timeout=<seconds>` (optional, as in `fetch_all`): Postgres aborts a slow query; before the first byte the client gets a 504. It does not free a client that stopped reading (use a proxy write timeout), and needs a non-autocommit connection.
 - It does no authorization; scope the query yourself. Full reference: the `pgdevkit.fastapi` section of the README.
 
@@ -354,7 +382,8 @@ Reports drift between the `database/` `.sql` files and the actual schema — tab
 - [ ] Simple CRUD uses `pgdevkit.db`'s `pg_*` helpers; custom queries use `.sql` files loaded via `SqlLoader`
 - [ ] Inline SQL only for trivial queries ≤ 4 lines; anything with JOINs/CTEs/aggregations/subqueries uses a `.sql` file
 - [ ] All parameters use `%(name)s` style with a dict argument
-- [ ] Custom read queries use `fetch_all(...)` (`model=` where the shape is stable; pass `con=` inside a transaction); results mapped to a Pydantic model; table-mapped models extend `PostgresTableModel`
+- [ ] Custom read queries use `fetch_all(...)`/`fetch_one(...)`/`fetch_scalar(...)` and writes without `RETURNING` use `execute(...)` (`model=` where the shape is stable; pass `con=` inside a transaction); results mapped to a Pydantic model; table-mapped models extend `PostgresTableModel`
+- [ ] Untrusted SQL runs inside `readonly_transaction(con)`
 - [ ] Large/grid reads from FastAPI may use `pgdevkit.fastapi.PostgresJsonResponse` (streams, cancels on disconnect, no model validation)
 - [ ] No `LATERAL JOIN` — use a CTE that groups/aggregates first, then joins it
 - [ ] `.<env>.sql` files (e.g. `.prod.sql`) are skipped by `pgdb testdb` unless it's run with a matching `--env`

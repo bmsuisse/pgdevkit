@@ -58,8 +58,9 @@ class PostgresJsonResponse(StreamingResponse):
     ``statement_timeout`` (seconds) lets Postgres abort the query after that long, as in ``fetch_all``: before the
     first byte that is a 504 ``{"error": "Query timed out"}``, later the response is cut short like any other
     error. It limits query execution only: a client that stops reading is *not* freed by it (Postgres defers the
-    cancel while blocked writing), so keep a write timeout in the reverse proxy. Needs a connection that is not in
-    autocommit mode.
+    cancel while blocked writing), so keep a write timeout in the reverse proxy: a pooled connection stays checked
+    out until the client has read the whole body, so slow readers can exhaust the pool. Needs a connection that is not
+    in autocommit mode. ``statement_timeout=at_most(seconds)`` never loosens a timeout the connection already has.
 
     Errors before the first byte become a JSON ``{"error": ...}`` response (status 500, or the status of a raised
     ``HTTPException``); FastAPI's own handlers use ``{"detail": ...}``, so a subclass can set ``error_key = "detail"``
@@ -67,7 +68,8 @@ class PostgresJsonResponse(StreamingResponse):
     ends without its closing ``]``, so clients can't mistake it for a complete array. Subclass and set
     ``expose_errors = True`` (e.g. in dev/test) to include ``str(error)`` in the 500 response.
 
-    Postgres sends rows in 8 kB buffers, so a slow query with small rows delivers its first bytes late.
+    Postgres sends rows in 8 kB buffers, so a slow query with small rows delivers its first bytes late. A
+    ``timestamptz`` is written as ``...+00:00`` (``row_to_json``), where FastAPI/Pydantic emit ``...Z``.
     """
 
     expose_errors: bool = False
