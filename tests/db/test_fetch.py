@@ -120,6 +120,16 @@ async def test_accepts_sqlglot_expression_psycopg_sql_and_t_string(pool: PgPool)
     assert await fetch_all(t"SELECT name FROM widget WHERE id = {widget_id}", pool=pool) == [{"name": "sprocket"}]
 
 
+@requires_podman
+async def test_accepts_exp_query_typed_union_and_subquery(pool: PgPool):
+    union: exp.Query = select("name").from_("widget").where("id = 1").union(select("name").from_("widget").where("id = 2"))
+    assert sorted(r["name"] for r in await fetch_all(union, pool=pool)) == ["cog", "sprocket"]
+    sub: exp.Query = select("name").from_(select("name").from_("widget").subquery("w")).where("name = 'cog'")
+    assert await fetch_all(sub, pool=pool) == [{"name": "cog"}]
+    assert await fetch_one(union, pool=pool) is not None
+    assert await fetch_scalar(select("count(*)").from_(union.subquery("u")), pool=pool) == 2
+
+
 async def test_already_set_cancel_raises_before_touching_a_connection():
     cancel = asyncio.Event()
     cancel.set()
