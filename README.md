@@ -450,6 +450,64 @@ async with pool.connection() as con:
     await pg_upsert(con, Widget(id=1, name="thing"), Widget)
 ```
 
+## `pgdevkit.fastapi` — streaming JSON responses
+
+Requires the `fastapi` extra: `pip install pgdevkit[fastapi]`.
+
+`PostgresJsonResponse` runs a query and streams its rows to the client as a JSON array. Postgres builds the JSON
+(`row_to_json`), so there is no row-by-row Python serialization and no pydantic round trip, and memory use stays flat
+for big results. **If the client goes away, the query is cancelled in Postgres** instead of running to completion.
+
+```python
+from pgdevkit.fastapi import PostgresJsonResponse
+
+@router.get("/articles")
+async def articles(lng: str):
+    return PostgresJsonResponse(
+        get_pg_connection,  # or pool.connection -- see below
+        "select id, name from articles where lng = %(lng)s order by name",
+        parameters={"lng": lng},
+    )
+```
+
+- **Connection source** — a zero-argument callable returning an async context manager of an `AsyncConnection`:
+  `PgPool.connection`, a psycopg pool's `.connection`, or an app's `get_pg_connection`. The connection is acquired
+  when streaming starts and released when it ends. You can also pass an `AsyncConnection` you opened yourself, but it
+  must stay open until the response has been sent (a `Depends` with `yield`);
+  `async with get_pg_connection() as conn: return PostgresJsonResponse(conn, ...)` closes it too early.
+- **Query** — a literal string (so f-strings are rejected by the type checker) or a `psycopg.sql` `SQL`/`Composed`, with
+  values bound through `parameters` (`%(name)s`). It is wrapped as a subquery; for a data-modifying CTE, or custom
+  JSON, pass `query_produces_json=True` and return one *text* column per row.
+- **Options** — `batch_size` (rows per chunk, default 1000), `status_code`, `headers`
+  (e.g. `{"Cache-Control": "max-age=3600"}`).
+
+### Cancellation
+
+The response watches for `http.disconnect` itself (Starlette only does that for ASGI spec < 2.4), also while the
+query is still running and nothing has been sent yet. It then cancels the query with `cancel_safe()`, shielded from
+the cancellation that is tearing the request down, and closes the connection: a pool opens a fresh one instead of
+reusing a connection that was mid-query. Only a query that is still running is cancelled, so a late cancel can never
+hit the next statement on a reused connection. A frontend `AbortController` / closed tab therefore frees the database.
+
+### Errors
+
+An error before the first byte becomes a JSON `{"error": ...}` response (500, or the status of an `HTTPException`
+raised by the connection source); the text is hidden unless you subclass and set `expose_errors = True`:
+
+```python
+class AppJsonResponse(PostgresJsonResponse):
+    expose_errors = IS_DEV
+```
+
+After the first byte the status line is gone: the error is logged and re-raised, and the response ends **without
+the closing `]`**, so clients fail to parse it rather than accepting a silently shortened array.
+
+### When not to use it
+
+It bypasses `response_model` validation, so use it for large or grid-style reads whose SQL already returns the final
+shape, not for endpoints that map rows to models. It does no authorization: scope the query yourself. Postgres sends
+rows in 8 kB buffers, so a slow query with tiny rows delivers its first bytes late.
+
 ## Releasing
 
 Bump `version` in `pyproject.toml` as part of your PR, same as any other

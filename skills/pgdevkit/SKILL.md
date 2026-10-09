@@ -43,7 +43,7 @@ Core rules for every piece of database code in a project using pgdevkit:
 uv add pgdevkit[cli,db]
 ```
 
-`cli` pulls in `typer`/`rich` for the `pgdb` command; `db` pulls in `pydantic`/`psycopg-pool` for the importable CRUD helpers. Skip either extra if the project doesn't need it (e.g. a project using only `pgdb testdb` doesn't need `db`).
+`cli` pulls in `typer`/`rich` for the `pgdb` command; `db` pulls in `pydantic`/`psycopg-pool` for the importable CRUD helpers; `fastapi` adds `pgdevkit.fastapi` (streaming JSON responses). Skip either extra if the project doesn't need it (e.g. a project using only `pgdb testdb` doesn't need `db`).
 
 ---
 
@@ -241,6 +241,26 @@ test-data seeding and `pgdevkit.db.crud`'s CRUD helpers. Pass a `normalizers`
 dict (keyed by composite type name) if a project needs to reshape a value
 before conversion (e.g. backfilling missing locale keys).
 
+### Streaming JSON from FastAPI — `pgdevkit.fastapi`
+
+For large/grid-style read endpoints, return a `PostgresJsonResponse` instead of `fetchall()` + a list of dicts: Postgres
+builds the JSON, rows are streamed, and the query is **cancelled in Postgres when the client disconnects**. Needs
+`uv add pgdevkit[fastapi]`.
+
+```python
+from pgdevkit.fastapi import PostgresJsonResponse
+
+@router.get("/articles")
+async def articles(lng: str):
+    return PostgresJsonResponse(get_pg_connection, "select ... where lng = %(lng)s", parameters={"lng": lng})
+```
+
+- First argument: a callable returning an async context manager of a connection (`get_pg_connection`, `pool.connection`). A connection you opened yourself must outlive the response (`Depends` with `yield`) -- never `async with ... as conn: return PostgresJsonResponse(conn, ...)`.
+- Query: literal string or `psycopg.sql`, values via `parameters` (`%(name)s`), never f-strings. Data-modifying CTE or custom JSON: `query_produces_json=True` (one text column per row).
+- Errors show as `{"error": "Internal Server Error"}` (500); subclass with `expose_errors = IS_DEV` to see the text. An error after the first byte leaves the array unterminated, so clients fail to parse it.
+- It bypasses `response_model` validation and does no authorization; keep model-mapped endpoints on `fetchall()` + Pydantic.
+- Full reference: the `pgdevkit.fastapi` section of the README.
+
 ### SQL formatting
 
 ```bash
@@ -316,7 +336,7 @@ Reports drift between the `database/` `.sql` files and the actual schema — tab
 - [ ] Simple CRUD uses `pgdevkit.db`'s `pg_*` helpers; custom queries use `.sql` files loaded via `SqlLoader`
 - [ ] Inline SQL only for trivial queries ≤ 4 lines; anything with JOINs/CTEs/aggregations/subqueries uses a `.sql` file
 - [ ] All parameters use `%(name)s` style with a dict argument
-- [ ] Results mapped to a Pydantic model; table-mapped models extend `PostgresTableModel`
+- [ ] Results mapped to a Pydantic model; table-mapped models extend `PostgresTableModel` (large/grid reads may use `pgdevkit.fastapi.PostgresJsonResponse` instead)
 - [ ] No `LATERAL JOIN` — use a CTE that groups/aggregates first, then joins it
 - [ ] `.<env>.sql` files (e.g. `.prod.sql`) are skipped by `pgdb testdb` unless it's run with a matching `--env`
 - [ ] Every table (and non-obvious column) has a `COMMENT ON`, placed in the object's own `.sql` file

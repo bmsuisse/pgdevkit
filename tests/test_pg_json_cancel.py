@@ -5,8 +5,10 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 
+import anyio
 import pytest
 from psycopg import AsyncConnection
+from psycopg.pq import TransactionStatus
 from psycopg_pool import AsyncConnectionPool
 from starlette.requests import ClientDisconnect
 
@@ -96,8 +98,8 @@ async def test_send_failing_mid_stream_cancels_the_query(
     assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), timeout=3)
 
 
-async def test_caller_owned_connection_is_cancelled_and_closed(postgres_dsn: str, app_name: str) -> None:
-    """After a cancel the connection still has the cancelled query's results pending: nobody can reuse it."""
+async def test_disconnect_leaves_a_caller_owned_connection_usable_or_closed(postgres_dsn: str, app_name: str) -> None:
+    """Never hand the owner a connection stuck mid-query (ACTIVE): its own cleanup, e.g. commit(), would fail."""
     async with await AsyncConnection.connect(postgres_dsn, application_name=app_name, autocommit=True) as conn:
         client = FakeClient()
         task = asyncio.create_task(client.call(PostgresJsonResponse(conn, SLEEP_30S)))
@@ -106,9 +108,27 @@ async def test_caller_owned_connection_is_cancelled_and_closed(postgres_dsn: str
         client.disconnect.set()
         await asyncio.wait_for(task, timeout=5)
 
-        assert conn.closed
         assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), timeout=3)
-    # leaving the `async with` of an already closed connection must not raise
+        assert conn.closed or conn.info.transaction_status == TransactionStatus.IDLE
+
+
+@pytest.mark.parametrize("source_kind", ["pool", "caller-owned"])
+async def test_scope_cancellation_cancels_the_query_and_closes_the_connection(
+    pool: AsyncConnectionPool, postgres_dsn: str, app_name: str, source_kind: str
+) -> None:
+    """Cancellation by an anyio scope (e.g. a middleware) is re-delivered at every await, which defeats psycopg's
+    own cleanup: the connection stays ACTIVE and Postgres keeps running the query unless we cancel it, shielded."""
+    async with await AsyncConnection.connect(postgres_dsn, application_name=app_name, autocommit=True) as own_conn:
+        source = pool.connection if source_kind == "pool" else own_conn
+        client = FakeClient()
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(client.call, PostgresJsonResponse(source, SLEEP_30S))
+            assert await wait_until(lambda: query_running(postgres_dsn, app_name))
+            tg.cancel_scope.cancel()
+
+        assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), timeout=3)
+        if source_kind == "caller-owned":
+            assert own_conn.closed
 
 
 async def test_a_finished_query_is_left_alone(pool: AsyncConnectionPool) -> None:

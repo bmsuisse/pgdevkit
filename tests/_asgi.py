@@ -34,12 +34,10 @@ async def active_queries(dsn: str, application_name: str) -> int:
     """Number of backends of the given application_name that are executing a query right now."""
     async with await psycopg.AsyncConnection.connect(dsn, autocommit=True) as con:
         cur = await con.execute(
-            "select count(*) from pg_stat_activity where state = 'active' and application_name = %s",
-            (application_name,),
+            "select pid from pg_stat_activity where state = 'active' and application_name = %(app)s",
+            {"app": application_name},
         )
-        row = await cur.fetchone()
-        assert row is not None
-        return row[0]
+        return len(await cur.fetchall())
 
 
 async def wait_until(condition: Callable[[], Awaitable[bool] | bool], *, timeout: float = 5.0) -> bool:

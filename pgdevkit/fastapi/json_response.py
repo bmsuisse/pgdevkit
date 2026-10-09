@@ -3,17 +3,18 @@
 Requires the ``fastapi`` extra: ``pip install pgdevkit[fastapi]``.
 """
 
+import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
-from typing import Any, LiteralString, cast
+from typing import Any, LiteralString
 
 import anyio
 from fastapi.responses import StreamingResponse
 from psycopg import AsyncConnection, pq
 from psycopg.pq import TransactionStatus
-from psycopg.sql import SQL, Composable
+from psycopg.sql import SQL, Composed
 from starlette.exceptions import HTTPException
 from starlette.requests import ClientDisconnect
 from starlette.types import Message, Receive, Scope, Send
@@ -38,7 +39,7 @@ class PostgresJsonResponse(StreamingResponse):
     receives data. If the client disconnects (or the request is cancelled) while the query is still running, the
     query is cancelled in Postgres and a connection we acquired is closed instead of being returned to the pool.
 
-    ``query`` must be a literal or a ``psycopg.sql`` composable with values passed via ``parameters`` (``%(name)s``).
+    ``query`` must be a literal or a ``psycopg.sql`` ``SQL``/``Composed`` with values passed via ``parameters`` (``%(name)s``).
     It is wrapped as a subquery, so it cannot be a data-modifying CTE; for that (or for custom JSON) pass
     ``query_produces_json=True`` and make the query return one *text* column holding the JSON of each row.
 
@@ -55,7 +56,7 @@ class PostgresJsonResponse(StreamingResponse):
     def __init__(
         self,
         source: ConnectionSource,
-        query: LiteralString | Composable,
+        query: LiteralString | SQL | Composed,
         *,
         parameters: Mapping[str, Any] | None = None,
         query_produces_json: bool = False,
@@ -71,26 +72,28 @@ class PostgresJsonResponse(StreamingResponse):
         super().__init__((), status_code=status_code, headers=headers, media_type="application/json")
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        # Starlette only watches for http.disconnect on ASGI spec < 2.4, so do it ourselves.
+        # Starlette only watches for http.disconnect on ASGI spec < 2.4, so do it ourselves. An asyncio timeout is
+        # the cancel scope: unlike an anyio task group, it doesn't leave Granian hanging when the body fails.
+        loop = asyncio.get_running_loop()
+
+        async def watch_for_disconnect(cancel_scope: asyncio.Timeout) -> None:
+            while (await receive())["type"] != "http.disconnect":
+                pass
+            cancel_scope.reschedule(loop.time())  # i.e. cancel the stream now
+
         try:
-            async with anyio.create_task_group() as tg:
-
-                async def watch_for_disconnect() -> None:
-                    while (await receive())["type"] != "http.disconnect":
-                        pass
-                    tg.cancel_scope.cancel()
-
-                tg.start_soon(watch_for_disconnect)
-                await self.stream_response(send)
-                tg.cancel_scope.cancel()
-        except BaseExceptionGroup as group:
-            # anyio always wraps; unwrap so callers see the original error
-            if len(group.exceptions) != 1:
+            async with asyncio.timeout(None) as cancel_scope:
+                watcher = asyncio.create_task(watch_for_disconnect(cancel_scope))
+                try:
+                    await self.stream_response(send)
+                finally:
+                    watcher.cancel()
+        except TimeoutError:
+            if not cancel_scope.expired():
                 raise
-            error = group.exceptions[0]
-            if isinstance(error, OSError):  # send() failing means the client is gone
-                raise ClientDisconnect from None
-            raise error from None
+            # the client is gone and the query has been cancelled: nobody is left to answer
+        except OSError:  # send() failing means the client is gone
+            raise ClientDisconnect from None
         if self.background is not None:
             await self.background()
 
@@ -155,12 +158,12 @@ class PostgresJsonResponse(StreamingResponse):
             yield b"]"
 
 
-def _as_json_rows(query: LiteralString | Composable) -> Composable:
-    if isinstance(query, Composable):
+def _as_json_rows(query: LiteralString | SQL | Composed) -> Composed:
+    if isinstance(query, (SQL, Composed)):
         inner = query
     else:
         # bdt-lint: ignore sql-unverified-call -- LiteralString by signature; wrapped, values stay bound
-        inner = SQL(cast(LiteralString, query.strip().rstrip(";")))
+        inner = SQL(query.strip().rstrip(";"))
     # newline before the closing paren: the query may end in a line comment
     return SQL("select row_to_json(s)::text from (\n{}\n) s").format(inner)
 
