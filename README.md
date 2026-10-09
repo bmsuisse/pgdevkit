@@ -514,8 +514,8 @@ class AppJsonResponse(PostgresJsonResponse):
 ```
 
 After the first byte the status line is gone: the error is logged and re-raised, and the response ends **without
-the closing `]`**, so clients fail to parse it rather than accepting a silently shortened array. (Granian ends such a
-response cleanly; uvicorn aborts the connection. Either way the body is not valid JSON.)
+the closing `]`**, so clients fail to parse it rather than accepting a silently shortened array. (Granian, which our apps run on,
+ends such a response cleanly with the truncated body.)
 
 ### When not to use it
 
