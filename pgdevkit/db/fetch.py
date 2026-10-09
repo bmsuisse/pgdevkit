@@ -372,7 +372,8 @@ async def fetch_all(
     cancel: asyncio.Event | None = None,
     statement_timeout: float | None = None,
 ) -> list[Any]:
-    """Run one query and return every row.
+    """Run one query and return every row. (`fetch_one`, `fetch_scalar` and `execute` are the siblings for one row,
+    one value, and a write whose result you don't read; they take the same connection/cancel/timeout keywords.)
 
     Rows come back as plain dicts, or, with `model=` (a Pydantic model class), validated into
     that model; `row_mapper=` converts each dict row into any other shape. The two are exclusive.
@@ -381,7 +382,8 @@ async def fetch_all(
     raises `psycopg.errors.QueryCanceled` ("canceling statement due to statement timeout"). It is applied
     with `SET LOCAL` semantics, i.e. for this query's transaction only; a borrowed `con` in autocommit mode
     gets a short transaction around the query, and any other borrowed `con` gets its previous setting back.
-    Without it, the connection's own `statement_timeout` (default: none) applies.
+    Without it, the connection's own `statement_timeout` (default: none) applies. A plain value replaces that
+    setting in both directions; `statement_timeout=at_most(seconds)` never loosens it.
 
     Pass `con` to run on a connection you already hold (e.g. inside a transaction): it is
     borrowed, never committed, closed or returned to a pool. Without it, a connection is taken
