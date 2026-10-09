@@ -28,7 +28,7 @@ QueryParams = Mapping[str, Any] | Sequence[Any] | None
 # The only things a query may be: a literal string (e.g. from `SqlLoader.load_sql()`), a sqlglot
 # expression, or psycopg's own safe-composition types (`psycopg.sql` / a t-string). A plain `str`
 # is rejected by the type checker on purpose, so user-controlled text can't be concatenated in.
-type SqlQueryNoTemplate = LiteralString | exp.Expression | Composable
+type SqlQueryNoTemplate = LiteralString | exp.Expr | Composable
 type SqlQuery = SqlQueryNoTemplate | Template
 
 
