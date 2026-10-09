@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import time
 
 import psycopg
@@ -68,7 +69,7 @@ async def test_without_any_connection_source_raises():
 async def test_t_string_rejects_params():
     value = 1
     with pytest.raises(TypeError, match="t-string"):
-        await fetch_all(t"SELECT {value}", {"x": 1})
+        await fetch_all(t"SELECT {value}", {"x": 1})  # type: ignore[call-overload]
 
 
 @requires_podman
@@ -168,3 +169,85 @@ async def test_cancelling_the_task_cancels_the_query_on_the_server(pool: PgPool)
         await task
     await _wait_for_active_sleeps(pool, 0)
     assert await fetch_all("SELECT 1 AS one", pool=pool) == [{"one": 1}]
+
+
+async def test_unsupported_query_type_and_unsafe_sqlglot_nodes_are_rejected():
+    set_default_pool(None)
+    with pytest.raises(TypeError, match="unsupported query type"):
+        await fetch_all(123)  # type: ignore[call-overload]
+    with pytest.raises(ValueError, match="Command"):
+        await fetch_all(exp.Command(this="SELECT", expression=" version()"), pool=_NoPool())  # type: ignore[call-overload]
+    with pytest.raises(ValueError, match="placeholder name"):
+        await fetch_all(select("a").where(exp.Placeholder(this="x); DROP TABLE t;--")), {"x": 1}, pool=_NoPool())
+
+
+class _NoPool:
+    def connection(self):
+        raise AssertionError("must be rejected before a connection is needed")
+
+
+@requires_podman
+async def test_second_cancel_during_drain_still_cleans_up(pool: PgPool):
+    loop = asyncio.get_running_loop()
+    problems: list[dict] = []
+    loop.set_exception_handler(lambda _loop, ctx: problems.append(ctx))
+    async with pool.connection() as con:
+        task = asyncio.ensure_future(fetch_all("SELECT pg_sleep(30)", con=con))
+        await _wait_for_active_sleeps(pool, 1)
+        task.cancel()
+        await asyncio.sleep(0.002)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await con.rollback()
+        assert await fetch_all("SELECT 1 AS one", con=con) == [{"one": 1}]
+    await _wait_for_active_sleeps(pool, 0)
+    await asyncio.sleep(0.05)
+    gc.collect()
+    assert problems == []  # no "Task exception was never retrieved"
+
+
+@requires_podman
+async def test_failing_cancel_request_closes_the_connection_and_returns_promptly(
+    pool: PgPool, monkeypatch: pytest.MonkeyPatch
+):
+    # Own connections (not the pool's): the patch below must only affect the one under test.
+    dsn = constants.conninfo(TEST_DB)
+    observer = await psycopg.AsyncConnection.connect(dsn, autocommit=True)
+    con = await psycopg.AsyncConnection.connect(dsn)
+
+    async def sleeping() -> int:
+        cur = await observer.execute(
+            "SELECT count(*) FROM pg_stat_activity WHERE query LIKE '%pg_sleep(30)%' AND state = 'active' AND pid <> pg_backend_pid()"
+        )
+        row = await cur.fetchone()
+        assert row is not None
+        return row[0]
+
+    async def broken_cancel(self, **_kwargs) -> None:
+        raise psycopg.OperationalError("cancel connection refused")
+
+    monkeypatch.setattr(psycopg.AsyncConnection, "cancel_safe", broken_cancel)
+    try:
+        cancel = asyncio.Event()
+        task = asyncio.ensure_future(fetch_all("SELECT pg_sleep(30)", con=con, cancel=cancel))
+        deadline = time.monotonic() + 10
+        while await sleeping() != 1:
+            assert time.monotonic() < deadline, "query never became active"
+            await asyncio.sleep(0.05)
+        started = time.monotonic()
+        cancel.set()
+        with pytest.raises(QueryCanceled):
+            await task
+        assert time.monotonic() - started < 5  # not blocked until the 30 s query finishes
+        assert con.closed
+    finally:
+        monkeypatch.undo()
+        # Postgres only notices the closed client when it next talks to it, so end the sleeper
+        # explicitly -- it would otherwise block dropping the test database.
+        await observer.execute(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+            "WHERE query LIKE '%pg_sleep(30)%' AND pid <> pg_backend_pid()"
+        )
+        await observer.close()
+        await con.close()

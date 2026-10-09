@@ -414,7 +414,9 @@ Install with the `db` extra: `pip install pgdevkit[db]`.
   with `set_default_pool()`. Set the `cancel` `asyncio.Event` to abort the query on the server
   (`QueryCanceled`); cancelling the awaiting task cancels it there too, and
   `CancelledError` propagates as usual. `query` must be a literal string, a sqlglot
-  expression, a `psycopg.sql` composable or a t-string — never an f-string.
+  expression, a `psycopg.sql` composable or a t-string — never an f-string (a sqlglot
+  expression is only as safe as the strings it was built from: pass user values as
+  `exp.Placeholder` + `params`).
 - **CRUD functions** — `pg_retrieve`, `pg_retrieve_many`, `pg_insert`,
   `pg_insert_many`, `pg_update`, `pg_update_dict`, `pg_upsert`,
   `pg_upsert_dict`, `pg_upsert_many`, `pg_upsert_many_dict`, `pg_delete`,
