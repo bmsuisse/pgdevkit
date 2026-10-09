@@ -124,6 +124,14 @@ async def test_jsonb_array_column_wraps_each_element_not_the_whole_list(complex_
     assert metadata == metadata_value
 
 
+def test_helper_attributes_stay_assignable():
+    helper = ComplexHelper(con=None)  # type: ignore[arg-type]
+    helper.complex_types = {}
+    helper.registered = set()
+    helper.system_complex_type_dict = {}
+    assert helper.system_complex_type_dict == {}
+
+
 def test_complex_types_cache_is_per_instance_not_shared():
     # Regression: complex_types used to be a mutable class attribute, so a
     # CompositeInfo/EnumInfo (which carries OIDs from one specific
@@ -142,8 +150,6 @@ def test_complex_types_cache_is_per_instance_not_shared():
 
 
 class _CountingCursor(psycopg.AsyncCursor):
-    queries = 0  # per connection class, see _connect()
-
     async def execute(self, *args, **kwargs):
         type(self.connection).queries += 1
         return await super().execute(*args, **kwargs)
@@ -237,11 +243,16 @@ async def test_cache_can_be_disabled_or_cleared(complex_types_test_db):
         assert cleared_count == first_count
         # ... which is how a schema change gets picked up
         await con.execute("ALTER TABLE gadget ADD COLUMN extra mood")
-        stale = await pg_retrieve(con, Gadget, {"id": 1}, complex_helper=ComplexHelper(con))
-        assert stale is not None
+        stale = await ComplexHelper(con).load_all_complex_types(("public", "gadget"), include_generated=True)
+        assert "extra" not in stale
         helper.clear_cache()
-        cols = await helper.load_all_complex_types(("public", "gadget"), include_generated=True)
-        assert "extra" in cols
+        fresh = await ComplexHelper(con).load_all_complex_types(("public", "gadget"), include_generated=True)
+        assert "extra" in fresh
+        # cache=False never caches column lookups, not even within one helper
+        private = ComplexHelper(con, cache=False)
+        assert "extra" in await private.load_all_complex_types(("public", "gadget"), include_generated=True)
+        await con.execute("ALTER TABLE gadget ADD COLUMN extra2 mood")
+        assert "extra2" in await private.load_all_complex_types(("public", "gadget"), include_generated=True)
 
 
 @requires_podman

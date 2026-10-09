@@ -276,7 +276,9 @@ async def test_update_dict_composite_column_requires_complex_helper(pool: PgPool
 async def test_pg_retrieve_many_where_order_by_and_limit(pool: PgPool):
     async with pool.connection() as con:
         await pg_insert_many(con, ("public", "widget"), [{"name": n} for n in ("cog", "sprocket", "spring", "50% off", "gear")])
-        names = lambda rows: [r.name for r in rows]  # noqa: E731
+
+        def names(rows) -> list[str]:
+            return [r.name for r in rows]
 
         # unchanged: equality filters only
         assert names(await pg_retrieve_many(con, Widget, {"name": "cog"})) == ["cog"]
@@ -308,6 +310,11 @@ async def test_pg_retrieve_many_where_order_by_and_limit(pool: PgPool):
             await pg_retrieve_many(con, Widget, {"name": "cog"}, where=like, params={"name": "x", "pattern": "x"})
         with pytest.raises(TypeError, match="t-string"):
             await pg_retrieve_many(con, Widget, {}, where=t"true", params={"x": 1})
+        with pytest.raises(ValueError, match="use a list"):
+            await pg_retrieve_many(con, Widget, {}, order_by=("name", "desc"))  # type: ignore[arg-type]
+        assert names(await pg_retrieve_many(con, Widget, {}, order_by=[("name", "DESC")], limit=1)) == ["sprocket"]
+        # `params` without `where` is simply unused; a missing `where` placeholder is psycopg's error
+        assert names(await pg_retrieve_many(con, Widget, {"name": "cog"}, params={"unused": 1})) == ["cog"]
         with pytest.raises(ValueError, match="direction"):
             await pg_retrieve_many(con, Widget, {}, order_by=[("name", "sideways")])  # type: ignore[list-item]
         for bad in (-1, True, "3", 1.5):

@@ -108,18 +108,22 @@ async def pg_retrieve(
 type OrderBy = str | Sequence[str | tuple[str, Literal["asc", "desc"]]] | Composable
 
 
-def _order_by_sql(order_by: OrderBy) -> Composable | None:
+def _order_by_sql(order_by: OrderBy | None) -> Composable | None:
     """` ORDER BY ...` for `pg_retrieve_many(order_by=...)`: column names (quoted as identifiers, optionally
     as `(name, "desc")`), or a `psycopg.sql` composable for anything else (an expression, `NULLS LAST`, ...)."""
+    if order_by is None:
+        return None
     if isinstance(order_by, Composable):
         return SQL(" ORDER BY {}").format(order_by)
+    if isinstance(order_by, tuple) and len(order_by) == 2 and str(order_by[1]).lower() in ("asc", "desc"):
+        raise ValueError(f"order_by={order_by!r} would order by two columns; use a list: [{order_by!r}]")
     items = [order_by] if isinstance(order_by, str) else list(order_by)
     parts: list[Composable] = []
     for item in items:
         column, direction = (item, "asc") if isinstance(item, str) else item
-        if direction not in ("asc", "desc"):
+        if direction.lower() not in ("asc", "desc"):
             raise ValueError(f"order_by direction must be 'asc' or 'desc', got {direction!r}")
-        parts.append(SQL("{} DESC" if direction == "desc" else "{} ASC").format(Identifier(column)))
+        parts.append(SQL("{} DESC" if direction.lower() == "desc" else "{} ASC").format(Identifier(column)))
     return SQL(" ORDER BY {}").format(SQL(", ").join(parts)) if parts else None
 
 
@@ -140,27 +144,29 @@ async def pg_retrieve_many(
     Beyond those equality `filters` (`{}` for none), the query can be narrowed and shaped with:
 
     - `where=`: more conditions, ANDed with the filters -- a t-string (`t"price > {minimum} AND name LIKE {pattern}"`,
-      values are bound for you), or a `psycopg.sql` composable, whose own `sql.Placeholder("name")`s are bound from
-      `params=` (as with psycopg, write a literal `%` as `%%` there when there are params or filters).
-    - `order_by=`: a column name, a list of them (each a name or `(name, "asc" | "desc")`, quoted as
-      identifiers), or a composable for anything fancier.
+      values are bound for you; prefer it), or a `psycopg.sql` composable, whose own `sql.Placeholder("name")`s are
+      bound from `params=`. In a composable a literal `%` must be written `%%` whenever `filters` or `params` are
+      non-empty (psycopg's rule); bind patterns as values instead (`name LIKE {pattern}`).
+    - `order_by=`: a column name, a *list* of them (each a name or `(name, "asc" | "desc")`, quoted as
+      identifiers; a bare `("name", "desc")` is rejected as ambiguous), or a composable for anything fancier.
     - `limit=`: at most that many rows.
 
     Without those it behaves exactly as before. For joins or other shapes use `fetch_all` instead."""
-    table_name = data_type.get_table_name()
-    select_cols = await _select_list(con, table_name, complex_helper)
+    # validate before the select list may cost a catalog round trip
     tail: list[Composable] = []
-    if order_by is not None and (order := _order_by_sql(order_by)) is not None:
+    if (order := _order_by_sql(order_by)) is not None:
         tail.append(order)
     if limit is not None:
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
             raise ValueError(f"limit must be a non-negative integer, got {limit!r}")
         tail.append(SQL(" LIMIT {}").format(SqlLiteral(limit)))
+    if isinstance(where, Template) and params:
+        raise TypeError("A t-string `where` carries its own values; don't pass `params` with it.")
+    table_name = data_type.get_table_name()
+    select_cols = await _select_list(con, table_name, complex_helper)
     query: Template | Composed
     query_params: Mapping[str, Any] | None
     if isinstance(where, Template):
-        if params:
-            raise TypeError("A t-string `where` carries its own values; don't pass `params` with it.")
         parts: list[str | Interpolation] = [
             "SELECT ",
             Interpolation(select_cols, "cols", None, "q"),

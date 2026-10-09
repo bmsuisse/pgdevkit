@@ -49,10 +49,17 @@ def set_default_pool(pool: PoolLike | None) -> None:
     """Register where the `fetch_*()`/`execute()` helpers get their connection when called without `con`/`pool`
     (typically the app's `PgPool`, once at startup). Pass `None` to clear it. Besides a `ConnectionSource` (anything
     with a `.connection()` method), a plain callable returning an async connection context manager is accepted, for
-    a pool that doesn't have that shape: `set_default_pool(lambda: my_pool.acquire_cm())`. This is process-wide
+    a pool that is resolved lazily or has another method name: `set_default_pool(lambda: get_pool().acquire())`
+    (only here: the `pool=` keyword of the helpers takes a `ConnectionSource`). This is process-wide
     state meant for single-database apps: with several databases/tenants pass `pool=` explicitly."""
     global _default_source
     _default_source = pool
+
+
+def _connection_cm(source: PoolLike) -> AbstractAsyncContextManager[AsyncConnection]:
+    if hasattr(source, "connection"):
+        return cast(ConnectionSource, source).connection()
+    return cast("Callable[[], AbstractAsyncContextManager[AsyncConnection]]", source)()
 
 
 @asynccontextmanager
@@ -67,11 +74,7 @@ async def _acquire(con: AsyncConnection | None, pool: ConnectionSource | None) -
     source: PoolLike | None = pool if pool is not None else _default_source
     if source is None:
         raise RuntimeError("No connection: pass `con=`/`pool=`, or register a pool with `set_default_pool()`.")
-    if hasattr(source, "connection"):
-        cm = cast(ConnectionSource, source).connection()
-    else:
-        cm = cast("Callable[[], AbstractAsyncContextManager[AsyncConnection]]", source)()
-    async with cm as borrowed:
+    async with _connection_cm(source) as borrowed:
         yield borrowed
 
 
@@ -99,25 +102,25 @@ def _render(query: SqlQuery, params: QueryParams = None, *, caller: str = "fetch
             raise ValueError(f"{caller}: invalid placeholder name {node.name!r}")
     if params is None:  # psycopg doesn't look at `%` without params
         return query.sql(dialect="postgres")
-    # Render the placeholders as unique tokens, double every `%`, then put the placeholders back: telling
-    # `%(id)s` apart from a literal `'%(id)s'` in the rendered text would be guesswork.
+    return _escape_percent(query, exp)
+
+
+def _escape_percent(query: Any, exp: Any) -> str:
+    """Render a sqlglot expression with every literal `%` doubled, but not the `%(name)s` placeholders. The
+    placeholders are rendered as unique tokens first and put back afterwards: telling `%(id)s` apart from a
+    literal `'%(id)s'` in the rendered text would be guesswork."""
     nonce = uuid.uuid4().hex
-    placeholders: dict[str, str] = {}
-    root = query.copy()
-    for node in list(root.find_all(exp.Placeholder)):
-        if node.args.get("jdbc"):  # renders as `?`
-            continue
-        token = f"pgdevkit_ph_{nonce}_{len(placeholders)}"
-        placeholders[token] = node.sql(dialect="postgres")
-        replacement = exp.Var(this=token)
-        if node is root:
-            root = replacement
-        else:
-            node.replace(replacement)
-    rendered: str = root.sql(dialect="postgres").replace("%", "%%")
-    for token, placeholder in placeholders.items():
-        rendered = rendered.replace(token, placeholder)
-    return rendered
+    placeholders: list[str] = []
+
+    def to_token(node: Any) -> Any:
+        if not isinstance(node, exp.Placeholder):
+            return node
+        placeholders.append(node.sql(dialect="postgres"))
+        return exp.Var(this=f"pgdevkit_ph_{nonce}_{len(placeholders) - 1}_")  # (a transform works on a copy)
+
+    rendered: str = query.transform(to_token).sql(dialect="postgres").replace("%", "%%")
+    # one pass, with a closing delimiter on the token: `_1_` must not match the start of `_10_`
+    return re.sub(rf"pgdevkit_ph_{nonce}_(\d+)_", lambda m: placeholders[int(m.group(1))], rendered)
 
 
 def _check_statement_timeout(statement_timeout: float | None) -> None:

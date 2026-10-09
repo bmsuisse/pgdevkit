@@ -36,6 +36,7 @@ class _TypeCache:
     registered: set[CompositeInfo | EnumInfo] = field(default_factory=set)
     columns: dict[tuple[tuple[str, str], bool], dict[str, ComplexTypeInfo]] = field(default_factory=dict)
     column: dict[tuple[tuple[str, str], str], ComplexTypeInfo] = field(default_factory=dict)
+    shared: bool = False  # whether other helpers on the same connection use it too (then column lookups are cached)
 
 
 # One cache per live connection, so helpers created per call (`pg_retrieve(..., complex_helper=ComplexHelper(con))`)
@@ -46,7 +47,7 @@ _caches: weakref.WeakKeyDictionary[AsyncConnection, _TypeCache] = weakref.WeakKe
 
 def _cache_for(con: AsyncConnection) -> _TypeCache:
     try:
-        return _caches.setdefault(con, _TypeCache())
+        return _caches.setdefault(con, _TypeCache(shared=True))
     except TypeError:  # not something a weak reference can point to (e.g. a stand-in for a connection): no sharing
         return _TypeCache()
 
@@ -67,8 +68,10 @@ class ComplexHelper:
     What it learns from the catalog (the types, the columns' types, which ones are registered on the connection) is
     cached per connection, for as long as that connection lives: a helper created for every call, on a connection
     that is reused (e.g. from a pool), only queries the catalog the first time. The cache can't see schema changes
-    made afterwards (`CREATE TYPE`, `ALTER TYPE ... ADD VALUE`, altered columns): call `clear_cache()` after them, or
-    pass `cache=False` to always ask the database (the behaviour before the cache existed).
+    made afterwards (`CREATE TYPE`, `ALTER TYPE ... ADD VALUE`, altered columns), nor DDL that was rolled back after
+    it had been cached (a type's OID is then gone): call `clear_cache()` after such changes. `cache=False` gives the
+    helper a private cache instead, which behaves as before the shared cache existed (types are remembered per helper
+    instance, column lookups always ask the database).
     """
 
     def __init__(
@@ -97,9 +100,17 @@ class ComplexHelper:
     def complex_types(self) -> dict[tuple[str, str], CompositeInfo | EnumInfo]:
         return self._cache.complex_types
 
+    @complex_types.setter
+    def complex_types(self, value: dict[tuple[str, str], CompositeInfo | EnumInfo]) -> None:
+        self._cache.complex_types = value
+
     @property
     def registered(self) -> set[CompositeInfo | EnumInfo]:
         return self._cache.registered
+
+    @registered.setter
+    def registered(self, value: set[CompositeInfo | EnumInfo]) -> None:
+        self._cache.registered = value
 
     def clear_cache(self) -> None:
         """Forget what was learned about this connection's database (see the class docstring)."""
@@ -151,7 +162,7 @@ class ComplexHelper:
         self, table_name: tuple[str, str], include_generated: bool = False
     ) -> dict[str, ComplexTypeInfo]:
         cache_key = (table_name, include_generated)
-        if cache_key in self._cache.columns:
+        if self._cache.shared and cache_key in self._cache.columns:
             return dict(self._cache.columns[cache_key])
         if self.system_complex_type_dict is None:
             await self.load_complex_type_dict()
@@ -180,13 +191,13 @@ class ComplexHelper:
             )
             res = await cur.fetchall()
             types = {r["column_name"]: await self._load_complex_type_from_colinfos(r) for r in res}
-        if types:  # an empty result may just be a table that doesn't exist (yet)
+        if types and self._cache.shared:  # (an empty result may just be a table that doesn't exist yet)
             self._cache.columns[cache_key] = types
         return dict(types)
 
     async def load_complex_type(self, table_name: tuple[str, str], col_name: str) -> ComplexTypeInfo:
         cache_key = (table_name, col_name)
-        if cache_key in self._cache.column:
+        if self._cache.shared and cache_key in self._cache.column:
             return self._cache.column[cache_key]
         if self.system_complex_type_dict is None:
             await self.load_complex_type_dict()
@@ -212,7 +223,7 @@ class ComplexHelper:
             )
             res = await cur.fetchone()
         info = await self._load_complex_type_from_colinfos(res)
-        if res:  # a missing column may just not exist (yet)
+        if res and self._cache.shared:  # (a missing column may just not exist yet)
             self._cache.column[cache_key] = info
         return info
 

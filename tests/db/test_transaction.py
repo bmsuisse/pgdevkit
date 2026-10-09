@@ -3,7 +3,7 @@
 from collections.abc import AsyncIterator
 
 import pytest
-from psycopg import AsyncConnection
+from psycopg import AsyncConnection, ProgrammingError
 from psycopg.errors import ReadOnlySqlTransaction
 from psycopg.pq import TransactionStatus
 from psycopg_pool import AsyncConnectionPool
@@ -67,6 +67,25 @@ async def test_read_only_is_reset_after_a_refused_write(pool: AsyncConnectionPoo
         assert con.info.transaction_status == TransactionStatus.IDLE
         await con.execute(WRITE)  # allowed again, same connection
         await con.execute(CLEANUP)
+
+
+async def test_previous_read_only_setting_is_restored(pool: AsyncConnectionPool) -> None:
+    async with pool.connection() as con:
+        await con.set_read_only(True)  # e.g. a connection to a replica
+        async with readonly_transaction(con):
+            await con.execute("SELECT 1")
+        assert con.read_only is True
+        await con.set_read_only(None)
+
+
+async def test_refuses_a_connection_that_is_in_a_transaction(pool: AsyncConnectionPool) -> None:
+    async with pool.connection() as con:
+        await con.execute("SELECT 1")  # starts a transaction (no autocommit)
+        with pytest.raises(ProgrammingError, match="read_only"):
+            async with readonly_transaction(con):
+                pass
+        assert con.read_only is None
+        await con.rollback()
 
 
 async def test_works_on_an_autocommit_connection(postgres_dsn: str) -> None:

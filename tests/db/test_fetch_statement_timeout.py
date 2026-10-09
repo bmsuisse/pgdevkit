@@ -65,7 +65,7 @@ async def _effective(pool: AsyncConnectionPool, timeout: float, current: str) ->
     """The timeout (ms) in force inside a call with `statement_timeout=timeout`, given a connection whose own
     setting is `current`."""
     async with pool.connection() as con:
-        await con.execute("SELECT set_config('statement_timeout', %s, false)", [current])
+        await con.execute("SELECT set_config('statement_timeout', %(current)s, false)", {"current": current})
         await con.commit()
         try:
             return await fetch_scalar(

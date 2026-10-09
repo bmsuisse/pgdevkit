@@ -16,7 +16,17 @@ from .crud import (
     pg_upsert_many,
     pg_upsert_many_dict,
 )
-from .fetch import ConnectionSource, PoolLike, SqlQuery, at_most, execute, fetch_all, fetch_one, fetch_scalar, set_default_pool
+from .fetch import (
+    ConnectionSource,
+    PoolLike,
+    SqlQuery,
+    at_most,
+    execute,
+    fetch_all,
+    fetch_one,
+    fetch_scalar,
+    set_default_pool,
+)
 from .loader import SqlLoader
 from .model import PostgresTableModel, TableModel
 from .transaction import readonly_transaction

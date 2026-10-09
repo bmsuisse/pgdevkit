@@ -11,8 +11,8 @@ from psycopg.errors import QueryCanceled
 from pydantic import BaseModel
 from sqlglot import exp, select
 
-from pgdevkit.db.fetch import _render
 from pgdevkit.db import PgPool, execute, fetch_all, fetch_one, fetch_scalar, set_default_pool
+from pgdevkit.db.fetch import _render
 from pgdevkit.testdb import constants
 from pgdevkit.testdb.container import ensure_container
 from tests.testdb.conftest import RUN_SUFFIX, requires_podman
@@ -370,6 +370,13 @@ def test_render_doubles_literal_percent_but_not_placeholders_when_params_are_giv
     # the query object itself is left untouched
     assert "pgdevkit_ph_" not in query.sql(dialect="postgres")
     assert query.sql(dialect="postgres").count("%(id)s") == 2  # the placeholder and the literal
+
+
+def test_render_keeps_ten_or_more_placeholders_apart():
+    # (placeholder token _1 must not be mistaken for the start of _10)
+    names = [f"p{i}" for i in range(25)]
+    query = select(*[exp.Placeholder(this=n) for n in names]).where(exp.column("a").like("x%"))
+    assert _render(query, {}) == "SELECT " + ", ".join(f"%({n})s" for n in names) + " WHERE a LIKE 'x%%'"
 
 
 def test_render_percent_escaping_leaves_other_query_types_alone():
