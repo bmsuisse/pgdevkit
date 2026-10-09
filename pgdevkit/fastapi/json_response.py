@@ -24,7 +24,7 @@ from starlette.types import Message, Receive, Scope, Send
 from ..db.fetch import (
     ConnectionSource,
     QueryParams,
-    SqlQueryNoTemplate,
+    SqlQuery,
     _acquire,
     _check_statement_timeout,
     _render,
@@ -45,7 +45,8 @@ class PostgresJsonResponse(StreamingResponse):
     response has been sent, e.g. a ``Depends`` with ``yield``), or ``pool`` (anything with ``.connection()``), or
     register the app's pool once with ``set_default_pool()``. A pooled connection is acquired when streaming starts
     and released when it ends. ``query`` and ``params`` are those of ``fetch_all`` too (a literal string, a
-    ``psycopg.sql`` composable or a sqlglot expression; never a t-string) with values bound via ``params``.
+    ``psycopg.sql`` composable, a sqlglot expression or a t-string) with values bound via ``params``; a t-string carries
+    its own values and takes no ``params``.
 
     The query is wrapped as a subquery, so it cannot be a data-modifying CTE; for that (or for custom JSON) pass
     ``query_produces_json=True`` and make it return one *text* column holding the JSON of each row.
@@ -71,7 +72,7 @@ class PostgresJsonResponse(StreamingResponse):
 
     def __init__(
         self,
-        query: SqlQueryNoTemplate,
+        query: SqlQuery,
         params: QueryParams = None,
         *,
         con: AsyncConnection | None = None,
@@ -87,8 +88,8 @@ class PostgresJsonResponse(StreamingResponse):
         if batch_size < 1:
             raise ValueError(f"batch_size must be >= 1, got {batch_size}")
         _check_statement_timeout(statement_timeout)
-        if isinstance(query, Template):
-            raise TypeError("t-strings can't be wrapped in a subquery: use a literal string or psycopg.sql with params")
+        if isinstance(query, Template) and params is not None:
+            raise TypeError("A t-string query carries its own values; don't pass `params` with it.")
         rendered = _render(query)
         self.query = rendered if query_produces_json else _as_json_rows(rendered)
         self.params = params
@@ -195,7 +196,10 @@ class PostgresJsonResponse(StreamingResponse):
             yield b"]"
 
 
-def _as_json_rows(query: Any) -> Composed:
+def _as_json_rows(query: Any) -> Composed | Template:
+    if isinstance(query, Template):
+        # psycopg expands a Template nested with `:q` in place, its own values staying bound parameters
+        return t"select row_to_json(s)::text from (\n{query:q}\n) s"
     if isinstance(query, Composable):
         inner = query
     else:
