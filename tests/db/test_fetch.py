@@ -122,6 +122,7 @@ async def test_accepts_sqlglot_expression_psycopg_sql_and_t_string(pool: PgPool)
 
 @requires_podman
 async def test_accepts_exp_query_typed_union_and_subquery(pool: PgPool):
+    # annotated exp.Query on purpose (issue #56)
     union: exp.Query = select("name").from_("widget").where("id = 1").union(select("name").from_("widget").where("id = 2"))
     assert sorted(r["name"] for r in await fetch_all(union, pool=pool)) == ["cog", "sprocket"]
     sub: exp.Query = select("name").from_(select("name").from_("widget").subquery("w")).where("name = 'cog'")

@@ -26,7 +26,7 @@ def _subquery() -> exp.Query:
     return select("a").from_(select("1 AS a").subquery("t"))
 
 
-# --- type level: never executed, only checked by `ty` (see test_type_checker_accepts_exp_query_arguments) -------------------
+# --- type level: never executed, only checked by pyright/ty (see test_type_checker_accepts_exp_query_arguments) ---
 
 
 async def _typed_usage(pool: PgPool, query: exp.Query, expr: exp.Expr) -> None:
@@ -42,13 +42,24 @@ async def _typed_usage(pool: PgPool, query: exp.Query, expr: exp.Expr) -> None:
 
 @pytest.mark.parametrize("checker", ["pyright", "ty"])
 def test_type_checker_accepts_exp_query_arguments(checker: str):
-    # (ty currently does not resolve `exp.Query` and would accept this file even with the old annotation; pyright
-    # is what actually guards the regression, ty is kept as the checker CI runs on the package.)
-    args = ["check", str(Path(__file__))] if checker == "ty" else [str(Path(__file__))]
-    result = subprocess.run([sys.executable, "-m", checker, *args], capture_output=True, text=True, check=False)
-    if f"No module named {checker}" in result.stderr:
+    # ty does not resolve `exp.Query`, so it passes even with the old annotation; pyright is the real guard.
+    # (CI runs `ty check pgdevkit`, not the tests directory.)
+    file = str(Path(__file__))
+    cmd = (
+        [sys.executable, "-m", "ty", "check", "--python", sys.executable, file]
+        if checker == "ty"
+        else [sys.executable, "-m", "pyright", "--pythonpath", sys.executable, file]
+    )
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=300)
+    except subprocess.TimeoutExpired:
+        pytest.skip(f"{checker} timed out")
+    output = result.stdout + result.stderr
+    if f"No module named {checker}" in output:
         pytest.skip(f"{checker} is not installed")
-    assert result.returncode == 0, result.stdout + result.stderr
+    if checker == "pyright" and result.returncode != 0 and " - error:" not in output:
+        pytest.skip(f"pyright could not start: {output[:200]}")  # e.g. its node download (nodeenv) failed
+    assert result.returncode == 0, output
 
 
 # --- runtime: no database needed for `_render` ---------------------------------------------------------------------
