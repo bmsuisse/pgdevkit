@@ -184,10 +184,8 @@ async def test_insert_many_accepts_model_instances(pool: PgPool):
 async def test_insert_retrieve_composite_column_with_normalizer(pool: PgPool):
     # label_pair mirrors a real project's locale-labels composite type: a
     # normalizer backfills a missing locale before the value is converted
-    # into the psycopg-registered composite type for INSERT. `RETURNING *`
-    # gives back the psycopg-generated composite instance directly (since
-    # register_composite() also wires up decoding); pg_retrieve's to_jsonb()
-    # wrapping instead unwraps it back into a plain dict.
+    # into the psycopg composite type for INSERT. Both RETURNING and
+    # pg_retrieve select complex columns as to_jsonb(), i.e. a plain dict.
     def backfill_de(value: dict) -> dict:
         if not value.get("de"):
             value = {**value, "de": f"[{value['en']}]"}
@@ -196,8 +194,7 @@ async def test_insert_retrieve_composite_column_with_normalizer(pool: PgPool):
     async with pool.connection() as con:
         helper = ComplexHelper(con, normalizers={"label_pair": backfill_de})
         inserted = await pg_insert(con, ("public", "gizmo"), {"label": {"en": "Hello"}}, complex_helper=helper)
-        assert inserted["label"].en == "Hello"
-        assert inserted["label"].de == "[Hello]"
+        assert inserted["label"] == {"en": "Hello", "de": "[Hello]"}  # RETURNING: plain values, like pg_retrieve
         gizmo_id = inserted["id"]
 
         fetched = await pg_retrieve(con, Gizmo, {"id": gizmo_id}, complex_helper=helper)

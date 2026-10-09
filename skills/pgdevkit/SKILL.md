@@ -273,9 +273,9 @@ to a pooled connection: a plain `SELECT` of an enum would return psycopg's `Enum
 Writes register the enum/composite adapters on the one cursor that runs the statement, only for the columns where a
 dict/list value needed converting; reads (`pg_retrieve*`) use `to_jsonb(...)` and register nothing. So after any `pg_*` call the
 connection reads enums as label strings and composites as text (`'(1,2)'`), as before the call. `RETURNING` rows of
-`pg_insert`/`pg_update_dict`/`pg_upsert_dict` (hence `pg_update`/`pg_upsert`) come from that cursor: columns whose
-type, or a type nested in it, was registered on it come back as the registered Python objects (a composite as a
-namedtuple, an enum as an enum member), all others as psycopg returns them by default.
+`pg_insert`/`pg_update_dict`/`pg_upsert_dict` (hence `pg_update`/`pg_upsert`) also use `to_jsonb(...)` for such
+columns: with a helper they are plain Python values (a composite as a dict, an enum as its label) whichever columns
+were written; without one it is a plain `RETURNING *`.
 Using `recursive_convert` yourself: take `info` from `load_all_complex_types`/`load_complex_type`, call
 `await helper.register_on(cur, info)` on your cursor, and execute the converted value on that same `cur` (the
 connection as context would be a global registration again).

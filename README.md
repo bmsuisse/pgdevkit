@@ -453,9 +453,9 @@ Install with the `db` extra: `pip install pgdevkit[db]`.
   `pg_upsert`/`pg_upsert_dict`, the `*_many` variants), and only for the columns where a dict/list value had to
   be converted. Reads (`pg_retrieve*`) select such columns as `to_jsonb(...)` and need no registration. After any
   `pg_*` call the connection reads enums as label strings and composites as text (e.g. `'(1,2)'`), as before the call.
-  `RETURNING` rows of `pg_insert`/`pg_update_dict`/`pg_upsert_dict` (and so `pg_update`/`pg_upsert`) come from that
-  same cursor: columns whose type, or a type nested in it, was registered on it come back as the registered Python
-  objects (a composite as a namedtuple, an enum as an enum member), all others as psycopg returns them by default.
+  `RETURNING` rows of `pg_insert`/`pg_update_dict`/`pg_upsert_dict` (and so `pg_update`/`pg_upsert`) select such
+  columns as `to_jsonb(...)` too, so with a helper they are plain Python values (a composite as a dict, an enum as its
+  label) whichever columns were written; without one it is a plain `RETURNING *`.
   If you call `recursive_convert` yourself, register the types on the cursor that sends the values, with the `info`
   from `load_all_complex_types`/`load_complex_type`: `await helper.register_on(cur, info)`, then execute the converted
   value on that same `cur` (passing the connection instead would restore psycopg's global behaviour).

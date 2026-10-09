@@ -163,7 +163,10 @@ class ComplexHelper:
             await cur.execute("""
         SELECT t.oid,
                 pg_catalog.format_type ( t.oid, NULL ) AS obj_name,
-                t.typtype
+                -- an array type reports its element type's typtype, so an enum[] is known to be an enum
+                CASE WHEN t.typcategory = 'A'
+                    THEN ( SELECT et.typtype FROM pg_catalog.pg_type et WHERE et.oid = t.typelem )
+                    ELSE t.typtype END AS typtype
             FROM pg_catalog.pg_type t
             JOIN pg_catalog.pg_namespace n
                 ON n.oid = t.typnamespace
@@ -215,7 +218,8 @@ class ComplexHelper:
               from information_schema.columns c
                  left join enum_types e on e.enum_schema=c.udt_schema
                      and (e.enum_name=c.udt_name or (c.data_type='ARRAY' and c.udt_name='_'||e.enum_name))
-              where table_schema=%(schema)s and table_name = %(tbl)s and (is_generated <> 'ALWAYS' or %(include_generated)s)"""
+              where table_schema=%(schema)s and table_name = %(tbl)s and (is_generated <> 'ALWAYS' or %(include_generated)s)
+              order by c.ordinal_position"""
         async with self.con.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 colquery,

@@ -27,7 +27,7 @@ def _resolve_helper(con: AsyncConnection, complex_helper: ComplexHelperArg) -> C
 async def _select_list(
     con: AsyncConnection, table_name: tuple[str, str], complex_helper: ComplexHelperArg
 ) -> Composable:
-    """Column list for a SELECT, wrapping composite/enum/JSONB columns in
+    """Column list for a SELECT or RETURNING, wrapping composite/enum/JSONB columns in
     `to_jsonb(...)` so psycopg gets back plain Python values. Falls back to
     `SELECT *` (no extra query) when no ComplexHelper is given."""
     helper = _resolve_helper(con, complex_helper)
@@ -231,18 +231,18 @@ async def pg_insert(
     *,
     complex_helper: ComplexHelperArg = None,
 ) -> dict[str, Any]:
-    """Insert one row and return the full row (RETURNING *).
+    """Insert one row and return the full row (`RETURNING *`).
 
-    A column of a composite/enum type (or an array of one) whose value was dict/list-converted by `complex_helper`
-    comes back as the Python object registered on this statement's cursor (a composite as a namedtuple, an enum as an
-    enum member); every other column comes back as plain psycopg returns it (an enum as its label, a composite as its
-    text, e.g. '(1,2)'). Nothing is registered on `con`."""
+    With a `complex_helper`, composite/enum/JSONB columns are returned as `to_jsonb(...)`, exactly like
+    `pg_retrieve` does: plain Python values (a composite as a dict, an enum as its label), whichever columns were
+    written. Without one it is a plain `RETURNING *` as psycopg reads it."""
     async with con.cursor(row_factory=dict_row) as cur:
         data = await _convert_complex_values(con, cur, table_name, data, complex_helper)
-        query = SQL("INSERT INTO {tbl} ({cols}) VALUES ({vals}) RETURNING *").format(
+        query = SQL("INSERT INTO {tbl} ({cols}) VALUES ({vals}) RETURNING {returning}").format(
             tbl=Identifier(*table_name),
             cols=SQL(", ").join(Identifier(k) for k in data),
             vals=SQL(", ").join(Placeholder(k) for k in data),
+            returning=await _select_list(con, table_name, complex_helper),
         )
         await cur.execute(query, data)
         row = await cur.fetchone()
@@ -258,26 +258,25 @@ async def pg_update_dict(
     *,
     complex_helper: ComplexHelperArg = None,
 ) -> Any | None:
-    """Update a row identified by primary_keys. Returns the raw row tuple.
+    """Update a row identified by primary_keys. Returns the raw row tuple (in column order).
 
-    Columns whose type, or a type nested in it, was registered on this statement's cursor to convert a value
-    come back as the registered Python objects (composites as namedtuples, enums as enum members), the others as
-    psycopg returns them by default (an enum as its label, a composite as text, e.g. '(1,2)'). Nothing is
-    registered on `con`.
+    With a `complex_helper`, composite/enum/JSONB columns in it are plain Python values, like `pg_retrieve` returns
+    them (a composite as a dict, an enum as its label), whichever columns were written; without one, plain psycopg
+    behaviour (`RETURNING *`).
 
     Pass `complex_helper` when the table has composite/enum columns among the
-    values being set — omitted, this behaves exactly as before (plain values
-    passed straight through to psycopg)."""
+    values being set — omitted, values are passed straight through to psycopg."""
     async with con.cursor() as cur:
         data = await _convert_complex_values(con, cur, table_name, data, complex_helper)
         set_parts = [
             SQL("{col} = {val}").format(col=Identifier(k), val=Placeholder(k)) for k in data if k not in primary_keys
         ]
         where_parts = [SQL("{col} = {val}").format(col=Identifier(pk), val=Placeholder(pk)) for pk in primary_keys]
-        query = SQL("UPDATE {tbl} SET {sets} WHERE {where} RETURNING *").format(
+        query = SQL("UPDATE {tbl} SET {sets} WHERE {where} RETURNING {returning}").format(
             tbl=Identifier(*table_name),
             sets=SQL(", ").join(set_parts),
             where=SQL(" AND ").join(where_parts),
+            returning=await _select_list(con, table_name, complex_helper),
         )
         await cur.execute(query, data)
         return await cur.fetchone()
@@ -302,22 +301,22 @@ async def pg_upsert_dict(
 ) -> dict:
     """INSERT ... ON CONFLICT ... DO UPDATE, returns the row as a dict.
 
-    Columns whose type, or a type nested in it, was registered on this statement's cursor to convert a value
-    come back as the registered Python objects (composites as namedtuples, enums as enum members), the others as
-    psycopg returns them by default (an enum as its label, a composite as text, e.g. '(1,2)'). Nothing is
-    registered on `con`."""
+    With a `complex_helper`, composite/enum/JSONB columns in it are plain Python values, like `pg_retrieve` returns
+    them (a composite as a dict, an enum as its label), whichever columns were written; without one, plain psycopg
+    behaviour (`RETURNING *`)."""
     async with con.cursor(row_factory=dict_row) as cur:
         data = await _convert_complex_values(con, cur, table_name, data, complex_helper)
         fields = list(data)
         updates = [SQL("{col} = EXCLUDED.{col}").format(col=Identifier(k)) for k in fields]
         query = SQL(
-            "INSERT INTO {tbl} ({cols}) VALUES ({vals}) ON CONFLICT ({pks}) DO UPDATE SET {updates} RETURNING *"
+            "INSERT INTO {tbl} ({cols}) VALUES ({vals}) ON CONFLICT ({pks}) DO UPDATE SET {updates} RETURNING {returning}"
         ).format(
             tbl=Identifier(*table_name),
             cols=SQL(", ").join(Identifier(k) for k in fields),
             vals=SQL(", ").join(Placeholder(k) for k in fields),
             pks=SQL(", ").join(Identifier(pk) for pk in primary_keys),
             updates=SQL(", ").join(updates),
+            returning=await _select_list(con, table_name, complex_helper),
         )
         await cur.execute(query, data)
         row = await cur.fetchone()
