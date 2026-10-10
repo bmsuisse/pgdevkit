@@ -1,8 +1,10 @@
 """Drive an ASGI response by hand, with a client that can disconnect at will (httpx's ASGITransport can't)."""
 
 import asyncio
+import contextlib
+import gc
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 
 import psycopg
 
@@ -13,6 +15,7 @@ class FakeClient:
         self.sent: list[dict] = []
         self.fail_sends_after: int | None = None  # simulate ASGI spec >= 2.4: send() raises OSError once gone
         self.disconnect_when_send_fails = False  # ... and http.disconnect arrives at that very moment
+        self.send_iterations = 0  # event loop iterations each send() takes, as a write to a real socket does
 
     async def receive(self) -> dict:
         await self.disconnect.wait()
@@ -24,6 +27,8 @@ class FakeClient:
                 self.disconnect.set()
             raise OSError("client went away")
         self.sent.append(message)
+        for _ in range(self.send_iterations):
+            await asyncio.sleep(0)
 
     async def call(self, app: Callable[..., Awaitable[None]]) -> None:
         await app({"type": "http", "asgi": {"spec_version": "2.3"}}, self.receive, self.send)
@@ -51,3 +56,19 @@ async def wait_until(condition: Callable[[], Awaitable[bool] | bool], *, timeout
             return True
         await asyncio.sleep(0.05)
     return False
+
+
+@contextlib.asynccontextmanager
+async def unhandled_loop_errors() -> AsyncIterator[list[dict]]:
+    """Collect what the event loop would log, e.g. "Task exception was never retrieved" for a failed watcher task."""
+    loop = asyncio.get_running_loop()
+    errors: list[dict] = []
+    previous_handler = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _, context: errors.append(context))
+    try:
+        yield errors
+        for _ in range(5):  # let leftover tasks finish, then have the failed ones reported
+            await asyncio.sleep(0)
+        gc.collect()
+    finally:
+        loop.set_exception_handler(previous_handler)

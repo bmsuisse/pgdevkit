@@ -5,6 +5,7 @@ import contextvars
 import json
 import uuid
 from collections.abc import AsyncIterator
+from typing import Literal
 
 import pytest
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
@@ -14,8 +15,8 @@ from psycopg_pool import AsyncConnectionPool
 from pydantic import BaseModel
 
 from pgdevkit.db import fetch_all
-from pgdevkit.fastapi import CancelOnDisconnectRoute
-from tests._asgi import active_queries, wait_until
+from pgdevkit.fastapi import CancelOnDisconnectRoute, cancel_on_disconnect
+from tests._asgi import active_queries, unhandled_loop_errors, wait_until
 
 
 class Filter(BaseModel):
@@ -317,6 +318,34 @@ async def test_a_handler_that_finished_wins_over_a_disconnect_that_arrives_with_
     client.gone_after_body = True
     await client.call(app)
     assert (client.status, client.body) == (200, b'{"done":true}')
+
+
+class _SwallowingEvent(asyncio.Event):
+    async def wait(self) -> Literal[True]:
+        try:
+            return await super().wait()
+        except asyncio.CancelledError:  # what BaseHTTPMiddleware's receive() does to PostgresJsonResponse's watcher
+            return True
+
+
+async def test_a_watcher_whose_cancellation_is_swallowed_leaves_the_finished_scope_alone(
+    app: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #59 hit PostgresJsonResponse's watcher; this one waits on our own Event, which can't swallow its
+    cancellation. If it ever does, the watcher wakes up after the handler's cancel scope has been exited."""
+
+    class Receiver(cancel_on_disconnect._Receiver):
+        def __init__(self, *args: object) -> None:
+            super().__init__(*args)
+            self.disconnected = _SwallowingEvent()
+
+    monkeypatch.setattr(cancel_on_disconnect, "_Receiver", Receiver)
+    async with unhandled_loop_errors() as errors:  # "Task exception was never retrieved: RuntimeError(...)"
+        client = HttpClient(path="/ok")  # (not /instant: the watcher must be waiting by the time the handler is done)
+        await client.call(app)
+
+    assert (client.status, client.body) == (200, b'[{"one":1}]')
+    assert [(e["message"], e.get("exception")) for e in errors] == []
 
 
 async def test_context_variables_and_yield_dependencies_work_as_without_the_route(app: FastAPI) -> None:

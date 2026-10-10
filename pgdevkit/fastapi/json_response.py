@@ -112,11 +112,16 @@ class PostgresJsonResponse(StreamingResponse):
         # Starlette only watches for http.disconnect on ASGI spec < 2.4, so do it ourselves. An asyncio timeout is
         # the cancel scope: unlike an anyio task group, it doesn't leave Granian hanging when the body fails.
         loop = asyncio.get_running_loop()
+        streamed = False  # set before the watcher is cancelled: from then on the cancel scope may be gone
 
         async def watch_for_disconnect(cancel_scope: asyncio.Timeout) -> None:
-            while (await receive())["type"] != "http.disconnect":
+            # Checked again after every receive(): a wrapped receive() can swallow the watcher's cancellation and
+            # return instead (BaseHTTPMiddleware's turns it into an http.disconnect once the response has been sent),
+            # and reschedule() raises once the scope has been exited.
+            while not streamed and (await receive())["type"] != "http.disconnect":
                 pass
-            cancel_scope.reschedule(loop.time())  # i.e. cancel the stream now
+            if not streamed:
+                cancel_scope.reschedule(loop.time())  # i.e. cancel the stream now
 
         started = False
 
@@ -131,6 +136,7 @@ class PostgresJsonResponse(StreamingResponse):
                 try:
                     await self.stream_response(tracking_send)
                 finally:
+                    streamed = True
                     watcher.cancel()
         except TimeoutError:
             if not cancel_scope.expired():

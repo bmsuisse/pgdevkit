@@ -70,6 +70,18 @@ async def test_normal_response(server: str) -> None:
         assert (await client.get(f"{server}/ok")).json() == [{"i": 1}, {"i": 2}, {"i": 3}]
 
 
+@pytest.mark.parametrize("path", ["/ok", "/fails-at-once"])
+async def test_finished_responses_leave_no_failed_watcher_behind(server: str, server_log: Path, path: str) -> None:
+    """Issue #59: with BaseHTTPMiddleware in front, the disconnect watcher used to wake up after almost every response
+    and fail with "Cannot change state of finished Timeout" (logged as "Task exception was never retrieved")."""
+    log_start = len(server_log.read_text())
+    async with httpx.AsyncClient() as client:
+        for _ in range(20):
+            assert (await client.get(f"{server}{path}")).status_code == (200 if path == "/ok" else 500)
+    await asyncio.sleep(0.2)  # the server logs it when the failed task is collected
+    assert "never retrieved" not in server_log.read_text()[log_start:]
+
+
 async def test_aborted_client_cancels_the_query(
     server: str, server_log: Path, postgres_dsn: str, app_name: str
 ) -> None:
