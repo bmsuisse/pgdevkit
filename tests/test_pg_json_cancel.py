@@ -13,11 +13,13 @@ import pytest
 from psycopg import AsyncConnection
 from psycopg.pq import TransactionStatus
 from psycopg_pool import AsyncConnectionPool
-from starlette.requests import ClientDisconnect
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.requests import ClientDisconnect, Request
+from starlette.responses import Response
 
 from pgdevkit.fastapi import PostgresJsonResponse, json_response
 from pgdevkit.fastapi.json_response import _cancel_if_running
-from tests._asgi import FakeClient, active_queries, wait_until
+from tests._asgi import FakeClient, active_queries, unhandled_loop_errors, wait_until
 
 SLEEP_30S = "select pg_sleep(30) as slept"
 # padded rows: Postgres only flushes its 8 kB output buffer, so tiny rows would all arrive at the very end
@@ -154,6 +156,26 @@ async def test_a_second_cancellation_during_cleanup_does_not_skip_it(postgres_ds
 
         assert conn.closed or conn.info.transaction_status == TransactionStatus.IDLE
         assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), timeout=3)
+
+
+@pytest.mark.parametrize("query", ["select 1 / 0 as boom", "select 1 as one"])
+async def test_a_receive_that_swallows_the_watchers_cancellation_does_not_break_it(
+    pool: AsyncConnectionPool, query: str
+) -> None:
+    """Issue #59 (Granian, BaseHTTPMiddleware in front): that middleware's receive() waits in an anyio task group,
+    which it cancels once the response has been sent. The watcher's own cancellation arrives with it and is swallowed
+    there, and receive() returns an http.disconnect after the stream has finished, its cancel scope exited already."""
+
+    async def passthrough(request: Request, call_next: RequestResponseEndpoint) -> Response:
+        return await call_next(request)
+
+    async with unhandled_loop_errors() as errors:  # "Task exception was never retrieved: RuntimeError(...)"
+        client = FakeClient()
+        client.send_iterations = 2  # the race needs a server whose send() takes a moment, as Granian's does
+        await client.call(BaseHTTPMiddleware(PostgresJsonResponse(query, pool=pool), dispatch=passthrough))
+
+    assert client.sent[0]["status"] == (500 if "boom" in query else 200)
+    assert [(e["message"], e.get("exception")) for e in errors] == []
 
 
 async def test_a_finished_query_is_left_alone(pool: AsyncConnectionPool) -> None:

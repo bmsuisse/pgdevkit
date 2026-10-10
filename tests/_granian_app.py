@@ -58,6 +58,11 @@ async def sleep():
     return PostgresJsonResponse("select pg_sleep(30) as slept", pool=pool)
 
 
+@app.get("/fails-at-once")  # before the first byte: a 500 JSON error
+async def fails_at_once():
+    return PostgresJsonResponse("select 1 / 0 as boom", pool=pool)
+
+
 @app.get("/fails-midway")
 async def fails_midway():
     return PostgresJsonResponse(

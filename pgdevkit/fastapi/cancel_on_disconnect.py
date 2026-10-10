@@ -74,9 +74,12 @@ class CancelOnDisconnectRoute(APIRoute):
             request._receive = receiver.receive  # the same Request object, so a cached body is seen by everyone
             reader = asyncio.create_task(receiver.read())
 
+            handled = False  # as in PostgresJsonResponse: once set, the cancel scope may be gone
+
             async def cancel_when_gone(cancel_scope: asyncio.Timeout) -> None:
                 await receiver.disconnected.wait()
-                cancel_scope.reschedule(loop.time())
+                if not handled:  # (the Event can't swallow the cancellation; this keeps reschedule() safe anyway)
+                    cancel_scope.reschedule(loop.time())
 
             try:
                 async with asyncio.timeout(None) as cancel_scope:
@@ -84,6 +87,7 @@ class CancelOnDisconnectRoute(APIRoute):
                     try:
                         return await handler(request)
                     finally:
+                        handled = True
                         watcher.cancel()
             except TimeoutError:
                 if not cancel_scope.expired():  # the handler's own timeout
