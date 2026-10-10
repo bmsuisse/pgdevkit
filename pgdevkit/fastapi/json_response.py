@@ -4,10 +4,11 @@ Requires the ``fastapi`` extra: ``pip install pgdevkit[fastapi]``.
 """
 
 import asyncio
+import contextlib
 import json
 import logging
-from contextlib import aclosing
 from collections.abc import AsyncGenerator, Mapping
+from contextlib import aclosing
 from string.templatelib import Template
 from typing import Any, cast
 
@@ -33,6 +34,8 @@ from ..db.fetch import (
 )
 
 logger = logging.getLogger(__name__)
+
+CLIENT_CLOSED_REQUEST = 499  # nginx's code for a client that left; nobody reads it
 
 _CANCEL_TIMEOUT_SECONDS = 5.0
 # libpq < 17 (a system libpq; psycopg's binary wheels bundle a newer one) has no chunked rows mode.
@@ -115,17 +118,29 @@ class PostgresJsonResponse(StreamingResponse):
                 pass
             cancel_scope.reschedule(loop.time())  # i.e. cancel the stream now
 
+        started = False
+
+        async def tracking_send(message: Message) -> None:
+            nonlocal started
+            started = started or message["type"] == "http.response.start"
+            await send(message)
+
         try:
             async with asyncio.timeout(None) as cancel_scope:
                 watcher = asyncio.create_task(watch_for_disconnect(cancel_scope))
                 try:
-                    await self.stream_response(send)
+                    await self.stream_response(tracking_send)
                 finally:
                     watcher.cancel()
         except TimeoutError:
             if not cancel_scope.expired():
                 raise
-            # the client is gone and the query has been cancelled: nobody is left to answer
+            # The client is gone and the query has been cancelled: nobody is left to answer. A middleware in front
+            # (BaseHTTPMiddleware) still expects a response, though, or it fails with "No response returned.".
+            if not started:
+                with contextlib.suppress(OSError, ClientDisconnect):
+                    await send(self._start_message(CLIENT_CLOSED_REQUEST, []))
+                    await send({"type": "http.response.body", "body": b"", "more_body": False})
         if self.background is not None:
             await self.background()
 

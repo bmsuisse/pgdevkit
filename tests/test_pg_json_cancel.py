@@ -15,8 +15,7 @@ from psycopg.pq import TransactionStatus
 from psycopg_pool import AsyncConnectionPool
 from starlette.requests import ClientDisconnect
 
-from pgdevkit.fastapi import PostgresJsonResponse
-from pgdevkit.fastapi import json_response
+from pgdevkit.fastapi import PostgresJsonResponse, json_response
 from pgdevkit.fastapi.json_response import _cancel_if_running
 from tests._asgi import FakeClient, active_queries, wait_until
 
@@ -56,7 +55,11 @@ async def test_disconnect_before_the_first_byte_cancels_the_query(
     client.disconnect.set()
     await asyncio.wait_for(task, timeout=5)  # finishes quietly: nobody is left to answer
 
-    assert client.sent == []
+    # nobody is left to read it, but a BaseHTTPMiddleware in front would fail with "No response returned." otherwise
+    assert [(m["type"], m.get("status")) for m in client.sent] == [
+        ("http.response.start", 499),
+        ("http.response.body", None),
+    ]
     assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), timeout=3)
     assert time.monotonic() - started < 5, "the 30s query must not run to completion"
     async with pool.connection() as conn:  # the pool replaced the connection we closed

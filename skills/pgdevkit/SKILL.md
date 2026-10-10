@@ -6,7 +6,8 @@ description: >
   Docker/Podman test database (`pgdb testdb`), importable ORM-free CRUD and
   query helpers (`pgdevkit.db`: `pg_*`, `fetch_all`/`fetch_one`/`fetch_scalar`/`execute`, `readonly_transaction`, `PgPool`, `SqlLoader`), streaming a query as JSON from a
   FastAPI endpoint with query cancellation on client disconnect (`pgdevkit.fastapi.PostgresJsonResponse`: large grid
-  endpoints), and the `database/`-folder schema-as-code convention. Supersedes the old postgres-test-setup, postgres-best-practices,
+  endpoints; `pgdevkit.fastapi.CancelOnDisconnectRoute`: cancel plain `fetch_all`/cursor read handlers when the client
+  aborts, e.g. a frontend AbortController), and the `database/`-folder schema-as-code convention. Supersedes the old postgres-test-setup, postgres-best-practices,
   and database-in-source skills — pgdevkit is a real dependency now, not
   copy-pasted reference files. Use whenever the user wants to set up a local
   test Postgres, write or review psycopg code, add a table/view/function to
@@ -233,7 +234,7 @@ deleted = await execute("DELETE FROM sessions WHERE user_id = %(id)s", {"id": 1}
 - `model=` validates each row into a Pydantic model; `row_mapper=` maps each dict row to anything else (exclusive with `model`).
 - Passing `con=` runs on *your* connection: `fetch_all` never commits, closes or releases it. Without it, a connection is borrowed from `pool=` (or the `set_default_pool()` pool) and released afterwards.
 - `statement_timeout=<seconds>` (optional) lets Postgres abort the query after that long, raising `QueryCanceled`; it is applied with `SET LOCAL` semantics for this call only (a borrowed `con` gets its previous value back). A plain value *replaces* the connection's own setting in both directions, so a per-call 900 s overrides a database-level safety net of 600 s; `statement_timeout=at_most(120)` (`from pgdevkit.db import at_most`) never loosens it: the effective timeout is `min(current, 120)`.
-- `cancel=` takes an `asyncio.Event`: set it (e.g. when the HTTP client disconnects) and the running query is cancelled on the server, raising `psycopg.errors.QueryCanceled`. If the awaiting task is cancelled instead, the server-side query is cancelled too and `CancelledError` propagates as usual (not `QueryCanceled`), so no query keeps running unattended. Don't use `cancel=` on a `con` that concurrent tasks share (it aborts whatever statement is running on it); if the cancel request itself can't be delivered, the connection is closed. After `QueryCanceled` a borrowed `con` is usable again once you `await con.rollback()` (autocommit connections need nothing). To stream a whole result as JSON from FastAPI (it wires the disconnect itself) see `PostgresJsonResponse` below.
+- `cancel=` takes an `asyncio.Event`: set it (e.g. when the HTTP client disconnects) and the running query is cancelled on the server, raising `psycopg.errors.QueryCanceled`. If the awaiting task is cancelled instead, the server-side query is cancelled too and `CancelledError` propagates as usual (not `QueryCanceled`), so no query keeps running unattended. Don't use `cancel=` on a `con` that concurrent tasks share (it aborts whatever statement is running on it); if the cancel request itself can't be delivered, the connection is closed. After `QueryCanceled` a borrowed `con` is usable again once you `await con.rollback()` (autocommit connections need nothing). To stream a whole result as JSON from FastAPI (it wires the disconnect itself) see `PostgresJsonResponse` below; to cancel a plain `fetch_all` endpoint when the client leaves, see `CancelOnDisconnectRoute` below.
 - `query` is typed `SqlQuery`: a literal string (`SqlLoader.load_sql()`), a sqlglot expression (any `exp.Expr`, so Select, Union, Subquery and other `exp.Query` values are fine), a `psycopg.sql` composable or a t-string. A plain `str` fails type checking on purpose, so don't build SQL with f-strings/concatenation. A sqlglot expression is only as safe as the strings it was built from (its builders parse plain strings as SQL): pass user values as `exp.Placeholder` + `params`, never as literals/raw text. A literal `%` in a sqlglot expression (`LIKE 'a%'`, modulo) just works, with or without `params`; in a plain string or `psycopg.sql` composable it is psycopg's rule: write `%%` when you pass `params`. A t-string carries its own values, so don't also pass `params`.
 
 ### Dynamic SQL
@@ -326,6 +327,29 @@ async def articles(lng: str) -> PostgresJsonResponse:
 - `statement_timeout=<seconds>` (optional, as in `fetch_all`): Postgres aborts a slow query; before the first byte the client gets a 504. It does not free a client that stopped reading (use a proxy write timeout), and needs a non-autocommit connection.
 - It does no authorization; scope the query yourself. Full reference: the `pgdevkit.fastapi` section of the README.
 
+### Cancelling `fetch_all` endpoints when the client leaves
+
+Granian does not cancel a request handler on disconnect, so a frontend abort (debounced search, grid filter change) only stops `PostgresJsonResponse` endpoints. Put other read endpoints — including POSTs that only read, e.g. grid/search — on a router with `CancelOnDisconnectRoute`: the handler task is cancelled on `http.disconnect` and psycopg cancels the statement in Postgres.
+
+```python
+from fastapi import APIRouter
+from pgdevkit.fastapi import CancelOnDisconnectRoute
+
+cancellable = APIRouter(route_class=CancelOnDisconnectRoute)  # single route: router.add_api_route(..., route_class_override=CancelOnDisconnectRoute)
+
+@cancellable.post("/customers/overview")  # reads only
+async def overview(payload: Filter) -> list[Row]:
+    return await fetch_all(sql.load_sql("customers", "overview"), payload.model_dump())
+
+app.include_router(cancellable)
+```
+
+- **Reads only, opt-in.** Never for writes; don't select by HTTP method (searches are POSTs).
+- **Everything in the route is cancelled**, dependencies included (auth, audit logging), and `BackgroundTasks` never run; a `yield` dependency sees an `HTTPException` (499) and rolls back. Don't put must-happen side effects in such a route.
+- The client that left gets a 499 nobody reads. The body is not buffered (the handler gets a `Request` fed by a reader task).
+- Shared work (single-flight caches, "refresh once, many wait" loaders) must be awaited through `asyncio.shield`, or one aborted request cancels it for all waiters.
+- `to_thread` work and external services (Databricks statements, HTTP calls) keep running; only awaiting them stops. Returned `StreamingResponse`s aren't covered (use `PostgresJsonResponse`).
+
 ### SQL formatting
 
 ```bash
@@ -405,6 +429,7 @@ Reports drift between the `database/` `.sql` files and the actual schema — tab
 - [ ] Untrusted SQL runs under a SELECT-only role (plus `readonly_transaction(con)` and an `at_most(...)` timeout as safety nets, not as a sandbox)
 - [ ] `set_default_pool()` at startup; `helper.clear_cache()` after DDL on a long-lived connection when using `complex_helper=`
 - [ ] Large/grid reads from FastAPI may use `pgdevkit.fastapi.PostgresJsonResponse` (streams, cancels on disconnect, no model validation)
+- [ ] Other read endpoints built on `fetch_all` that should stop when the client leaves use `APIRouter(route_class=CancelOnDisconnectRoute)` (never writes)
 - [ ] No `LATERAL JOIN` — use a CTE that groups/aggregates first, then joins it
 - [ ] `.<env>.sql` files (e.g. `.prod.sql`) are skipped by `pgdb testdb` unless it's run with a matching `--env`
 - [ ] Every table (and non-obvious column) has a `COMMENT ON`, placed in the object's own `.sql` file

@@ -4,10 +4,11 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI, Request
 from psycopg_pool import AsyncConnectionPool
 
-from pgdevkit.fastapi import PostgresJsonResponse
+from pgdevkit.db import fetch_all
+from pgdevkit.fastapi import CancelOnDisconnectRoute, PostgresJsonResponse
 
 pool = AsyncConnectionPool(os.environ["PGJSON_TEST_DSN"], min_size=1, max_size=2, open=False)
 
@@ -19,6 +20,32 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.middleware("http")  # a BaseHTTPMiddleware, as in our apps: it must cope with a handler that was cancelled
+async def passthrough(request: Request, call_next):
+    return await call_next(request)
+
+
+cancellable = APIRouter(route_class=CancelOnDisconnectRoute)
+
+
+@cancellable.post("/cancellable-sleep")
+async def cancellable_sleep() -> list[dict]:
+    return await fetch_all("select pg_sleep(30) as slept", pool=pool)
+
+
+@cancellable.post("/cancellable-ok")
+async def cancellable_ok() -> list[dict]:
+    return await fetch_all("select 1 as one", pool=pool)
+
+
+app.include_router(cancellable)
+
+
+@app.post("/plain-sleep")  # not opted in: runs to completion even if the client is gone
+async def plain_sleep() -> list[dict]:
+    return await fetch_all("select pg_sleep(3) as slept", pool=pool)
 
 
 @app.get("/ok")

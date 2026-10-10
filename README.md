@@ -417,7 +417,7 @@ Install with the `db` extra: `pip install pgdevkit[db]`.
   with `set_default_pool()` (a `ConnectionSource` such as `PgPool`, or a plain callable returning an
   async connection context manager). Set the `cancel` `asyncio.Event` to abort the query on the server
   (`QueryCanceled`; to stream a result as JSON from FastAPI see `PostgresJsonResponse`, which watches for the
-  disconnect itself); cancelling the awaiting task cancels it there too, and
+  disconnect itself, and for buffered endpoints see `CancelOnDisconnectRoute`); cancelling the awaiting task cancels it there too, and
   `CancelledError` propagates as usual. `statement_timeout=<seconds>` lets Postgres abort the query after that
   long (`QueryCanceled`, "canceling statement due to statement timeout"); it is applied per call with `SET LOCAL`
   semantics, so it never outlives the call (a borrowed `con` gets its previous setting back); see
@@ -511,14 +511,16 @@ async with pool.connection() as con:
     await pg_upsert(con, Widget(id=1, name="thing"), Widget)
 ```
 
-## `pgdevkit.fastapi` — streaming JSON responses
+## `pgdevkit.fastapi` — streaming JSON responses and cancel-on-disconnect
 
 Requires the `fastapi` extra (`pip install pgdevkit[fastapi]`, FastAPI >= 0.118).
 
 `PostgresJsonResponse` runs a query and streams its rows to the client as a JSON array. Postgres builds the JSON
 (`row_to_json`), so there is no row-by-row Python serialization and no pydantic round trip, and memory use stays flat
 for big results. **If the client goes away, the query is cancelled in Postgres** instead of running to completion.
-(`fetch_all(..., cancel=event)` cancels a buffered query too, but you wire the event to the disconnect yourself.)
+(`fetch_all(..., cancel=event)` cancels a buffered query too; for `fetch_all`-based endpoints put the route on
+`CancelOnDisconnectRoute` ([below](#cancelling-other-endpoints-when-the-client-leaves)) instead of wiring the event
+yourself.)
 
 ```python
 from pgdevkit.db import PgPool, set_default_pool
@@ -570,6 +572,49 @@ help, see below). With `PgPool` (40 connections by default; `max_size=`) that me
 big results, can use up the pool and make every other request wait for a connection. Enforce a write timeout in the
 reverse proxy and size the pool accordingly. Disconnect behaviour can only be tested over a real socket
 (`httpx.ASGITransport` never sends `http.disconnect`); see `tests/test_pg_json_granian.py`.
+
+### Cancelling other endpoints when the client leaves
+
+`PostgresJsonResponse` is the only thing that notices a disconnect by itself. ASGI servers such as Granian do **not**
+cancel a request handler when the client goes away, so a handler built on `fetch_all` (or a raw cursor, Meilisearch,
+...) runs to the end and its result is thrown away, which defeats a frontend `AbortController`. Put such read
+endpoints on a router with `CancelOnDisconnectRoute`: it runs the handler as a task and cancels it on
+`http.disconnect` (in the request's own task, with an `asyncio.timeout` as the cancel scope, as
+`PostgresJsonResponse` does), and psycopg/pgdevkit then cancel the running statement on the server (see `fetch_all`'s
+`cancel`).
+
+```python
+from fastapi import APIRouter
+from pgdevkit.db import fetch_all
+from pgdevkit.fastapi import CancelOnDisconnectRoute
+
+cancellable = APIRouter(route_class=CancelOnDisconnectRoute)  # or router.add_api_route(..., route_class_override=...)
+
+@cancellable.post("/customers/overview")  # a POST that only reads
+async def overview(payload: Filter) -> list[Row]:
+    return await fetch_all("select ...", {"q": payload.q})  # aborted in Postgres when the client leaves
+
+app.include_router(cancellable)
+```
+
+- **Opt-in, reads only.** A cancelled write is rolled back at best and half-applied at worst. Don't select routes by
+  HTTP method: search and grid endpoints are often POSTs.
+- **Everything inside the route is cancelled**, dependencies included (authentication, audit logging, counters), and
+  the client gets no response, so `BackgroundTasks` registered by the handler never run. Don't rely on side effects
+  that must always happen in an opted-in route: shield them or do them in a middleware. A `Depends` with `yield` sees
+  an `HTTPException` (status 499) after the cancellation, so a transaction rolls back instead of committing.
+- The client that left gets a 499 nobody reads; the middleware stack sees a normal response (no
+  `No response returned`).
+- The request body is **not** buffered: the handler reads it from a `Request` whose `receive()` is fed by a reader
+  task that also spots the disconnect. That reader runs at most a few chunks ahead of the handler, so a route that
+  never reads a large body can't pin it in memory, but a disconnect is then only noticed once the body is consumed.
+- **Shared work must survive one caller's cancellation.** Await shared tasks and futures (single-flight caches,
+  "refresh once, many wait" loaders) through `asyncio.shield`; otherwise one aborted request cancels the load every
+  other request is waiting on.
+- A returned `StreamingResponse` is not covered (Starlette watches for the disconnect there only on servers with ASGI
+  spec < 2.4; `PostgresJsonResponse` always does). Threads (`asyncio.to_thread`) and
+  external services (Databricks statements, HTTP calls) keep running; only the awaiting stops.
+- Like the above, disconnects only show up over a real socket: see `tests/test_pg_json_granian.py` for a Granian test.
 
 ### Statement timeout
 

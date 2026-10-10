@@ -25,11 +25,16 @@ def app_name() -> str:
 
 
 @pytest.fixture(scope="module")
-def server(postgres_dsn: str, app_name: str, tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
+def server_log(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return tmp_path_factory.mktemp("granian") / "granian.log"
+
+
+@pytest.fixture(scope="module")
+def server(postgres_dsn: str, app_name: str, server_log: Path) -> Iterator[str]:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
-    log = tmp_path_factory.mktemp("granian") / "granian.log"
+    log = server_log
     env = {**os.environ, "PGJSON_TEST_DSN": f"{postgres_dsn} application_name={app_name}"}
     with log.open("w") as log_file:
         proc = subprocess.Popen(
@@ -65,7 +70,10 @@ async def test_normal_response(server: str) -> None:
         assert (await client.get(f"{server}/ok")).json() == [{"i": 1}, {"i": 2}, {"i": 3}]
 
 
-async def test_aborted_client_cancels_the_query(server: str, postgres_dsn: str, app_name: str) -> None:
+async def test_aborted_client_cancels_the_query(
+    server: str, server_log: Path, postgres_dsn: str, app_name: str
+) -> None:
+    log_start = len(server_log.read_text())
     async def query_running() -> bool:
         return await active_queries(postgres_dsn, app_name) == 1
 
@@ -82,6 +90,7 @@ async def test_aborted_client_cancels_the_query(server: str, postgres_dsn: str, 
     await request
 
     assert await wait_until(query_stopped, timeout=5), "the query kept running after the client left"
+    assert "Traceback" not in server_log.read_text()[log_start:]  # e.g. BaseHTTPMiddleware: "No response returned."
 
 
 async def test_error_after_the_first_byte_ends_the_response_without_a_valid_json_array(server: str) -> None:
@@ -96,3 +105,45 @@ async def test_error_after_the_first_byte_ends_the_response_without_a_valid_json
         with pytest.raises(json.JSONDecodeError):
             response.json()
         assert (await client.get(f"{server}/ok")).status_code == 200  # the server and its pool are fine
+
+
+async def abort_after(server: str, path: str, seconds: float) -> None:
+    async with httpx.AsyncClient(timeout=seconds) as client:
+        with pytest.raises(httpx.ReadTimeout):  # drops the connection
+            await client.post(f"{server}{path}")
+
+
+async def test_cancel_on_disconnect_route_cancels_the_query_when_the_client_leaves(
+    server: str, server_log: Path, postgres_dsn: str, app_name: str
+) -> None:
+    async def running() -> bool:
+        return await active_queries(postgres_dsn, app_name) == 1
+
+    async def stopped() -> bool:
+        return await active_queries(postgres_dsn, app_name) == 0
+
+    log_start = len(server_log.read_text())  # the log is shared with tests that fail on purpose
+    request = asyncio.create_task(abort_after(server, "/cancellable-sleep", 2))
+    assert await wait_until(running, timeout=5), "the query never started"
+    await request
+
+    assert await wait_until(stopped, timeout=5), "the query kept running after the client left"
+    async with httpx.AsyncClient() as client:  # server, pool and middleware are fine afterwards
+        assert (await client.post(f"{server}/cancellable-ok")).json() == [{"one": 1}]
+    assert "Traceback" not in server_log.read_text()[log_start:]
+
+
+async def test_a_route_that_did_not_opt_in_runs_to_completion(server: str, postgres_dsn: str, app_name: str) -> None:
+    async def running() -> bool:
+        return await active_queries(postgres_dsn, app_name) == 1
+
+    request = asyncio.create_task(abort_after(server, "/plain-sleep", 1))
+    assert await wait_until(running, timeout=5)
+    await request
+    await asyncio.sleep(0.5)
+    assert await active_queries(postgres_dsn, app_name) == 1, "a plain route must not be cancelled"
+    assert await wait_until(lambda: _idle(postgres_dsn, app_name), timeout=6)
+
+
+async def _idle(dsn: str, app_name: str) -> bool:
+    return await active_queries(dsn, app_name) == 0
