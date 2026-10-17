@@ -390,6 +390,32 @@ for a real one.
 functions the CLI calls, so a project can script around them without shelling
 out. The database-touching ones take `dialect="postgres" | "mssql"`.
 
+### Guarding against missing GRANTs in a production apply path
+
+A migration that creates a table doesn't automatically get that table granted
+to your app's runtime role — see `docs/database-layout.md`'s "permissions
+files always apply last" section for why a one-time `permissions`/`grants`
+file running through a forward-only migration path (unlike `pgdb testdb`,
+which re-derives the whole schema every time) can silently stop covering new
+tables. Three functions in `pgdevkit.migrate` exist for building your own
+guard around this:
+
+- `execute_sql_script(conninfo, sql)` — runs a raw SQL script as one committed
+  transaction, split the same statement-boundary-safe way `apply_migration`
+  is, but with **no** tracking-table bookkeeping. For a script meant to
+  re-run every time (e.g. an idempotent `GRANT ... ON ALL TABLES IN SCHEMA x
+  TO role`), call this directly instead of routing it through
+  `apply_migration`'s once-ever tracked-migration path.
+- `created_table_names(sql)` — table names any `CREATE TABLE` in a raw script
+  targets, for when you ran it through `execute_sql_script` (which returns
+  nothing) rather than `apply_migration` (whose `ApplyResult.verified_tables`
+  already gives you this).
+- `missing_privileges(conninfo, role, tables, privilege="select")` — checks
+  `has_table_privilege` for `role` against each of `tables`, returning the
+  ones it can't access. Run it after applying a migration (or an
+  `execute_sql_script` grants sync) to confirm the grant actually landed,
+  instead of finding out from a production 500.
+
 ## `pgdevkit.db` — helpers for application code
 
 Install with the `db` extra: `pip install pgdevkit[db]`.
