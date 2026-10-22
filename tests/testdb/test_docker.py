@@ -48,8 +48,8 @@ def test_resource_kwargs_explicit_memswap_limit_wins():
     assert kwargs == {"mem_limit": "512m", "memswap_limit": "1g"}
 
 
-def test_resource_kwargs_memswap_limit_without_mem_limit_is_passed_through():
-    assert resource_kwargs(tmpfs="", shm_size="", mem_limit="", cpus="", memswap_limit="-1") == {"memswap_limit": "-1"}
+def test_resource_kwargs_memswap_limit_without_mem_limit_is_ignored():
+    assert resource_kwargs(tmpfs="", shm_size="", mem_limit="", cpus="", memswap_limit="1g") == {}
 
 
 def test_resource_kwargs_cpus_converted_to_nano_cpus():

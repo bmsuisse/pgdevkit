@@ -261,8 +261,9 @@ docker-CLI `--tmpfs` syntax (`/path:options`), semicolon-separated for
 multiple mounts, e.g. `/var/lib/postgresql/data:size=512m`.
 Setting `PGDEVKIT_TESTDB_MEM_LIMIT` also sets the container's memory+swap
 limit to the same value (`--memory-swap=<same>`, so it can't spill into swap);
-override with `PGDEVKIT_TESTDB_MEMSWAP_LIMIT` (`-1` = unlimited swap).
-`PGDEVKIT_TESTDB_PG_SETTINGS` adds server settings as whitespace/comma-separated
+override with `PGDEVKIT_TESTDB_MEMSWAP_LIMIT` (`-1` = unlimited swap; ignored
+without a `MEM_LIMIT`).
+`PGDEVKIT_TESTDB_PG_SETTINGS` adds server settings as whitespace-separated
 `key=value` pairs, passed as `-c key=value`, e.g.
 `shared_buffers=128MB max_connections=50` for small CI hosts.
 

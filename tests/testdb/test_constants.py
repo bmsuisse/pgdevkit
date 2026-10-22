@@ -70,7 +70,7 @@ def test_env_vars_override_docker_resource_defaults(monkeypatch):
 
 
 def test_pg_settings_flags_become_dash_c_pairs():
-    assert constants.pg_settings_flags("shared_buffers=128MB, max_connections=50") == [
+    assert constants.pg_settings_flags("shared_buffers=128MB max_connections=50") == [
         "-c", "shared_buffers=128MB", "-c", "max_connections=50",
     ]
 

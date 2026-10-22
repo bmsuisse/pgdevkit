@@ -26,7 +26,7 @@ PG_SPEED_FLAGS = ["-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full
 # rows near local midnight. Forcing UTC here -- both as the server's own timezone GUC
 # and as PGTZ/TZ for any client library that consults the environment instead -- keeps
 # test parity with prod instead of depending on the host/image's locale.
-# Extra server settings as whitespace/comma-separated key=value pairs (e.g.
+# Extra server settings as whitespace-separated key=value pairs (no spaces in values; e.g.
 # "shared_buffers=128MB max_connections=50"), each passed as `-c key=value` after the
 # defaults so it wins -- for capping a test server's memory footprint on small CI hosts.
 PG_SETTINGS = os.environ.get("PGDEVKIT_TESTDB_PG_SETTINGS", "")
@@ -34,7 +34,7 @@ PG_SETTINGS = os.environ.get("PGDEVKIT_TESTDB_PG_SETTINGS", "")
 
 def pg_settings_flags(spec: str) -> list[str]:
     flags: list[str] = []
-    for pair in spec.replace(",", " ").split():
+    for pair in spec.split():
         if "=" not in pair:
             raise ValueError(f"PGDEVKIT_TESTDB_PG_SETTINGS entry {pair!r} is not key=value")
         flags += ["-c", pair]
