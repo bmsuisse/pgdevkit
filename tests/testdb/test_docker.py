@@ -33,7 +33,23 @@ def test_resource_kwargs_all_unset_returns_empty_dict():
 
 def test_resource_kwargs_only_includes_set_values():
     kwargs = resource_kwargs(tmpfs="/data:size=512m", shm_size="", mem_limit="1g", cpus="")
-    assert kwargs == {"tmpfs": {"/data": "size=512m"}, "mem_limit": "1g"}
+    assert kwargs == {"tmpfs": {"/data": "size=512m"}, "mem_limit": "1g", "memswap_limit": "1g"}
+
+
+def test_resource_kwargs_memswap_limit_defaults_to_mem_limit():
+    assert resource_kwargs(tmpfs="", shm_size="", mem_limit="512m", cpus="") == {
+        "mem_limit": "512m",
+        "memswap_limit": "512m",
+    }
+
+
+def test_resource_kwargs_explicit_memswap_limit_wins():
+    kwargs = resource_kwargs(tmpfs="", shm_size="", mem_limit="512m", cpus="", memswap_limit="1g")
+    assert kwargs == {"mem_limit": "512m", "memswap_limit": "1g"}
+
+
+def test_resource_kwargs_memswap_limit_without_mem_limit_is_ignored():
+    assert resource_kwargs(tmpfs="", shm_size="", mem_limit="", cpus="", memswap_limit="1g") == {}
 
 
 def test_resource_kwargs_cpus_converted_to_nano_cpus():

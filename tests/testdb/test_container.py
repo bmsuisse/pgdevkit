@@ -100,6 +100,7 @@ def test_create_container_passes_through_resource_overrides(monkeypatch):
     assert client.containers.run_kwargs["tmpfs"] == {"/var/lib/postgresql/data": "size=512m"}
     assert client.containers.run_kwargs["shm_size"] == "256m"
     assert client.containers.run_kwargs["mem_limit"] == "1g"
+    assert client.containers.run_kwargs["memswap_limit"] == "1g"
     assert client.containers.run_kwargs["nano_cpus"] == 2_000_000_000
 
 

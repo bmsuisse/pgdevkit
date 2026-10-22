@@ -57,9 +57,13 @@ def _parse_tmpfs(spec: str) -> dict[str, str]:
     return mounts
 
 
-def resource_kwargs(*, tmpfs: str, shm_size: str, mem_limit: str, cpus: str) -> dict:
+def resource_kwargs(*, tmpfs: str, shm_size: str, mem_limit: str, cpus: str, memswap_limit: str = "") -> dict:
     """Build the `containers.run()` kwargs for the tmpfs/shm_size/mem_limit/cpus
     overrides, omitting any that aren't set so Docker's own defaults apply.
+    A mem_limit without an explicit memswap_limit also caps memory+swap at the
+    same value (the `--memory-swap=<same>` idiom), so the container can't
+    spill past its limit into swap; pass memswap_limit="-1" to allow unlimited swap.
+    A memswap_limit without a mem_limit is ignored (Docker/Podman need both).
     Shared by the Postgres and MSSQL container modules -- these are Docker-level
     resource knobs, not anything specific to either engine."""
     kwargs: dict = {}
@@ -69,6 +73,7 @@ def resource_kwargs(*, tmpfs: str, shm_size: str, mem_limit: str, cpus: str) -> 
         kwargs["shm_size"] = shm_size
     if mem_limit:
         kwargs["mem_limit"] = mem_limit
+        kwargs["memswap_limit"] = memswap_limit or mem_limit
     if cpus:
         kwargs["nano_cpus"] = int(float(cpus) * 1_000_000_000)
     return kwargs

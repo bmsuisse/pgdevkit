@@ -16,6 +16,8 @@ PASSWORD = os.environ.get("PGDEVKIT_TESTDB_PASSWORD", "testpwd")
 TMPFS = os.environ.get("PGDEVKIT_TESTDB_TMPFS", "")
 SHM_SIZE = os.environ.get("PGDEVKIT_TESTDB_SHM_SIZE", "")
 MEM_LIMIT = os.environ.get("PGDEVKIT_TESTDB_MEM_LIMIT", "")
+# Defaults to MEM_LIMIT (no swap) when that is set; "-1" allows unlimited swap.
+MEMSWAP_LIMIT = os.environ.get("PGDEVKIT_TESTDB_MEMSWAP_LIMIT", "")
 CPUS = os.environ.get("PGDEVKIT_TESTDB_CPUS", "")
 PG_SPEED_FLAGS = ["-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off"]
 # Production connects with session timezone=UTC; the container image's own default
@@ -24,7 +26,22 @@ PG_SPEED_FLAGS = ["-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full
 # rows near local midnight. Forcing UTC here -- both as the server's own timezone GUC
 # and as PGTZ/TZ for any client library that consults the environment instead -- keeps
 # test parity with prod instead of depending on the host/image's locale.
-PG_STARTUP_FLAGS = [*PG_SPEED_FLAGS, "-c", "timezone=UTC"]
+# Extra server settings as whitespace-separated key=value pairs (no spaces in values; e.g.
+# "shared_buffers=128MB max_connections=50"), each passed as `-c key=value` after the
+# defaults so it wins -- for capping a test server's memory footprint on small CI hosts.
+PG_SETTINGS = os.environ.get("PGDEVKIT_TESTDB_PG_SETTINGS", "")
+
+
+def pg_settings_flags(spec: str) -> list[str]:
+    flags: list[str] = []
+    for pair in spec.split():
+        if "=" not in pair:
+            raise ValueError(f"PGDEVKIT_TESTDB_PG_SETTINGS entry {pair!r} is not key=value")
+        flags += ["-c", pair]
+    return flags
+
+
+PG_STARTUP_FLAGS = [*PG_SPEED_FLAGS, "-c", "timezone=UTC", *pg_settings_flags(PG_SETTINGS)]
 
 
 def conninfo(dbname: str, *, connect_timeout: int | None = None) -> str:

@@ -45,6 +45,7 @@ def _create_container(client: docker.DockerClient) -> None:
                 shm_size=constants.SHM_SIZE,
                 mem_limit=constants.MEM_LIMIT,
                 cpus=constants.CPUS,
+                memswap_limit=constants.MEMSWAP_LIMIT,
             ),
         )
     except docker.errors.APIError as e:
