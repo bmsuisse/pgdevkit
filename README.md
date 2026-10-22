@@ -259,6 +259,12 @@ for parallel query workers), `PGDEVKIT_TESTDB_MEM_LIMIT` (e.g. `1g`),
 `PGDEVKIT_TESTDB_CPUS` (e.g. `2` or `0.5`), and `PGDEVKIT_TESTDB_TMPFS` —
 docker-CLI `--tmpfs` syntax (`/path:options`), semicolon-separated for
 multiple mounts, e.g. `/var/lib/postgresql/data:size=512m`.
+Setting `PGDEVKIT_TESTDB_MEM_LIMIT` also sets the container's memory+swap
+limit to the same value (`--memory-swap=<same>`, so it can't spill into swap);
+override with `PGDEVKIT_TESTDB_MEMSWAP_LIMIT` (`-1` = unlimited swap).
+`PGDEVKIT_TESTDB_PG_SETTINGS` adds server settings as whitespace/comma-separated
+`key=value` pairs, passed as `-c key=value`, e.g.
+`shared_buffers=128MB max_connections=50` for small CI hosts.
 
 All of the above (including `_HOST`/`_PORT`/`_USER`/`_PASSWORD`/`_IMAGE`)
 only take effect when pgdevkit actually creates the container, not when it
@@ -295,7 +301,8 @@ The same Docker-level resource knobs as the Postgres container are
 available here too: `PGDEVKIT_TESTDB_MSSQL_SHM_SIZE`,
 `PGDEVKIT_TESTDB_MSSQL_MEM_LIMIT` (a container-level cgroup limit, distinct
 from `_MEMORY_LIMIT_MB` above which only tunes SQL Server's own internal
-memory management), `PGDEVKIT_TESTDB_MSSQL_CPUS`, and
+memory management; like the Postgres one it also caps memory+swap, override via
+`PGDEVKIT_TESTDB_MSSQL_MEMSWAP_LIMIT`), `PGDEVKIT_TESTDB_MSSQL_CPUS`, and
 `PGDEVKIT_TESTDB_MSSQL_TMPFS`. As with the Postgres container, these only
 take effect when pgdevkit creates the container, not when restarting an
 existing stopped one (`docker rm -f pgdevkit-mssql` first if you've changed
