@@ -78,12 +78,13 @@ def default_tracking_table(start: Path | None = None, dialect: str | Dialect = "
 
 
 def _split_sql(sql: str) -> list[str]:
-    """Split SQL on semicolons, ignoring those inside comments, '...' strings, or $$...$$ blocks."""
+    """Split SQL on semicolons, ignoring those inside comments (`--` and nested `/* */`), '...' strings, or $$...$$ blocks."""
     stmts: list[str] = []
     buf: list[str] = []
     i = 0
     in_string = False
     in_line_comment = False
+    block_depth = 0  # Postgres block comments nest
     dollar_tag: str | None = None
 
     while i < len(sql):
@@ -92,6 +93,19 @@ def _split_sql(sql: str) -> list[str]:
             if c == "\n":
                 in_line_comment = False
             buf.append(c)
+        elif block_depth:
+            two = sql[i:i + 2]
+            if two == "/*":
+                block_depth += 1
+            elif two == "*/":
+                block_depth -= 1
+            else:
+                buf.append(c)
+                i += 1
+                continue
+            buf.append(two)
+            i += 2
+            continue
         elif dollar_tag is not None:
             buf.append(c)
             if c == "$" and sql[i:i + len(dollar_tag)] == dollar_tag:
@@ -111,6 +125,11 @@ def _split_sql(sql: str) -> list[str]:
         elif c == "-" and i + 1 < len(sql) and sql[i + 1] == "-":
             in_line_comment = True
             buf.append(c)
+        elif c == "/" and i + 1 < len(sql) and sql[i + 1] == "*":
+            block_depth = 1
+            buf.append("/*")
+            i += 2
+            continue
         elif c == "$":
             m = re.match(r"\$([A-Za-z0-9_]*)\$", sql[i:])
             if m:
