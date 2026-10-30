@@ -50,6 +50,29 @@ def test_created_table_names_falls_back_to_regex_for_unparseable_statements():
     assert _created_table_names(_split_sql(sql)) == ["app.dynamic_table"]
 
 
+def test_split_sql_ignores_semicolon_in_block_comment():
+    sql = "create view v as select 1 /* wins; ordered by id */ as a;"
+    assert _split_sql(sql) == ["create view v as select 1 /* wins; ordered by id */ as a"]
+
+
+def test_split_sql_ignores_semicolon_in_nested_block_comment():
+    sql = "select 1 /* outer; /* inner; */ still; comment */ as a; select 2;"
+    assert _split_sql(sql) == ["select 1 /* outer; /* inner; */ still; comment */ as a", "select 2"]
+
+
+def test_split_sql_ignores_semicolon_in_multiline_block_comment():
+    sql = "select 1 /* first;\n-- not a line comment; ' quote\nlast; */ as a;\nselect 2;"
+    assert _split_sql(sql) == ["select 1 /* first;\n-- not a line comment; ' quote\nlast; */ as a", "select 2"]
+
+
+def test_split_sql_block_comment_opener_in_string_or_dollar_quote_or_line_comment_is_not_a_comment():
+    assert _split_sql("select '/*'; select 2;") == ["select '/*'", "select 2"]
+    assert _split_sql("do $$ begin perform '/*'; end $$; select 2;") == ["do $$ begin perform '/*'; end $$", "select 2"]
+    assert _split_sql('select "/*"; select 2;') == ['select "/*"', "select 2"]
+    assert _split_sql('select "a""/*"; select 2;') == ['select "a""/*"', "select 2"]
+    assert _split_sql("select 1 -- /* open\n; select 2;") == ["select 1 -- /* open", "select 2"]
+
+
 def test_strip_line_comments_preserves_string_literals_containing_dashes():
     sql = "SELECT '--not-a-comment' AS x -- a real comment\nFROM t;"
     stripped = strip_line_comments(sql)
