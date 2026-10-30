@@ -68,6 +68,8 @@ def test_split_sql_ignores_semicolon_in_multiline_block_comment():
 def test_split_sql_block_comment_opener_in_string_or_dollar_quote_or_line_comment_is_not_a_comment():
     assert _split_sql("select '/*'; select 2;") == ["select '/*'", "select 2"]
     assert _split_sql("do $$ begin perform '/*'; end $$; select 2;") == ["do $$ begin perform '/*'; end $$", "select 2"]
+    assert _split_sql('select "/*"; select 2;') == ['select "/*"', "select 2"]
+    assert _split_sql('select "a""/*"; select 2;') == ['select "a""/*"', "select 2"]
     assert _split_sql("select 1 -- /* open\n; select 2;") == ["select 1 -- /* open", "select 2"]
 
 

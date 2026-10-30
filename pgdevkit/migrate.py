@@ -78,11 +78,12 @@ def default_tracking_table(start: Path | None = None, dialect: str | Dialect = "
 
 
 def _split_sql(sql: str) -> list[str]:
-    """Split SQL on semicolons, ignoring those inside comments (`--` and nested `/* */`), '...' strings, or $$...$$ blocks."""
+    """Split SQL on semicolons, ignoring those inside comments (`--` and nested `/* */`), '...' strings, "..." identifiers, or $$...$$ blocks."""
     stmts: list[str] = []
     buf: list[str] = []
     i = 0
     in_string = False
+    in_identifier = False
     in_line_comment = False
     block_depth = 0  # Postgres block comments nest
     dollar_tag: str | None = None
@@ -121,6 +122,13 @@ def _split_sql(sql: str) -> list[str]:
                 continue
             elif c == "'":
                 in_string = False
+            buf.append(c)
+        elif in_identifier:
+            if c == '"':
+                in_identifier = False  # an escaped "" just closes and immediately reopens
+            buf.append(c)
+        elif c == '"':
+            in_identifier = True
             buf.append(c)
         elif c == "-" and i + 1 < len(sql) and sql[i + 1] == "-":
             in_line_comment = True
