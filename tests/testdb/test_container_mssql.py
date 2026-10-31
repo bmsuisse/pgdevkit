@@ -39,3 +39,21 @@ def test_create_container_passes_through_resource_overrides(monkeypatch):
     assert client.containers.run_kwargs["shm_size"] == "256m"
     assert client.containers.run_kwargs["mem_limit"] == "4g"
     assert client.containers.run_kwargs["nano_cpus"] == 2_000_000_000
+
+
+def test_create_container_omits_user_by_default(monkeypatch):
+    monkeypatch.setattr(constants, "CONTAINER_USER", "")
+    client = _FakeClient()
+
+    _create_container(client)
+
+    assert "user" not in client.containers.run_kwargs
+
+
+def test_create_container_passes_container_user(monkeypatch):
+    monkeypatch.setattr(constants, "CONTAINER_USER", "0")
+    client = _FakeClient()
+
+    _create_container(client)
+
+    assert client.containers.run_kwargs["user"] == "0"
