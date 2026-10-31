@@ -33,3 +33,26 @@ def test_iter_sql_files_applies_schema_before_dependent_table_and_views():
         Path("app/views/b_base_view.sql"),
         Path("app/views/a_wrapper_view.sql"),
     ]
+
+
+def test_get_sql_deps_keeps_bracketed_nav_style_names_unquoted():
+    # exp.table_name() would re-quote this as dbo."Company$Cust Ledger Entry é",
+    # which never equals the name derived from the file name.
+    sql = "CREATE VIEW dbo.[V] AS SELECT [a] FROM dbo.[Company$Cust Ledger Entry é] AS c"
+    assert _get_sql_deps(sql, MSSQL) == {"dbo.V", "dbo.Company$Cust Ledger Entry é"}
+
+
+def test_iter_sql_files_orders_tables_before_views_with_nav_style_names(tmp_path: Path):
+    table = "Company$Cust_ Ledg_ Entry é"
+    tables = tmp_path / "dbo" / "tables"
+    views = tmp_path / "dbo" / "views"
+    tables.mkdir(parents=True)
+    views.mkdir(parents=True)
+    (tables / f"{table}.sql").write_text(
+        f"CREATE TABLE dbo.[{table}] ([a] int);\nCREATE INDEX [{table}$1] ON dbo.[{table}] ([a]);\n", encoding="utf-8"
+    )
+    (views / "A View.sql").write_text(f"CREATE VIEW dbo.[A View] AS SELECT [a] FROM dbo.[{table}];\n", encoding="utf-8")
+
+    order = [f.relative_to(tmp_path) for f, _ in _iter_sql_files(tmp_path, MSSQL)]
+
+    assert order == [Path("dbo/tables") / f"{table}.sql", Path("dbo/views/A View.sql")]
