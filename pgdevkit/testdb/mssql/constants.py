@@ -32,6 +32,10 @@ SHM_SIZE = os.environ.get("PGDEVKIT_TESTDB_MSSQL_SHM_SIZE", "")
 MEM_LIMIT = os.environ.get("PGDEVKIT_TESTDB_MSSQL_MEM_LIMIT", "")
 MEMSWAP_LIMIT = os.environ.get("PGDEVKIT_TESTDB_MSSQL_MEMSWAP_LIMIT", "")
 CPUS = os.environ.get("PGDEVKIT_TESTDB_MSSQL_CPUS", "")
+# User the container runs as (`--user`); unset keeps the image's own default.
+# Rootless Podman needs "0" -- the image's default `mssql` user can't exec
+# launch_sqlservr.sh there ("Permission denied").
+CONTAINER_USER = os.environ.get("PGDEVKIT_TESTDB_MSSQL_CONTAINER_USER", "")
 
 
 def validate_sa_password(password: str) -> None:

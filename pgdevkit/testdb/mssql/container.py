@@ -23,7 +23,7 @@ def _available(timeout: float = 3.0) -> bool:
         return False
 
 
-def _create_container(client: docker.DockerClient) -> None:
+def _create_container(client: docker.DockerClient | _docker.CliClient) -> None:
     constants.validate_sa_password(constants.PASSWORD)
     try:
         client.containers.run(
@@ -40,6 +40,7 @@ def _create_container(client: docker.DockerClient) -> None:
                 "MSSQL_PID": "Developer",
                 "MSSQL_MEMORY_LIMIT_MB": str(constants.MEMORY_LIMIT_MB),
             },
+            **({"user": constants.CONTAINER_USER} if constants.CONTAINER_USER else {}),
             **_docker.resource_kwargs(
                 tmpfs=constants.TMPFS,
                 shm_size=constants.SHM_SIZE,
