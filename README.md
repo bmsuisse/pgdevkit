@@ -276,7 +276,13 @@ changed any of these on a machine that already has one.
 Container management goes through the Docker API (the `docker` package,
 `docker.from_env()`, falling back to Podman's rootful/rootless socket) — it
 works against a real Docker daemon or Podman transparently, no CLI binary
-required either way.
+required either way. If no API socket is reachable (typical for rootless
+Podman without a systemd user session, where there is no `podman.sock` and
+`DOCKER_HOST` is unset), pgdevkit falls back to the `podman`/`docker` CLI
+(first one found on `PATH`, `podman` first). Set
+`PGDEVKIT_CONTAINER_ENGINE=podman` (or `docker`) to skip the socket probing
+and always use that CLI; `auto`/unset is the default behaviour above. This
+applies to both the Postgres and the MSSQL container.
 
 To point at a local Postgres install instead of the container — useful when
 neither is available, or you'd rather use peer authentication as the
@@ -308,6 +314,19 @@ memory management; like the Postgres one it also caps memory+swap, override via
 take effect when pgdevkit creates the container, not when restarting an
 existing stopped one (`docker rm -f pgdevkit-mssql` first if you've changed
 any of them).
+
+`PGDEVKIT_TESTDB_MSSQL_CONTAINER_USER` (unset by default, i.e. the image's own
+user) is passed as the container's `--user`.
+
+**Rootless Podman recipe.** The SQL Server image's default user can't start
+there (`exec container process /opt/mssql/bin/launch_sqlservr.sh: Permission
+denied`); running the container as root *inside* the user namespace fixes it
+and doesn't give the container any real host privileges:
+
+```bash
+export PGDEVKIT_CONTAINER_ENGINE=podman          # no podman.sock needed
+export PGDEVKIT_TESTDB_MSSQL_CONTAINER_USER=0
+```
 
 **Generated schemas.** When the DDL is produced by code (e.g. from a metadata
 export) instead of `database/` files, pass a hook to `ensure_testdb` /
