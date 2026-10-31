@@ -112,11 +112,13 @@ def _get_sql_deps(sql: str, dialect: Dialect = POSTGRES) -> set[str]:
             if t.args.get("this") is not None and db_node is not None:
                 if db_node.name.lower() in SYSTEM_SCHEMAS:
                     continue
-                # exp.table_name(), not str(t): str() includes " AS alias" for
-                # an aliased reference (e.g. "FROM editing.visit v"), which
-                # would never match the plain declared name any dependent
-                # file's own CREATE target is recorded under.
-                deps.add(exp.table_name(t))
+                # The raw identifier parts joined with ".", not str(t) (which
+                # includes " AS alias" for an aliased reference, e.g. "FROM
+                # editing.visit v") nor exp.table_name(t) (which re-quotes a
+                # name like [Company$Cust Ledger Entry] as dbo."Company$..."):
+                # neither would match the plain name a dependent file's own
+                # CREATE target is recorded under (its file name).
+                deps.add(".".join(part for part in (t.catalog, t.db, t.name) if part))
     return deps
 
 
