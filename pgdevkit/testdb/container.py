@@ -26,7 +26,7 @@ def _available(timeout: float = 3.0) -> bool:
         return False
 
 
-def _create_container(client: docker.DockerClient) -> None:
+def _create_container(client: docker.DockerClient | _docker.CliClient) -> None:
     try:
         client.containers.run(
             constants.IMAGE,
