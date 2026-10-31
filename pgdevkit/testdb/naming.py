@@ -67,7 +67,11 @@ def live_worktree_branches(repo: Path) -> list[str]:
     rev-parse --abbrev-ref HEAD`. Without this, a detached-HEAD worktree
     (e.g. a CI checkout, which defaults to one) would never appear "live"
     here, and its database would look orphaned and get dropped out from
-    under it."""
+    under it.
+
+    A *locked* worktree (`git worktree lock`, which also keeps `git worktree
+    prune` away from it) counts as live even when its path is missing -- the
+    documented use is a worktree on a drive that isn't mounted right now."""
     result = subprocess.run(
         ["git", "worktree", "list", "--porcelain"],
         cwd=repo,
@@ -80,15 +84,16 @@ def live_worktree_branches(repo: Path) -> list[str]:
     path: Path | None = None
     branch: str | None = None
     bare = False
+    locked = False
 
     def _flush() -> None:
-        if path is not None and not bare and branch is not None and path.exists():
+        if path is not None and not bare and branch is not None and (locked or path.exists()):
             branches.append(branch)
 
     for line in result.stdout.splitlines():
         if not line:
             _flush()
-            path, branch, bare = None, None, False
+            path, branch, bare, locked = None, None, False, False
         elif line.startswith("worktree "):
             path = Path(line[len("worktree ") :])
         elif line.startswith("branch "):
@@ -97,6 +102,8 @@ def live_worktree_branches(repo: Path) -> list[str]:
             branch = "HEAD"
         elif line == "bare":
             bare = True
+        elif line == "locked" or line.startswith("locked "):
+            locked = True
     _flush()
 
     return branches
