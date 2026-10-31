@@ -90,7 +90,7 @@ def _testdb_env():
 
 ### CI
 
-`ensure_testdb()`/`ensure_container()` talk to whatever Docker-compatible API is reachable (`DOCKER_HOST`, the default Docker socket, or Podman's socket as a fallback) — `ubuntu-latest`'s preinstalled Docker daemon just works, no setup step needed. There's no `PGDEVKIT_SKIP_CONTAINER` + service-container escape hatch wired through every fixture yet — if a project's CI has neither Docker nor Podman reachable, it needs its own workaround for now.
+`ensure_testdb()`/`ensure_container()` talk to whatever Docker-compatible API is reachable (`DOCKER_HOST`, the default Docker socket, or Podman's socket as a fallback), and fall back to the `podman`/`docker` CLI when there is no API socket (force it with `PGDEVKIT_CONTAINER_ENGINE=podman|docker`) — `ubuntu-latest`'s preinstalled Docker daemon just works, no setup step needed. There's no `PGDEVKIT_SKIP_CONTAINER` + service-container escape hatch wired through every fixture yet — if a project's CI has no Docker/Podman at all (neither API socket nor CLI), it needs its own workaround for now.
 
 ---
 
