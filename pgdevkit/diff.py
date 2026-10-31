@@ -192,11 +192,11 @@ def _parse_index_def(definition: str, dialect: Dialect = POSTGRES) -> dict | Non
 
     columns = []
     for col in (params.args.get("columns") if params else None) or []:
-        columns.append(_norm_sql(col.sql(dialect=dialect.sqlglot_name)))
+        columns.append(_norm_sql(_unquote(col).sql(dialect=dialect.sqlglot_name)))
 
     where_node = params.args.get("where") if params else None
-    where_ast = _unwrap_paren(where_node.this) if where_node else None
-    where_display = _norm_sql(where_node.this.sql(dialect=dialect.sqlglot_name)) if where_node else None
+    where_ast = _unwrap_paren(_unquote(where_node.this)) if where_node else None
+    where_display = _norm_sql(_unquote(where_node.this).sql(dialect=dialect.sqlglot_name)) if where_node else None
 
     return {
         "unique": bool(parsed.args.get("unique")),
@@ -207,8 +207,25 @@ def _parse_index_def(definition: str, dialect: Dialect = POSTGRES) -> dict | Non
     }
 
 
+def _unquote(node: exp.Expression) -> exp.Expression:
+    """A copy with every identifier's quoting dropped, so `[Posting Date]`
+    in a script (SSMS and generators bracket everything) and the same column
+    as the catalog reports it compare equal, however each side quoted it."""
+    node = node.copy()
+    for ident in node.find_all(exp.Identifier):
+        ident.set("quoted", False)
+    return node
+
+
 def _unwrap_paren(node):
-    return node.transform(lambda n: n.this if isinstance(n, exp.Paren) else n)
+    # transform() doesn't descend into a node it replaced, so a Paren nested
+    # inside another one ("([b]>(1))", how SQL Server stores a filter) needs
+    # another pass.
+    previous = None
+    while node != previous:
+        previous = node
+        node = node.transform(lambda n: n.this if isinstance(n, exp.Paren) else n)
+    return node
 
 
 def _norm_sql(s: str) -> str:
@@ -232,7 +249,8 @@ def _norm_type(t: str, dialect: Dialect = POSTGRES) -> str:
         s = s[:-2].strip()
 
     match = re.search(r"\(([^)]*)\)", s)
-    params = f"({match.group(1)})" if match else ""
+    # sqlglot renders "decimal(38, 20)", the catalogs report "decimal(38,20)".
+    params = f"({''.join(match.group(1).split())})" if match else ""
     base = (s[: match.start()] + s[match.end() :]).strip() if match else s
     base = " ".join(base.split())
 

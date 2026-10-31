@@ -6,6 +6,7 @@ import mssql_python
 import sqlglot
 import sqlglot.expressions as exp
 
+from .db.mssql_sql import ident
 from .models import (
     ColumnDef, ConstraintDef, DatabaseSchema, FunctionDef, IndexDef, TableDef, ViewDef,
 )
@@ -264,12 +265,14 @@ def _load_indexes(conn: Any, db: DatabaseSchema) -> None:
             WHERE ic.object_id = ? AND ic.index_id = ? AND ic.is_included_column = 0
             ORDER BY ic.key_ordinal
         """, (r["object_id"], r["index_id"]))
-        col_list = ", ".join(c["name"] for c in cols)
         unique = "UNIQUE " if r["is_unique"] else ""
         where_clause = f" WHERE {r['filter_definition']}" if r["filter_definition"] else ""
+        # Bracket-quoted: object names (NAV-style "Company$Cust. Ledger Entry")
+        # don't parse back unquoted, which would drop the diff to a raw text compare.
+        col_list = ", ".join(ident(c["name"]) for c in cols)
         definition = (
-            f"create {unique}index {r['index_name']} "
-            f"on {r['schema']}.{r['table_name']} ({col_list}){where_clause}"
+            f"create {unique}index {ident(r['index_name'])} "
+            f"on {ident(r['schema'])}.{ident(r['table_name'])} ({col_list}){where_clause}"
         ).lower()
         idx = IndexDef(schema=r["schema"], table=r["table_name"], name=r["index_name"], definition=definition)
         db.indexes[idx.qualified_name] = idx
