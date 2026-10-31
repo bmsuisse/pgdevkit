@@ -276,13 +276,9 @@ changed any of these on a machine that already has one.
 Container management goes through the Docker API (the `docker` package,
 `docker.from_env()`, falling back to Podman's rootful/rootless socket) — it
 works against a real Docker daemon or Podman transparently, no CLI binary
-required either way. If no API socket is reachable (typical for rootless
-Podman without a systemd user session, where there is no `podman.sock` and
-`DOCKER_HOST` is unset), pgdevkit falls back to the `podman`/`docker` CLI
-(first one found on `PATH`, `podman` first). Set
-`PGDEVKIT_CONTAINER_ENGINE=podman` (or `docker`) to skip the socket probing
-and always use that CLI; `auto`/unset is the default behaviour above. This
-applies to both the Postgres and the MSSQL container.
+required either way. With no reachable API socket (e.g. rootless Podman
+without a systemd user session) it falls back to the `podman`/`docker` CLI;
+`PGDEVKIT_CONTAINER_ENGINE=podman|docker` forces the CLI.
 
 To point at a local Postgres install instead of the container — useful when
 neither is available, or you'd rather use peer authentication as the
@@ -294,39 +290,12 @@ auth for local connections (Debian/Ubuntu Postgres ships this by default).
 
 ### MSSQL
 
-Add `engine = "mssql"` to `[tool.pgdevkit]` (or set
-`PGDEVKIT_TESTDB_ENGINE=mssql` for a one-off run) to manage a shared SQL
-Server container instead of Postgres — same one-container-per-machine,
-one-database-per-workspace model. Requires the `mssql` extra (see above).
-
-Container defaults (`localhost:14330`, `sa`/a generated complexity-valid
-password) can be overridden with `PGDEVKIT_TESTDB_MSSQL_HOST`, `_PORT`,
-`_USER`, `_PASSWORD`, `_IMAGE`, `_MEMORY_LIMIT_MB`. The container only
-bootstraps the `sa` login — additional logins are a known limitation.
-
-The same Docker-level resource knobs as the Postgres container are
-available here too: `PGDEVKIT_TESTDB_MSSQL_SHM_SIZE`,
-`PGDEVKIT_TESTDB_MSSQL_MEM_LIMIT` (a container-level cgroup limit, distinct
-from `_MEMORY_LIMIT_MB` above which only tunes SQL Server's own internal
-memory management; like the Postgres one it also caps memory+swap, override via
-`PGDEVKIT_TESTDB_MSSQL_MEMSWAP_LIMIT`), `PGDEVKIT_TESTDB_MSSQL_CPUS`, and
-`PGDEVKIT_TESTDB_MSSQL_TMPFS`. As with the Postgres container, these only
-take effect when pgdevkit creates the container, not when restarting an
-existing stopped one (`docker rm -f pgdevkit-mssql` first if you've changed
-any of them).
-
-`PGDEVKIT_TESTDB_MSSQL_CONTAINER_USER` (unset by default, i.e. the image's own
-user) is passed as the container's `--user`.
-
-**Rootless Podman recipe.** The SQL Server image's default user can't start
-there (`exec container process /opt/mssql/bin/launch_sqlservr.sh: Permission
-denied`); running the container as root *inside* the user namespace fixes it
-and doesn't give the container any real host privileges:
-
-```bash
-export PGDEVKIT_CONTAINER_ENGINE=podman          # no podman.sock needed
-export PGDEVKIT_TESTDB_MSSQL_CONTAINER_USER=0
-```
+Add `engine = "mssql"` to `[tool.pgdevkit]` (or set `PGDEVKIT_TESTDB_ENGINE=mssql`
+for a one-off run) to manage a shared SQL Server container instead of Postgres —
+same one-container-per-machine, one-database-per-workspace model; needs the
+`mssql` extra. Container settings, the rootless Podman recipe, generated schemas
+(`apply=` hook) and fast snapshot reset are in
+[`docs/mssql-testdb.md`](docs/mssql-testdb.md).
 
 `pgdb testdb shell` execs into
 [`sqlcmd`](https://github.com/microsoft/go-sqlcmd) (an external prerequisite,
