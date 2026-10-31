@@ -328,6 +328,45 @@ export PGDEVKIT_CONTAINER_ENGINE=podman          # no podman.sock needed
 export PGDEVKIT_TESTDB_MSSQL_CONTAINER_USER=0
 ```
 
+**Generated schemas.** When the DDL is produced by code (e.g. from a metadata
+export) instead of `database/` files, pass a hook to `ensure_testdb` /
+`reset_testdb`. It receives an autocommit `mssql_python` connection to this
+workspace's database, after the `database/` files are applied — or instead of
+them with `apply_scripts=False`:
+
+```python
+def create_tables(conn) -> None:
+    cur = conn.cursor()
+    for ddl in generate_ddl():  # your generator
+        cur.execute(ddl)
+
+ensure_testdb(apply=create_tables, apply_scripts=False)
+```
+
+Like the files, the hook runs on every call, so make it idempotent (or check
+whether the objects exist first). Not available for Postgres.
+
+**Fast reset with database snapshots.** Build the schema (and seed data) once,
+then capture it and revert to it per test instead of rebuilding:
+
+```python
+from pgdevkit.testdb import ensure_testdb, restore_testdb, snapshot_testdb
+
+ensure_testdb(apply=create_tables, apply_scripts=False, force_reset=True)
+snapshot_testdb()          # once per session; name="template" by default
+
+restore_testdb()           # per test: kicks other sessions off, reverts, keeps the snapshot
+```
+
+This uses SQL Server database snapshots (Developer/Enterprise edition — what
+the managed container runs). A revert is only possible from a database's *sole*
+snapshot, so `restore_testdb` raises if another snapshot of the database
+exists, instead of dropping it. Snapshot files (sparse) are written next to the
+database's data files, so they follow it onto a `PGDEVKIT_TESTDB_MSSQL_TMPFS`
+mount; `PGDEVKIT_TESTDB_MSSQL_SNAPSHOT_DIR` (a path inside the container)
+overrides that. Snapshots are dropped together with their database
+(`force_reset`, `clean_testdb`) and never reported as orphans.
+
 `pgdb testdb shell` execs into
 [`sqlcmd`](https://github.com/microsoft/go-sqlcmd) (an external prerequisite,
 the same category as `psql` for the Postgres path) rather than a Python

@@ -35,6 +35,9 @@ CPUS = os.environ.get("PGDEVKIT_TESTDB_MSSQL_CPUS", "")
 # User the container runs as (`--user`); unset keeps the image's own default.
 # Rootless Podman needs "0" -- the image's default `mssql` user can't exec
 # launch_sqlservr.sh there ("Permission denied").
+# Directory *inside the container* for database-snapshot files; unset puts them
+# next to the source database's data files.
+SNAPSHOT_DIR = os.environ.get("PGDEVKIT_TESTDB_MSSQL_SNAPSHOT_DIR", "").rstrip("/")
 CONTAINER_USER = os.environ.get("PGDEVKIT_TESTDB_MSSQL_CONTAINER_USER", "")
 
 
