@@ -119,6 +119,41 @@ def test_live_worktree_branches_excludes_a_manually_deleted_worktree_dir(tmp_pat
     assert live_worktree_branches(repo) == ["main"]
 
 
+def test_live_worktree_branches_finds_worktrees_nested_inside_the_repo(tmp_path: Path):
+    # Agent harnesses put worktrees under <repo>/.claude/worktrees/<id>; the
+    # lookup must not care where a linked worktree lives, nor which of the
+    # worktrees it is called from.
+    repo = tmp_path / "repo"
+    _init_repo(repo, "main")
+    nested = repo / ".claude" / "worktrees" / "agent-1"
+    subprocess.run(["git", "worktree", "add", "-q", str(nested), "-b", "worktree/agent-1"], cwd=repo, check=True)
+
+    assert set(live_worktree_branches(repo)) == {"main", "worktree/agent-1"}
+    assert set(live_worktree_branches(nested)) == {"main", "worktree/agent-1"}
+    assert current_branch(nested) == "worktree/agent-1"
+
+
+def test_live_worktree_branches_keeps_a_locked_worktree_whose_path_is_missing(tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_repo(repo, "main")
+    locked = tmp_path / "wt-locked"
+    subprocess.run(["git", "worktree", "add", "-q", str(locked), "-b", "locked-branch"], cwd=repo, check=True)
+    subprocess.run(["git", "worktree", "lock", "--reason", "on a removable drive", str(locked)], cwd=repo, check=True)
+    shutil.rmtree(locked)
+
+    assert set(live_worktree_branches(repo)) == {"main", "locked-branch"}
+
+
+def test_live_worktree_branches_keeps_a_locked_worktree_that_is_present(tmp_path: Path):
+    repo = tmp_path / "repo"
+    _init_repo(repo, "main")
+    locked = tmp_path / "wt-locked"
+    subprocess.run(["git", "worktree", "add", "-q", str(locked), "-b", "locked-branch"], cwd=repo, check=True)
+    subprocess.run(["git", "worktree", "lock", str(locked)], cwd=repo, check=True)
+
+    assert set(live_worktree_branches(repo)) == {"main", "locked-branch"}
+
+
 def test_expected_db_names_covers_every_live_branch():
     config = ProjectConfig(name="proj")
     assert expected_db_names(config, ["main", "feature"]) == {"proj_main", "proj_feature"}
