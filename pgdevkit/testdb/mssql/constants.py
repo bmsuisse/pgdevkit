@@ -32,6 +32,9 @@ SHM_SIZE = os.environ.get("PGDEVKIT_TESTDB_MSSQL_SHM_SIZE", "")
 MEM_LIMIT = os.environ.get("PGDEVKIT_TESTDB_MSSQL_MEM_LIMIT", "")
 MEMSWAP_LIMIT = os.environ.get("PGDEVKIT_TESTDB_MSSQL_MEMSWAP_LIMIT", "")
 CPUS = os.environ.get("PGDEVKIT_TESTDB_MSSQL_CPUS", "")
+# Directory *inside the container* for database-snapshot files; unset puts them
+# next to the source database's data files.
+SNAPSHOT_DIR = os.environ.get("PGDEVKIT_TESTDB_MSSQL_SNAPSHOT_DIR", "").rstrip("/")
 
 
 def validate_sa_password(password: str) -> None:

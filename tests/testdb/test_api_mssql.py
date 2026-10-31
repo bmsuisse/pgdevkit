@@ -3,7 +3,10 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from pgdevkit.testdb.api import shell_argv, status
+import pytest
+
+from pgdevkit.testdb.api import ensure_testdb, restore_testdb, shell_argv, snapshot_testdb, status
+from pgdevkit.testdb.mssql.api import _snapshot_db_name
 
 
 def _make_mssql_project(base: Path, name: str) -> Path:
@@ -56,3 +59,29 @@ def test_shell_argv_uses_psql_for_postgres(tmp_path: Path):
     binary, argv = shell_argv(project)
     assert binary == "psql"
     assert argv[0] == "psql"
+
+
+def test_snapshot_db_name_is_derived_from_the_source_db():
+    assert _snapshot_db_name("proj_main", "template") == "proj_main__ss_template"
+
+
+@pytest.mark.parametrize("name", ["", "a b", "x]; DROP DATABASE master;--", "é"])
+def test_snapshot_name_rejects_anything_but_word_characters(name: str):
+    with pytest.raises(ValueError, match="Snapshot name"):
+        _snapshot_db_name("proj_main", name)
+
+
+def test_snapshot_and_hook_are_mssql_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("PGDEVKIT_TESTDB_BRANCH", "main")
+    project = tmp_path / "pgproj"
+    project.mkdir()
+    (project / "pyproject.toml").write_text('[tool.pgdevkit]\nname = "pgproj"\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="mssql"):
+        snapshot_testdb(project)
+    with pytest.raises(ValueError, match="mssql"):
+        restore_testdb(project)
+    with pytest.raises(ValueError, match="mssql"):
+        ensure_testdb(project, apply=lambda conn: None)
+    with pytest.raises(ValueError, match="mssql"):
+        ensure_testdb(project, apply_scripts=False)

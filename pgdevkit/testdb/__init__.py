@@ -4,8 +4,10 @@ from .api import (
     ensure_testdb,
     find_orphaned_dbs,
     reset_testdb,
+    restore_testdb,
     run_sql,
     shell_argv,
+    snapshot_testdb,
     status,
     workspace_db_names,
 )
@@ -16,8 +18,10 @@ __all__ = [
     "ensure_testdb",
     "find_orphaned_dbs",
     "reset_testdb",
+    "restore_testdb",
     "run_sql",
     "shell_argv",
+    "snapshot_testdb",
     "status",
     "workspace_db_names",
 ]

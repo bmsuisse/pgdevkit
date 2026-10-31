@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import mssql_python
 
@@ -59,6 +60,9 @@ async def _drop_database(db_name: str) -> None:
             cur.execute("SELECT 1 FROM sys.databases WHERE name = ?", [db_name])
             if not cur.fetchone():
                 return
+            # SQL Server refuses to drop a database that still has snapshots.
+            for snapshot in _snapshots_of(cur, db_name):
+                cur.execute(f"DROP DATABASE IF EXISTS {ident(snapshot)}")
             # One statement kills other sessions and drops -- SQL Server's
             # equivalent of Postgres's pg_terminate_backend()+DROP DATABASE.
             cur.execute(f"ALTER DATABASE {ident(db_name)} SET SINGLE_USER WITH ROLLBACK IMMEDIATE")
@@ -142,6 +146,17 @@ async def _apply(
         await asyncio.to_thread(conn.close)
 
 
+async def _run_apply_hook(db_name: str, apply: Callable[[Any], None]) -> None:
+    def _run() -> None:
+        conn = mssql_python.connect(_db_dsn(db_name), autocommit=True)
+        try:
+            apply(conn)
+        finally:
+            conn.close()
+
+    await asyncio.to_thread(_run)
+
+
 def ensure_testdb(
     config: ProjectConfig,
     db_name: str,
@@ -152,6 +167,8 @@ def ensure_testdb(
     exclude_areas: frozenset[str] | None = None,
     schemas: frozenset[str] | None = None,
     exclude_schemas: frozenset[str] | None = None,
+    apply: Callable[[Any], None] | None = None,
+    apply_scripts: bool = True,
 ) -> dict[str, str]:
     ensure_mssql_container()
 
@@ -159,10 +176,13 @@ def ensure_testdb(
         if force_reset:
             await _drop_database(db_name)
         await _ensure_database(db_name)
-        await _apply(
-            config, db_name, force_reset,
-            env=env, areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
-        )
+        if apply_scripts:
+            await _apply(
+                config, db_name, force_reset,
+                env=env, areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
+            )
+        if apply is not None:
+            await _run_apply_hook(db_name, apply)
 
     asyncio.run(_run())
     return _env_for(config, db_name)
@@ -177,7 +197,13 @@ async def _dbs_with_prefix(prefix: str) -> list[str]:
         conn = mssql_python.connect(_admin_dsn(), autocommit=True)
         try:
             cur = conn.cursor()
-            cur.execute("SELECT name FROM sys.databases WHERE name LIKE ? ESCAPE '\\'", [f"{escaped_prefix}%"])
+            # Snapshots (source_database_id set) belong to their source database:
+            # they are dropped together with it, never listed on their own -- else
+            # a live worktree's snapshot would look like an orphan.
+            cur.execute(
+                "SELECT name FROM sys.databases WHERE name LIKE ? ESCAPE '\\' AND source_database_id IS NULL",
+                [f"{escaped_prefix}%"],
+            )
             return [row[0] for row in cur.fetchall()]
         finally:
             conn.close()
@@ -212,6 +238,78 @@ def clean_testdb(config: ProjectConfig, db_name: str, all: bool, orphaned: bool 
             await _drop_database(name)
 
     asyncio.run(_run())
+
+
+_SNAPSHOT_NAME = re.compile(r"[A-Za-z0-9_]+")
+
+
+def _snapshot_db_name(db_name: str, name: str) -> str:
+    if not _SNAPSHOT_NAME.fullmatch(name):
+        raise ValueError(f"Snapshot name must match [A-Za-z0-9_]+, got {name!r}")
+    return f"{db_name}__ss_{name}"
+
+
+def _literal(value: str) -> str:
+    return "N'" + value.replace("'", "''") + "'"
+
+
+def _snapshots_of(cur: Any, db_name: str) -> list[str]:
+    cur.execute("SELECT name FROM sys.databases WHERE source_database_id = DB_ID(?) ORDER BY name", [db_name])
+    return [row[0] for row in cur.fetchall()]
+
+
+def snapshot_testdb(config: ProjectConfig, db_name: str, name: str) -> str:
+    """Create (or replace) the database snapshot `name` of `db_name` and
+    return the snapshot's database name. The snapshot's sparse files go next to
+    the source database's data files (so they follow it onto a tmpfs mount) unless
+    PGDEVKIT_TESTDB_MSSQL_SNAPSHOT_DIR says otherwise -- a path inside the container."""
+    snapshot = _snapshot_db_name(db_name, name)
+    conn = mssql_python.connect(_admin_dsn(), autocommit=True)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT name, physical_name FROM sys.master_files WHERE database_id = DB_ID(?) AND type = 0 ORDER BY file_id",
+            [db_name],
+        )
+        files = [(row[0], row[1]) for row in cur.fetchall()]
+        if not files:
+            raise RuntimeError(f"Database {db_name!r} does not exist -- call ensure_testdb() first")
+        directory = constants.SNAPSHOT_DIR or files[0][1].rsplit("/", 1)[0]
+        cur.execute(f"DROP DATABASE IF EXISTS {ident(snapshot)}")
+        file_specs = ", ".join(
+            f"(NAME = {_literal(logical)}, FILENAME = {_literal(f'{directory}/{snapshot}_{logical}.ss')})"
+            for logical, _ in files
+        )
+        cur.execute(f"CREATE DATABASE {ident(snapshot)} ON {file_specs} AS SNAPSHOT OF {ident(db_name)}")
+    finally:
+        conn.close()
+    return snapshot
+
+
+def restore_testdb(config: ProjectConfig, db_name: str, name: str) -> None:
+    """Revert `db_name` to the snapshot `name`, disconnecting everyone else
+    first. The snapshot is kept, so it can be restored again. SQL Server only
+    reverts from a database's sole snapshot, so any other snapshot of
+    `db_name` has to be dropped first -- this raises instead of dropping it."""
+    snapshot = _snapshot_db_name(db_name, name)
+    conn = mssql_python.connect(_admin_dsn(), autocommit=True)
+    try:
+        cur = conn.cursor()
+        snapshots = _snapshots_of(cur, db_name)
+        if snapshot not in snapshots:
+            raise RuntimeError(f"Database {db_name!r} has no snapshot {name!r} -- call snapshot_testdb() first")
+        others = [s for s in snapshots if s != snapshot]
+        if others:
+            raise RuntimeError(
+                f"SQL Server can only revert from the sole snapshot of a database; also found: {', '.join(others)}"
+            )
+        cur.execute(f"ALTER DATABASE {ident(db_name)} SET SINGLE_USER WITH ROLLBACK IMMEDIATE")
+        try:
+            cur.execute(f"RESTORE DATABASE {ident(db_name)} FROM DATABASE_SNAPSHOT = {_literal(snapshot)}")
+        finally:
+            cur.execute(f"ALTER DATABASE {ident(db_name)} SET MULTI_USER")
+    finally:
+        conn.close()
 
 
 def status(config: ProjectConfig, db_name: str) -> dict[str, str]:
