@@ -36,8 +36,23 @@ requires_mssql = pytest.mark.skipif(
     reason="no Docker-compatible API reachable, or the mssql extra isn't installed",
 )
 
+def _has_mariadb_support() -> bool:
+    try:
+        import pymysql  # noqa: F401
+    except ImportError:
+        return False
+    return _has_container_runtime()
+
+
+requires_mariadb = pytest.mark.skipif(
+    not _has_mariadb_support(),
+    reason="no Docker-compatible API reachable, or the mariadb extra isn't installed",
+)
+
 FIXTURES = Path(__file__).parent / "fixtures" / "database"
 MSSQL_FIXTURES = Path(__file__).parent / "fixtures" / "database_mssql"
+MARIADB_FIXTURES = Path(__file__).parent / "fixtures" / "database_mariadb"
+_ENGINE_FIXTURES = {"postgres": FIXTURES, "mssql": MSSQL_FIXTURES, "mariadb": MARIADB_FIXTURES}
 
 # Appended to every test project's [tool.pgdevkit].name so that two pytest
 # processes (e.g. from separate git worktrees) running against the shared
@@ -49,7 +64,7 @@ RUN_SUFFIX = f"pid{os.getpid()}"
 def _make_project(base: Path, name: str, branch: str, engine: str = "postgres") -> Path:
     project = base / f"{name}-{branch}"
     project.mkdir()
-    (project / "database").symlink_to(MSSQL_FIXTURES if engine == "mssql" else FIXTURES)
+    (project / "database").symlink_to(_ENGINE_FIXTURES[engine])
     engine_line = f'engine = "{engine}"\n' if engine != "postgres" else ""
     (project / "pyproject.toml").write_text(
         f'[tool.pgdevkit]\nname = "{name}_{RUN_SUFFIX}"\nenv_prefix = "{name.upper()}_"\n{engine_line}',

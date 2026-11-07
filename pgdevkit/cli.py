@@ -14,9 +14,10 @@ from rich.table import Table
 from rich import box
 from tqdm import tqdm
 
-from . import migrate, migrate_mssql, stats, testdb
+from . import migrate, migrate_mariadb, migrate_mssql, stats, testdb
 from .backends import get_backend
-from .connection import build_conninfo, build_mssql_conninfo
+from .dialect import resolve_dialect
+from .connection import build_conninfo, build_mariadb_conninfo, build_mssql_conninfo
 from .diff import DiffKind, compute_diff
 from .fetch_missing import SUBFOLDER, find_missing_objects, layer_folder_for, reconstruct_ddl
 from .parser import parse_directory
@@ -49,7 +50,10 @@ _TESTDB_ENV_OPTION = typer.Option(
     help="Environment to apply: skips any <name>.<other-env>.sql file (e.g. grants.prod.sql); untagged files always apply",
 )
 _MIGRATE_DIALECT_OPTION = typer.Option(
-    "postgres", "--dialect", help="postgres (default) or mssql; mssql needs the mssql extra and uses --url as an ODBC connection string"
+    "postgres",
+    "--dialect",
+    help="postgres (default), mssql or mariadb; mssql needs the mssql extra and uses --url as an ODBC "
+    "connection string, mariadb needs the mariadb extra and uses --url as mysql://user:pass@host:port/db",
 )
 _MIGRATE_ENV_OPTION = typer.Option(
     None,
@@ -62,7 +66,7 @@ _MIGRATE_ENV_OPTION = typer.Option(
 def _as_set(values: list[str]) -> frozenset[str] | None:
     return frozenset(values) if values else None
 
-testdb_app = typer.Typer(name="testdb", help="Manage the shared local Postgres test container")
+testdb_app = typer.Typer(name="testdb", help="Manage the shared local test database container (Postgres, MSSQL or MariaDB)")
 app.add_typer(testdb_app, name="testdb")
 
 migrate_app = typer.Typer(
@@ -352,7 +356,7 @@ def testdb_status() -> None:
 
 @testdb_app.command("shell")
 def testdb_shell() -> None:
-    """Drop into an interactive shell (psql, or sqlcmd for MSSQL) against
+    """Drop into an interactive shell (psql, sqlcmd for MSSQL, or mariadb) against
     this workspace's database."""
     binary, argv = testdb.shell_argv()
     os.execvp(binary, argv)
@@ -406,23 +410,33 @@ def _migrate_target(
 ) -> tuple[str, str, str]:
     """Resolve (conninfo, dialect name, tracking table) for a migrate command."""
     try:
-        resolved = get_backend(dialect).dialect
+        resolved = resolve_dialect(dialect)
     except ValueError as e:
         err_console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(2)
-    if resolved.name == "mssql":
+    driver_check = {"mssql": migrate_mssql.require_driver, "mariadb": migrate_mariadb.require_driver}.get(resolved.name)
+    if driver_check:
         try:
-            migrate_mssql.require_driver()
+            driver_check()
         except ImportError as e:
             err_console.print(f"[red]Error:[/red] {escape(str(e))}")
             raise typer.Exit(2)
+    build = {"mssql": build_mssql_conninfo, "mariadb": build_mariadb_conninfo}.get(resolved.name, build_conninfo)
     try:
-        conninfo = (build_mssql_conninfo if resolved.name == "mssql" else build_conninfo)(url, entra_user)
+        conninfo = build(url, entra_user)
     except ValueError as e:
         err_console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(2)
     tracking_table = tracking_table or migrate.default_tracking_table(migrations_dir, dialect=resolved)
     return conninfo, resolved.name, tracking_table
+
+
+def _reject_schema_filters(dialect: str, schema: list[str], exclude_schema: list[str]) -> None:
+    """MariaDB has no schemas inside a database; the filter's Postgres semantics would
+    silently drop migrations, so refuse instead."""
+    if dialect == "mariadb" and (schema or exclude_schema):
+        err_console.print("[red]Error:[/red] --schema/--exclude-schema are not supported with --dialect mariadb")
+        raise typer.Exit(2)
 
 
 @migrate_app.command("check")
@@ -432,7 +446,8 @@ def migrate_check(
         ...,
         "--url",
         help="PostgreSQL DSN (postgresql://user:pass@host:port/db), or with --dialect mssql "
-        "a connection string (Server=host,1433;Database=db;UID=user;PWD=pass)",
+        "a connection string (Server=host,1433;Database=db;UID=user;PWD=pass), or with --dialect "
+        "mariadb mysql://user:pass@host:port/db",
     ),
     entra_user: str | None = typer.Option(
         None,
@@ -445,7 +460,7 @@ def migrate_check(
         "--tracking-table",
         help="schema.table recording applied migrations "
         "(default: tool.pgdevkit.migrations_table in pyproject.toml, else public.schema_migrations "
-        "-- dbo.schema_migrations with --dialect mssql)",
+        "-- dbo.schema_migrations with --dialect mssql, schema_migrations with --dialect mariadb)",
     ),
     area: list[str] = _AREA_OPTION,
     exclude_area: list[str] = _EXCLUDE_AREA_OPTION,
@@ -460,6 +475,7 @@ def migrate_check(
         raise typer.Exit(2)
 
     conninfo, dialect, tracking_table = _migrate_target(url, entra_user, dialect, tracking_table, migrations_dir)
+    _reject_schema_filters(dialect, schema, exclude_schema)
     local_files = migrate.list_migration_files(
         migrations_dir,
         areas=_as_set(area),
@@ -497,7 +513,8 @@ def migrate_apply(
         ...,
         "--url",
         help="PostgreSQL DSN (postgresql://user:pass@host:port/db), or with --dialect mssql "
-        "a connection string (Server=host,1433;Database=db;UID=user;PWD=pass)",
+        "a connection string (Server=host,1433;Database=db;UID=user;PWD=pass), or with --dialect "
+        "mariadb mysql://user:pass@host:port/db",
     ),
     entra_user: str | None = typer.Option(
         None,
@@ -510,7 +527,7 @@ def migrate_apply(
         "--tracking-table",
         help="schema.table recording applied migrations "
         "(default: tool.pgdevkit.migrations_table in pyproject.toml, else public.schema_migrations "
-        "-- dbo.schema_migrations with --dialect mssql)",
+        "-- dbo.schema_migrations with --dialect mssql, schema_migrations with --dialect mariadb)",
     ),
     file: str | None = typer.Option(
         None, "--file", help="Apply only this one filename (relative to migrations_dir) instead of all pending"
@@ -530,6 +547,7 @@ def migrate_apply(
         raise typer.Exit(2)
 
     conninfo, dialect, tracking_table = _migrate_target(url, entra_user, dialect, tracking_table, migrations_dir)
+    _reject_schema_filters(dialect, schema, exclude_schema)
     areas, exclude_areas = _as_set(area), _as_set(exclude_area)
     schemas, exclude_schemas = _as_set(schema), _as_set(exclude_schema)
     target_desc = _describe_target(url, dialect)

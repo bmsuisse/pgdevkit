@@ -1,9 +1,9 @@
 """Apply numbered, forward-only SQL migration files to a live Postgres database,
 tracked in a `schema.table` (default `public.schema_migrations`) so re-runs only
 apply what's pending. Ported from a hand-rolled per-project script. Every function that
-touches a database takes `dialect="postgres"` (default) or `"mssql"`; the MSSQL
-implementation lives in `.migrate_mssql` and is only imported when asked for, so the
-`mssql` extra stays optional.
+touches a database takes `dialect="postgres"` (default), `"mssql"` or `"mariadb"`; those
+implementations live in `.migrate_mssql` / `.migrate_mariadb` and are only imported when
+asked for, so the `mssql` / `mariadb` extras stay optional.
 """
 
 from __future__ import annotations
@@ -49,8 +49,20 @@ def _tracking_table_identifier(tracking_table: str) -> pg_sql.Identifier:
     return pg_sql.Identifier(schema, table)
 
 
-def _is_mssql(dialect: str | Dialect) -> bool:
-    return resolve_dialect(dialect).name == "mssql"
+def _engine(dialect: str | Dialect):
+    """The `migrate_<engine>` module for a non-Postgres dialect, None for Postgres. Both
+    expose the same primitives; the unit they run is a `GO` batch (MSSQL) or a statement
+    (MariaDB), called "batches" below."""
+    name = resolve_dialect(dialect).name
+    if name == "mssql":
+        from . import migrate_mssql
+
+        return migrate_mssql
+    if name == "mariadb":
+        from . import migrate_mariadb
+
+        return migrate_mariadb
+    return None
 
 
 def _find_pyproject(start: Path) -> Path | None:
@@ -65,15 +77,20 @@ def default_tracking_table(start: Path | None = None, dialect: str | Dialect = "
     """The project's configured tracking table: `[tool.pgdevkit].migrations_table` in the
     nearest pyproject.toml at or above `start` (default: cwd), or "public.schema_migrations"
     if neither is set. For MSSQL the key is `mssql_migrations_table` (default
-    "dbo.schema_migrations"), so a Postgres-style `migrations_table` never leaks into it. Lets a project fix its tracking table once instead of passing
+    "dbo.schema_migrations"), for MariaDB `mariadb_migrations_table` (default
+    "schema_migrations", MariaDB having no schemas), so a Postgres-style `migrations_table`
+    never leaks into them. Lets a project fix its tracking table once instead of passing
     --tracking-table on every `pgdb migrate` invocation."""
-    default = f"{resolve_dialect(dialect).default_schema}.schema_migrations"
+    resolved = resolve_dialect(dialect)
+    default = (
+        f"{resolved.default_schema}.schema_migrations" if resolved.default_schema else "schema_migrations"
+    )
     pyproject = _find_pyproject((start or Path.cwd()).resolve())
     if pyproject is None:
         return default
     data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
     section = data.get("tool", {}).get("pgdevkit", {})
-    key = "mssql_migrations_table" if resolve_dialect(dialect).name == "mssql" else "migrations_table"
+    key = "migrations_table" if resolved.name == "postgres" else f"{resolved.name}_migrations_table"
     return section.get(key, default)
 
 
@@ -256,15 +273,14 @@ def already_fully_applied(conninfo: str, path: Path, dialect: str | Dialect = "p
     auto-answer "already done" without prompting, so migrations that are trivially no-ops
     don't interrupt review. A single unrecognized or not-yet-applied statement means
     False — this never guesses. For MSSQL the unit is a `GO`-separated batch and the
-    recognized shapes are table, view, schema and ADD column."""
-    if _is_mssql(dialect):
-        from . import migrate_mssql
-
-        batches = migrate_mssql.split_batches(path.read_text(encoding="utf-8"))
-        mssql_targets = [migrate_mssql.idempotent_target(b) for b in batches]
-        if not batches or any(t is None for t in mssql_targets):
+    recognized shapes are table, view, schema and ADD column; for MariaDB the unit is a
+    statement."""
+    if engine := _engine(dialect):
+        batches = engine.split_batches(path.read_text(encoding="utf-8"))
+        engine_targets = [engine.idempotent_target(b) for b in batches]
+        if not batches or any(t is None for t in engine_targets):
             return False
-        return migrate_mssql.targets_exist(conninfo, cast(list[tuple[str, ...]], mssql_targets))
+        return engine.targets_exist(conninfo, cast(list[tuple[str, ...]], engine_targets))
     stmts = _split_sql(path.read_text(encoding="utf-8"))
     if not stmts:
         return False
@@ -299,10 +315,8 @@ def applied_migrations(
     conninfo: str, tracking_table: str, dialect: str | Dialect = "postgres"
 ) -> dict[str, tuple[datetime, str]]:
     """Filename -> (applied_at, applied_by) for every migration recorded in the tracking table."""
-    if _is_mssql(dialect):
-        from . import migrate_mssql
-
-        return migrate_mssql.applied_migrations(conninfo, tracking_table)
+    if engine := _engine(dialect):
+        return engine.applied_migrations(conninfo, tracking_table)
     table = _tracking_table_identifier(tracking_table)
     with psycopg.connect(conninfo) as con:
         try:
@@ -343,10 +357,8 @@ def record_applied(
 ) -> bool:
     """Best-effort insert into the tracking table. Returns False without raising if the
     tracking table doesn't exist yet — e.g. this migration is the one that creates it."""
-    if _is_mssql(dialect):
-        from . import migrate_mssql
-
-        return migrate_mssql.record_applied(conninfo, tracking_table, filename)
+    if engine := _engine(dialect):
+        return engine.record_applied(conninfo, tracking_table, filename)
     table = _tracking_table_identifier(tracking_table)
     with psycopg.connect(conninfo) as con:
         try:
@@ -366,20 +378,17 @@ def created_table_names(sql: str, dialect: str | Dialect = "postgres") -> list[s
     wrapper around the same detection `apply_migration` uses internally, for callers that
     run a script directly (e.g. via `execute_sql_script`) instead of through a tracked
     migration file, and still want to know what tables -- if any -- it created."""
-    if _is_mssql(dialect):
-        from . import migrate_mssql
-
-        return migrate_mssql.created_table_names(migrate_mssql.split_batches(sql))
+    if engine := _engine(dialect):
+        return engine.created_table_names(engine.split_batches(sql))
     return _created_table_names(_split_sql(sql))
 
 
 def verify_created_tables(conninfo: str, stmts: list[str], dialect: str | Dialect = "postgres") -> list[str]:
     """Table names from this migration's CREATE TABLE statements that do NOT exist in the
-    database. Empty means everything landed. For MSSQL, `stmts` are `GO`-separated batches."""
-    if _is_mssql(dialect):
-        from . import migrate_mssql
-
-        return migrate_mssql.missing_tables(conninfo, migrate_mssql.created_table_names(stmts))
+    database. Empty means everything landed. For MSSQL, `stmts` are `GO`-separated batches;
+    for MariaDB, statements."""
+    if engine := _engine(dialect):
+        return engine.missing_tables(conninfo, engine.created_table_names(stmts))
     tables = _created_table_names(stmts)
     if not tables:
         return []
@@ -400,7 +409,7 @@ def missing_privileges(
     all of them. For guarding against the classic "migration creates a table, nobody
     grants it to the app's runtime role" gap: check the tables a migration just created
     against the role that will actually query them at runtime."""
-    if _is_mssql(dialect):
+    if _engine(dialect):
         raise NotImplementedError("missing_privileges is only available for the postgres dialect")
     if not tables:
         return []
@@ -426,11 +435,10 @@ def execute_sql_script(conninfo: str, sql: str, dialect: str | Dialect = "postgr
     and line comments never get split mid-statement). Unlike apply_migration, this does
     no tracking-table bookkeeping and isn't forward-only -- for scripts meant to re-run
     every time, like an idempotent `GRANT ... ON ALL TABLES IN SCHEMA` privilege sync.
-    For MSSQL the script is split on `GO` lines instead and runs as one transaction."""
-    if _is_mssql(dialect):
-        from . import migrate_mssql
-
-        migrate_mssql.execute_batches(conninfo, migrate_mssql.split_batches(sql))
+    For MSSQL the script is split on `GO` lines instead and runs as one transaction;
+    for MariaDB it is split by `split_mariadb_statements` (DDL commits implicitly)."""
+    if engine := _engine(dialect):
+        engine.execute_batches(conninfo, engine.split_batches(sql))
         return
     _execute_stmts(conninfo, _split_sql(sql))
 
@@ -452,17 +460,12 @@ def apply_migration(
 ) -> ApplyResult:
     sql = path.read_text(encoding="utf-8")
     filename = path.name
-    mssql = _is_mssql(dialect)
-    if mssql:
-        from . import migrate_mssql
-
-        stmts = migrate_mssql.split_batches(sql)
-    else:
-        stmts = _split_sql(sql)
+    engine = _engine(dialect)
+    stmts = engine.split_batches(sql) if engine else _split_sql(sql)
 
     if not already_done:
-        if mssql:
-            migrate_mssql.execute_batches(conninfo, stmts)
+        if engine:
+            engine.execute_batches(conninfo, stmts)
         else:
             _execute_stmts(conninfo, stmts)
 
@@ -479,5 +482,5 @@ def apply_migration(
             f"{filename}: table(s) not found after apply — migration may have rolled back: "
             + ", ".join(missing)
         )
-    created = migrate_mssql.created_table_names(stmts) if mssql else _created_table_names(stmts)
+    created = engine.created_table_names(stmts) if engine else _created_table_names(stmts)
     return ApplyResult(filename, executed=True, verified_tables=created)

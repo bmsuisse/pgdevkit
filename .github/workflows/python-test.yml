@@ -31,7 +31,7 @@ jobs:
       - name: ty check
         run: uv run ty check pgdevkit
       - name: Test with pytest
-        run: uv run -m pytest --capture=tee-sys --maxfail=3 -m "not mssql" tests
+        run: uv run -m pytest --capture=tee-sys --maxfail=3 -m "not mssql and not mariadb" tests
 
   mssql-test:
     # Separate job (not folded into `build`) so a live SQL Server -- a much
@@ -54,3 +54,22 @@ jobs:
         run: uv sync --all-extras --all-groups
       - name: Run MSSQL-only tests
         run: uv run -m pytest --capture=tee-sys --maxfail=3 -m mssql tests
+
+  mariadb-test:
+    # Separate job, like `mssql-test`, so a live MariaDB never blocks the fast
+    # Postgres suite. PyMySQL is pure Python: no system driver to install.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - name: Install project dependencies
+        run: uv sync --all-extras --all-groups
+      - name: Run MariaDB-only tests
+        run: uv run -m pytest --capture=tee-sys --maxfail=3 -m mariadb tests
