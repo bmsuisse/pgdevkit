@@ -431,6 +431,14 @@ def _migrate_target(
     return conninfo, resolved.name, tracking_table
 
 
+def _reject_schema_filters(dialect: str, schema: list[str], exclude_schema: list[str]) -> None:
+    """MariaDB has no schemas inside a database; the filter's Postgres semantics would
+    silently drop migrations, so refuse instead."""
+    if dialect == "mariadb" and (schema or exclude_schema):
+        err_console.print("[red]Error:[/red] --schema/--exclude-schema are not supported with --dialect mariadb")
+        raise typer.Exit(2)
+
+
 @migrate_app.command("check")
 def migrate_check(
     migrations_dir: Path = typer.Argument(..., help="Directory of numbered .sql migration files"),
@@ -467,6 +475,7 @@ def migrate_check(
         raise typer.Exit(2)
 
     conninfo, dialect, tracking_table = _migrate_target(url, entra_user, dialect, tracking_table, migrations_dir)
+    _reject_schema_filters(dialect, schema, exclude_schema)
     local_files = migrate.list_migration_files(
         migrations_dir,
         areas=_as_set(area),
@@ -538,6 +547,7 @@ def migrate_apply(
         raise typer.Exit(2)
 
     conninfo, dialect, tracking_table = _migrate_target(url, entra_user, dialect, tracking_table, migrations_dir)
+    _reject_schema_filters(dialect, schema, exclude_schema)
     areas, exclude_areas = _as_set(area), _as_set(exclude_area)
     schemas, exclude_schemas = _as_set(schema), _as_set(exclude_schema)
     target_desc = _describe_target(url, dialect)

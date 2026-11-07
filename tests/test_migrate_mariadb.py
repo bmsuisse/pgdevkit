@@ -108,6 +108,15 @@ def test_cli_rejects_entra_user_with_mariadb(tmp_path: Path):
     assert result.exit_code == 2
 
 
+@pytest.mark.parametrize("command", ["check", "apply"])
+@pytest.mark.parametrize("flag", ["--schema", "--exclude-schema"])
+def test_cli_rejects_schema_filters_with_mariadb(tmp_path: Path, command: str, flag: str):
+    result = runner.invoke(
+        app, ["migrate", command, str(tmp_path), "--url", "mysql://u:p@h/db", "--dialect", "mariadb", flag, "app", "-y"]
+    )
+    assert result.exit_code == 2
+
+
 def test_cli_compare_rejects_mariadb(tmp_path: Path):
     result = runner.invoke(app, ["compare", str(tmp_path), "--url", "mysql://u:p@h/db", "--dialect", "mariadb"])
     assert result.exit_code == 2
