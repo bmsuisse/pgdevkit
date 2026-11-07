@@ -83,6 +83,14 @@ def build_mssql_conninfo(conn_str: str, entra_user: str | None = None) -> str:
     return f"{conn_str.rstrip().rstrip(';')};Authentication=ActiveDirectoryDefault"
 
 
+def build_mariadb_conninfo(url: str, entra_user: str | None = None) -> str:
+    """MariaDB counterpart of `build_conninfo`: the `mysql://user:pass@host:port/db` URL
+    is used as-is. Entra ID token auth doesn't exist for MariaDB, so `entra_user` is rejected."""
+    if entra_user is not None:
+        raise ValueError("--entra-user is not supported with --dialect mariadb")
+    return url
+
+
 def build_conninfo(
     url: str,
     entra_user: str | None = None,

@@ -23,6 +23,7 @@ from typing import Any
 
 import sqlglot
 
+from .sql_text import has_top_level_comma
 from .testdb.query import split_tsql_batches
 
 _IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_]*"
@@ -209,18 +210,6 @@ def _single_statement(batch: str) -> bool:
         return False
 
 
-def _has_top_level_comma(stmt: str) -> bool:
-    depth = 0
-    for c in stmt:
-        if c == "(":
-            depth += 1
-        elif c == ")":
-            depth -= 1
-        elif c == "," and depth == 0:
-            return True
-    return False
-
-
 def idempotent_target(batch: str) -> tuple[str, ...] | None:
     """MSSQL counterpart of `migrate._idempotent_target`: ("relation", name) for a table or
     view, ("schema", name), or ("column", table, column) for an ADD column. Anything else
@@ -237,7 +226,7 @@ def idempotent_target(batch: str) -> tuple[str, ...] | None:
     if m:
         return ("schema", _unbracket(m.group(1)))
     m = _ADD_COLUMN_RE.match(stripped)
-    if m and not _has_top_level_comma(stripped):
+    if m and not has_top_level_comma(stripped):
         return ("column", m.group(1), _unbracket(m.group(2)))
     return None
 

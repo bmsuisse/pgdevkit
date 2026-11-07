@@ -15,7 +15,13 @@ def get_backend(dialect: str | Dialect = "postgres") -> Backend:
     """Look up the `Backend` for a dialect name (or an already-resolved
     `Dialect`). Defaults to postgres."""
     resolved = resolve_dialect(dialect)
-    return _REGISTRY[resolved.name]
+    try:
+        return _REGISTRY[resolved.name]
+    except KeyError:
+        raise ValueError(
+            f"Dialect {resolved.name!r} has no introspection backend; "
+            f"this command supports {sorted(_REGISTRY)}"
+        ) from None
 
 
 __all__ = ["Backend", "MssqlBackend", "PostgresBackend", "get_backend"]

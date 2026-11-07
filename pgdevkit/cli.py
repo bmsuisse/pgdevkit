@@ -14,9 +14,10 @@ from rich.table import Table
 from rich import box
 from tqdm import tqdm
 
-from . import migrate, migrate_mssql, stats, testdb
+from . import migrate, migrate_mariadb, migrate_mssql, stats, testdb
 from .backends import get_backend
-from .connection import build_conninfo, build_mssql_conninfo
+from .dialect import resolve_dialect
+from .connection import build_conninfo, build_mariadb_conninfo, build_mssql_conninfo
 from .diff import DiffKind, compute_diff
 from .fetch_missing import SUBFOLDER, find_missing_objects, layer_folder_for, reconstruct_ddl
 from .parser import parse_directory
@@ -49,7 +50,10 @@ _TESTDB_ENV_OPTION = typer.Option(
     help="Environment to apply: skips any <name>.<other-env>.sql file (e.g. grants.prod.sql); untagged files always apply",
 )
 _MIGRATE_DIALECT_OPTION = typer.Option(
-    "postgres", "--dialect", help="postgres (default) or mssql; mssql needs the mssql extra and uses --url as an ODBC connection string"
+    "postgres",
+    "--dialect",
+    help="postgres (default), mssql or mariadb; mssql needs the mssql extra and uses --url as an ODBC "
+    "connection string, mariadb needs the mariadb extra and uses --url as mysql://user:pass@host:port/db",
 )
 _MIGRATE_ENV_OPTION = typer.Option(
     None,
@@ -406,18 +410,20 @@ def _migrate_target(
 ) -> tuple[str, str, str]:
     """Resolve (conninfo, dialect name, tracking table) for a migrate command."""
     try:
-        resolved = get_backend(dialect).dialect
+        resolved = resolve_dialect(dialect)
     except ValueError as e:
         err_console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(2)
-    if resolved.name == "mssql":
+    driver_check = {"mssql": migrate_mssql.require_driver, "mariadb": migrate_mariadb.require_driver}.get(resolved.name)
+    if driver_check:
         try:
-            migrate_mssql.require_driver()
+            driver_check()
         except ImportError as e:
             err_console.print(f"[red]Error:[/red] {escape(str(e))}")
             raise typer.Exit(2)
+    build = {"mssql": build_mssql_conninfo, "mariadb": build_mariadb_conninfo}.get(resolved.name, build_conninfo)
     try:
-        conninfo = (build_mssql_conninfo if resolved.name == "mssql" else build_conninfo)(url, entra_user)
+        conninfo = build(url, entra_user)
     except ValueError as e:
         err_console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(2)
@@ -432,7 +438,8 @@ def migrate_check(
         ...,
         "--url",
         help="PostgreSQL DSN (postgresql://user:pass@host:port/db), or with --dialect mssql "
-        "a connection string (Server=host,1433;Database=db;UID=user;PWD=pass)",
+        "a connection string (Server=host,1433;Database=db;UID=user;PWD=pass), or with --dialect "
+        "mariadb mysql://user:pass@host:port/db",
     ),
     entra_user: str | None = typer.Option(
         None,
@@ -445,7 +452,7 @@ def migrate_check(
         "--tracking-table",
         help="schema.table recording applied migrations "
         "(default: tool.pgdevkit.migrations_table in pyproject.toml, else public.schema_migrations "
-        "-- dbo.schema_migrations with --dialect mssql)",
+        "-- dbo.schema_migrations with --dialect mssql, schema_migrations with --dialect mariadb)",
     ),
     area: list[str] = _AREA_OPTION,
     exclude_area: list[str] = _EXCLUDE_AREA_OPTION,
@@ -497,7 +504,8 @@ def migrate_apply(
         ...,
         "--url",
         help="PostgreSQL DSN (postgresql://user:pass@host:port/db), or with --dialect mssql "
-        "a connection string (Server=host,1433;Database=db;UID=user;PWD=pass)",
+        "a connection string (Server=host,1433;Database=db;UID=user;PWD=pass), or with --dialect "
+        "mariadb mysql://user:pass@host:port/db",
     ),
     entra_user: str | None = typer.Option(
         None,
@@ -510,7 +518,7 @@ def migrate_apply(
         "--tracking-table",
         help="schema.table recording applied migrations "
         "(default: tool.pgdevkit.migrations_table in pyproject.toml, else public.schema_migrations "
-        "-- dbo.schema_migrations with --dialect mssql)",
+        "-- dbo.schema_migrations with --dialect mssql, schema_migrations with --dialect mariadb)",
     ),
     file: str | None = typer.Option(
         None, "--file", help="Apply only this one filename (relative to migrations_dir) instead of all pending"

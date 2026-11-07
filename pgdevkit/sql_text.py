@@ -54,3 +54,17 @@ def strip_line_comments(sql: str) -> str:
             buf.append(c)
         i += 1
     return "".join(buf)
+
+
+def has_top_level_comma(stmt: str) -> bool:
+    """Whether `stmt` has a ',' outside any parentheses -- e.g. a multi-column
+    `ALTER TABLE ... ADD a int, ADD b int`."""
+    depth = 0
+    for c in stmt:
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+        elif c == "," and depth == 0:
+            return True
+    return False

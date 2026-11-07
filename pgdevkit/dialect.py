@@ -89,9 +89,9 @@ MSSQL = Dialect(
 )
 
 # MariaDB has no schemas inside a database (a "schema" *is* a database), so
-# there's no default schema to fall back to. Only the testdb engine uses this
-# dialect, which is why it isn't in _REGISTRY: `compare`/`migrate`/`stats`
-# have no MariaDB backend, and resolving the name should fail loudly there.
+# there's no default schema to fall back to. Only the testdb engine and
+# `migrate` use this dialect: there is no introspection `Backend` for it, so
+# `compare`/`fetch-missing`/`update-stats` reject it (see `get_backend`).
 MARIADB = Dialect(
     name="mariadb",
     sqlglot_name="mysql",
@@ -100,7 +100,7 @@ MARIADB = Dialect(
     supports_composites=False,
 )
 
-_REGISTRY = {"postgres": POSTGRES, "mssql": MSSQL}
+_REGISTRY = {"postgres": POSTGRES, "mssql": MSSQL, "mariadb": MARIADB}
 
 
 def resolve_dialect(dialect: str | Dialect = "postgres") -> Dialect:

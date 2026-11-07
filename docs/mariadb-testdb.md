@@ -40,8 +40,10 @@ these MariaDB differences:
 ## Not supported (yet)
 
 `apply=`/`apply_scripts=False` hook, `snapshot_testdb`/`restore_testdb` (MariaDB
-has no database snapshots — use `reset_testdb`), and `compare`/`migrate`/
-`update-stats`/the `*_crud` helpers, which stay Postgres/MSSQL-only.
+has no database snapshots — use `reset_testdb`), and `compare`/`fetch-missing`/
+`update-stats`/the `*_crud` helpers, which stay Postgres/MSSQL-only. Applying
+migrations to a live MariaDB is covered by `pgdb migrate --dialect mariadb`
+(see the README).
 
 **Rootless Podman.** If the image's entrypoint can't start (`exec container
 process ... Permission denied`), try `PGDEVKIT_CONTAINER_ENGINE=podman` with

@@ -297,6 +297,10 @@ same one-container-per-machine, one-database-per-workspace model; needs the
 (`apply=` hook) and fast snapshot reset are in
 [`docs/mssql-testdb.md`](docs/mssql-testdb.md).
 
+`pgdb testdb shell` execs into `psql` (Postgres),
+[`sqlcmd`](https://github.com/microsoft/go-sqlcmd) (MSSQL) or `mariadb` (MariaDB) —
+external prerequisites rather than a Python REPL.
+
 ### MariaDB
 
 Add `engine = "mariadb"` (or `PGDEVKIT_TESTDB_ENGINE=mariadb`) to manage a shared
@@ -305,17 +309,12 @@ database, so `database/` files use unqualified names. Container settings, file
 conventions and limitations are in
 [`docs/mariadb-testdb.md`](docs/mariadb-testdb.md).
 
-`pgdb testdb shell` execs into
-[`sqlcmd`](https://github.com/microsoft/go-sqlcmd) (an external prerequisite,
-the same category as `psql` for the Postgres path) rather than a Python
-REPL.
-
 ## `pgdb migrate`
 
 Applies numbered, forward-only SQL migration files from a directory to a live
-Postgres or MSSQL database, tracking each one in a `schema.table` (default
-`public.schema_migrations`, `dbo.schema_migrations` for MSSQL) so repeat runs only
-apply what's pending.
+Postgres, MSSQL or MariaDB database, tracking each one in a `schema.table` (default
+`public.schema_migrations`, `dbo.schema_migrations` for MSSQL, `schema_migrations` for
+MariaDB) so repeat runs only apply what's pending.
 
 ```bash
 pgdb migrate check  path/to/database/_migration_scripts --url postgresql://user:pass@host:port/db
@@ -351,6 +350,34 @@ pgdb migrate apply path/to/database/_migration_scripts --dialect mssql \
   that credential chain resolves — the flag's value only switches Entra auth on. It
   can't be combined with an `Authentication=` already in the connection string.
 - `pgdevkit.migrate.missing_privileges` is not available for MSSQL.
+
+### MariaDB
+
+Pass `--dialect mariadb` (needs the `mariadb` extra) to both `check` and `apply`, with
+`--url` as a `mysql://` URL:
+
+```bash
+pgdb migrate apply path/to/database/_migration_scripts --dialect mariadb \
+    --url "mysql://user:pass@host:3306/db"
+```
+
+- **DDL is not transactional in MariaDB**: it commits implicitly, so a migration that
+  fails part-way leaves its earlier DDL applied (data changes before the failure are rolled
+  back, and the file is not recorded as applied). Write migrations so they can be re-run
+  (`CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`, ...).
+- Files are split into statements on `;`, honoring `DELIMITER` lines (needed for procedure
+  bodies), quoted strings/identifiers and comments.
+- There are no schemas inside a database, so the tracking table is `table` (in the URL's
+  database) or `database.table`. It needs `filename varchar(255) primary key, applied_at
+  timestamp not null default current_timestamp, applied_by varchar(128) not null default
+  (current_user())`; a migration creating it can bootstrap it, as on Postgres. Override its
+  name with `mariadb_migrations_table` in `[tool.pgdevkit]` or with `--tracking-table`.
+- `--ask` auto-detects "already done" for single-statement table, view, schema (database)
+  creations and `ADD COLUMN`; anything else is asked about.
+- Post-apply verification checks every `CREATE TABLE` target via `information_schema`.
+- `--entra-user` and `pgdevkit.migrate.missing_privileges` are not available; `--schema`/
+  `--exclude-schema` don't apply (no schemas). `compare`, `fetch-missing` and `update-stats`
+  don't support MariaDB.
 
 For Postgres, `--entra-user` works the same as `pgdb compare` (see above). The tracking
 table needs `filename text primary key, applied_at timestamptz not null
