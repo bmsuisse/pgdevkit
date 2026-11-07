@@ -47,3 +47,14 @@ def test_delimiter_directive_wraps_a_body_with_semicolons():
 
 def test_empty_script_has_no_statements():
     assert split_mariadb_statements("  \n-- nothing\n") == []
+
+
+def test_delimiter_inside_a_comment_does_not_split():
+    sql = (
+        "DELIMITER $$\n"
+        "CREATE PROCEDURE p()\nBEGIN\n  -- ends with $$\n  /* or $$ here */\n  # nor $$ here\n  SELECT 1;\nEND$$\n"
+        "DELIMITER ;"
+    )
+    assert split_mariadb_statements(sql) == [
+        "CREATE PROCEDURE p()\nBEGIN\n  -- ends with $$\n  /* or $$ here */\n  # nor $$ here\n  SELECT 1;\nEND"
+    ]

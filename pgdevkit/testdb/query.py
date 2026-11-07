@@ -78,10 +78,6 @@ def split_mariadb_statements(sql: str) -> list[str]:
             i = m.end()
             continue
         ch = sql[i]
-        if sql.startswith(delimiter, i):
-            _flush()
-            i += len(delimiter)
-            continue
         if ch in ("'", '"', "`"):
             end = i + 1
             while end < n:
@@ -112,6 +108,10 @@ def split_mariadb_statements(sql: str) -> list[str]:
             # `/*! ... */` and `/*M! ... */` are executable comments.
             has_code = has_code or sql.startswith(("/*!", "/*M!"), i)
             i = end
+            continue
+        if sql.startswith(delimiter, i):
+            _flush()
+            i += len(delimiter)
             continue
         buf.append(ch)
         has_code = has_code or not ch.isspace()
