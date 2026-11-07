@@ -5,7 +5,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-_ENGINES = ("postgres", "mssql")
+_ENGINES = ("postgres", "mssql", "mariadb")
 
 
 @dataclass(frozen=True)
