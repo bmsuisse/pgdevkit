@@ -297,6 +297,14 @@ same one-container-per-machine, one-database-per-workspace model; needs the
 (`apply=` hook) and fast snapshot reset are in
 [`docs/mssql-testdb.md`](docs/mssql-testdb.md).
 
+### MariaDB
+
+Add `engine = "mariadb"` (or `PGDEVKIT_TESTDB_ENGINE=mariadb`) to manage a shared
+MariaDB container; needs the `mariadb` extra. MariaDB has no schemas inside a
+database, so `database/` files use unqualified names. Container settings, file
+conventions and limitations are in
+[`docs/mariadb-testdb.md`](docs/mariadb-testdb.md).
+
 `pgdb testdb shell` execs into
 [`sqlcmd`](https://github.com/microsoft/go-sqlcmd) (an external prerequisite,
 the same category as `psql` for the Postgres path) rather than a Python

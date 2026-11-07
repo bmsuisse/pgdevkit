@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS widget (
+    id INT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    tags JSON NULL
+);

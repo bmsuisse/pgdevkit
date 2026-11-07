@@ -451,7 +451,7 @@ wheels = [
 
 [[package]]
 name = "pgdevkit"
-version = "0.19.0"
+version = "0.20.0"
 source = { editable = "." }
 dependencies = [
     { name = "docker" },
@@ -476,6 +476,9 @@ fastapi = [
     { name = "fastapi" },
     { name = "psycopg-pool" },
     { name = "pydantic" },
+]
+mariadb = [
+    { name = "pymysql" },
 ]
 mssql = [
     { name = "mssql-python" },
@@ -506,12 +509,13 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.0" },
     { name = "psycopg-pool", marker = "extra == 'db'", specifier = ">=3.3.0" },
     { name = "pydantic", marker = "extra == 'db'", specifier = ">=2.0" },
+    { name = "pymysql", marker = "extra == 'mariadb'", specifier = ">=1.1.0" },
     { name = "rich", marker = "extra == 'cli'", specifier = ">=13.0.0" },
     { name = "sqlglot", specifier = ">=30.11.0" },
     { name = "tqdm", marker = "extra == 'cli'", specifier = ">=4.66.0" },
     { name = "typer", marker = "extra == 'cli'", specifier = ">=0.26.7" },
 ]
-provides-extras = ["azure", "cli", "db", "fastapi", "mssql"]
+provides-extras = ["azure", "cli", "db", "fastapi", "mssql", "mariadb"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "ty", specifier = ">=0.0.59" }]
@@ -668,6 +672,15 @@ wheels = [
 [package.optional-dependencies]
 crypto = [
     { name = "cryptography" },
+]
+
+[[package]]
+name = "pymysql"
+version = "1.2.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b1/d4/c15b459e25a23767d2f4065ef40968920320f04e302889574310c21c96a3/pymysql-1.2.3.tar.gz", hash = "sha256:d5b288529782e536ae171866df3ca9dc4f6cbfb3cc2f18e6f837fbb90dbc262b", size = 50629, upload-time = "2026-09-17T12:22:49.146Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a9/4b/0a906d8184f011ff8dbd4722743783867589b33269d2c5fff238d636fdcb/pymysql-1.2.3-py3-none-any.whl", hash = "sha256:14f1c68e2ed859243ae5ca41ffbe677027fc46bc136a9f0be8a4e928e5e7415a", size = 46740, upload-time = "2026-09-17T12:22:47.826Z" },
 ]
 
 [[package]]

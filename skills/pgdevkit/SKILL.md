@@ -60,7 +60,7 @@ env_prefix = "MDM_"              # optional, defaults to "{name.upper()}_"
 extensions = ["vector"]          # optional, CREATE EXTENSION IF NOT EXISTS
 ```
 
-`name` is optional too — it falls back to the repo directory name.
+`name` is optional too — it falls back to the repo directory name. `engine = "mssql"` or `"mariadb"` swaps in a SQL Server / MariaDB container (see `docs/mssql-testdb.md`, `docs/mariadb-testdb.md`; MariaDB files use unqualified names, there are no schemas).
 
 In `tests/conftest.py`:
 

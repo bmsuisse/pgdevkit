@@ -47,6 +47,79 @@ def split_tsql_batches(sql: str) -> list[str]:
     return batches
 
 
+_DELIMITER_LINE = re.compile(r"^[ \t]*DELIMITER[ \t]+(\S+)[ \t]*$", re.IGNORECASE | re.MULTILINE)
+
+
+def split_mariadb_statements(sql: str) -> list[str]:
+    """Split MariaDB script text into single statements, since the driver runs
+    one statement per `execute()`. Honors `DELIMITER xx` lines (a client-side
+    command, never sent to the server -- the way a procedure body containing `;`
+    is written), treats '...', "..." and `...` literals (backslash and doubled
+    escapes) and `-- `/`#`/`/* */` comments as opaque, and drops
+    statements that are only comments, which the server rejects as empty."""
+    statements: list[str] = []
+    buf: list[str] = []
+    has_code = False
+    delimiter = ";"
+    i, n = 0, len(sql)
+
+    def _flush() -> None:
+        nonlocal buf, has_code
+        text = "".join(buf).strip()
+        if text and has_code:
+            statements.append(text)
+        buf, has_code = [], False
+
+    while i < n:
+        at_line_start = i == 0 or sql[i - 1] == "\n"
+        if at_line_start and (m := _DELIMITER_LINE.match(sql, i)):
+            _flush()
+            delimiter = m.group(1)
+            i = m.end()
+            continue
+        ch = sql[i]
+        if sql.startswith(delimiter, i):
+            _flush()
+            i += len(delimiter)
+            continue
+        if ch in ("'", '"', "`"):
+            end = i + 1
+            while end < n:
+                if sql[end] == "\\" and ch != "`":
+                    end += 2
+                    continue
+                if sql[end] == ch:
+                    end += 1
+                    if sql[end : end + 1] == ch:  # doubled quote = escaped literal quote
+                        end += 1
+                        continue
+                    break
+                end += 1
+            buf.append(sql[i:end])
+            has_code = True
+            i = end
+            continue
+        if ch == "#" or (sql.startswith("--", i) and sql[i + 2 : i + 3] in ("", " ", "\t", "\n", "\r")):
+            end = sql.find("\n", i)
+            end = n if end == -1 else end
+            buf.append(sql[i:end])
+            i = end
+            continue
+        if sql.startswith("/*", i):
+            end = sql.find("*/", i + 2)
+            end = n if end == -1 else end + 2
+            buf.append(sql[i:end])
+            # `/*! ... */` and `/*M! ... */` are executable comments.
+            has_code = has_code or sql.startswith(("/*!", "/*M!"), i)
+            i = end
+            continue
+        buf.append(ch)
+        has_code = has_code or not ch.isspace()
+        i += 1
+    _flush()
+    return statements
+
+
 def _split_statements(sql: str) -> list[str]:
     """Split on ';', but treat single/double-quoted strings and dollar-quoted
     bodies (e.g. a plpgsql function's $$ ... $$) as opaque so an embedded ';'

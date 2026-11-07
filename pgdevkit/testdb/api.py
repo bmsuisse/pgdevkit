@@ -36,13 +36,19 @@ def _resolve(project_root: Path | None) -> tuple[ProjectConfig, str]:
     return config, db_name
 
 
-def _mssql_api():
-    # Imported lazily so importing pgdevkit.testdb (and thus pgdevkit.cli)
-    # doesn't require the mssql extra unless a project actually opts into
-    # `engine = "mssql"`.
-    from .mssql import api as mssql_api
+def _engine_api(config: ProjectConfig):
+    """The api module of a non-Postgres engine, None for Postgres. Imported
+    lazily so importing pgdevkit.testdb (and thus pgdevkit.cli) doesn't require
+    the mssql/mariadb extra unless a project actually opts into that engine."""
+    if config.engine == "mssql":
+        from .mssql import api as mssql_api
 
-    return mssql_api
+        return mssql_api
+    if config.engine == "mariadb":
+        from .mariadb import api as mariadb_api
+
+        return mariadb_api
+    return None
 
 
 def _env_for(config: ProjectConfig, db_name: str) -> dict[str, str]:
@@ -125,8 +131,8 @@ def ensure_testdb(
 ) -> dict[str, str]:
     """Ensure the shared container is running, this workspace's database
     exists, and its schema is applied. Returns the {PREFIX}POSTGRES_* env
-    vars for this workspace (or the mssql equivalent's env vars, per
-    `config.engine`).
+    vars for this workspace (or the {PREFIX}MSSQL_*/{PREFIX}MARIADB_* ones,
+    per `config.engine`).
 
     `env` selects which environment-tagged files apply (see pgdevkit.envtag,
     e.g. a `grants.prod.sql` is skipped unless env="prod").
@@ -144,8 +150,8 @@ def ensure_testdb(
     the objects already exist, or build the schema once and use
     `snapshot_testdb`/`restore_testdb` to get back to it."""
     config, db_name = _resolve(project_root)
-    if config.engine == "mssql":
-        return _mssql_api().ensure_testdb(
+    if engine_api := _engine_api(config):
+        return engine_api.ensure_testdb(
             config, db_name, force_reset,
             env=env, areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
             apply=apply, apply_scripts=apply_scripts,
@@ -199,7 +205,9 @@ def snapshot_testdb(project_root: Path | None = None, name: str = "template") ->
     config, db_name = _resolve(project_root)
     if config.engine != "mssql":
         raise ValueError("snapshot_testdb is only supported for engine = \"mssql\"")
-    return _mssql_api().snapshot_testdb(config, db_name, name)
+    from .mssql import api as mssql_api
+
+    return mssql_api.snapshot_testdb(config, db_name, name)
 
 
 def restore_testdb(project_root: Path | None = None, name: str = "template") -> None:
@@ -210,7 +218,9 @@ def restore_testdb(project_root: Path | None = None, name: str = "template") -> 
     config, db_name = _resolve(project_root)
     if config.engine != "mssql":
         raise ValueError("restore_testdb is only supported for engine = \"mssql\"")
-    _mssql_api().restore_testdb(config, db_name, name)
+    from .mssql import api as mssql_api
+
+    mssql_api.restore_testdb(config, db_name, name)
 
 
 async def _find_orphaned_dbs(config: ProjectConfig) -> list[str]:
@@ -226,8 +236,8 @@ def find_orphaned_dbs(project_root: Path | None = None) -> list[str]:
     i.e. their branch's worktree was removed (or never existed) without
     also dropping its database."""
     config, _ = _resolve(project_root)
-    if config.engine == "mssql":
-        return _mssql_api().find_orphaned_dbs(config)
+    if engine_api := _engine_api(config):
+        return engine_api.find_orphaned_dbs(config)
     return asyncio.run(_find_orphaned_dbs(config))
 
 
@@ -239,7 +249,7 @@ def workspace_db_names(project_root: Path | None = None) -> frozenset[str]:
     every *live* worktree -- for a caller that wants "which DBs belong to
     this one worktree right now" (e.g. to drop them before removing the
     worktree itself), as opposed to a whole-project orphan sweep. Engine
-    (postgres/mssql) doesn't affect naming, so this doesn't dispatch on it."""
+    (postgres/mssql/mariadb) doesn't affect naming, so this doesn't dispatch on it."""
     config = load_config(project_root)
     branch = current_branch(config.root)
     return frozenset(expected_db_names(config, [branch]))
@@ -255,8 +265,8 @@ def clean_testdb(project_root: Path | None = None, all: bool = False, orphaned: 
         raise ValueError("clean_testdb: pass at most one of all=True, orphaned=True")
 
     config, db_name = _resolve(project_root)
-    if config.engine == "mssql":
-        _mssql_api().clean_testdb(config, db_name, all, orphaned)
+    if engine_api := _engine_api(config):
+        engine_api.clean_testdb(config, db_name, all, orphaned)
         return
 
     async def _run() -> None:
@@ -274,8 +284,8 @@ def clean_testdb(project_root: Path | None = None, all: bool = False, orphaned: 
 
 def status(project_root: Path | None = None) -> dict[str, str]:
     config, db_name = _resolve(project_root)
-    if config.engine == "mssql":
-        return _mssql_api().status(config, db_name)
+    if engine_api := _engine_api(config):
+        return engine_api.status(config, db_name)
     return {
         "engine": config.engine,
         "container": constants.CONTAINER_NAME,
@@ -288,22 +298,23 @@ def status(project_root: Path | None = None) -> dict[str, str]:
 
 def run_sql(sql: str, project_root: Path | None = None) -> list[dict] | None:
     config, db_name = _resolve(project_root)
-    if config.engine == "mssql":
-        return _mssql_api().run_sql(config, db_name, sql)
+    if engine_api := _engine_api(config):
+        return engine_api.run_sql(config, db_name, sql)
     return asyncio.run(query.execute(_db_dsn(db_name), sql))
 
 
 def dsn_for(project_root: Path | None = None) -> str:
     config, db_name = _resolve(project_root)
-    if config.engine == "mssql":
-        return _mssql_api().dsn_for(config, db_name)
+    if engine_api := _engine_api(config):
+        return engine_api.dsn_for(config, db_name)
     return _db_dsn(db_name)
 
 
 def shell_argv(project_root: Path | None = None) -> tuple[str, list[str]]:
     """The (binary, argv) to `os.execvp` for an interactive shell against
-    this workspace's database -- `psql` for Postgres, `sqlcmd` for MSSQL."""
+    this workspace's database -- `psql` for Postgres, `sqlcmd` for MSSQL,
+    `mariadb` for MariaDB."""
     config, db_name = _resolve(project_root)
-    if config.engine == "mssql":
-        return _mssql_api().shell_argv(config, db_name)
+    if engine_api := _engine_api(config):
+        return engine_api.shell_argv(config, db_name)
     return "psql", ["psql", _db_dsn(db_name)]

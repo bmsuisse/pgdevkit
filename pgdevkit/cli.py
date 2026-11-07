@@ -62,7 +62,7 @@ _MIGRATE_ENV_OPTION = typer.Option(
 def _as_set(values: list[str]) -> frozenset[str] | None:
     return frozenset(values) if values else None
 
-testdb_app = typer.Typer(name="testdb", help="Manage the shared local Postgres test container")
+testdb_app = typer.Typer(name="testdb", help="Manage the shared local test database container (Postgres, MSSQL or MariaDB)")
 app.add_typer(testdb_app, name="testdb")
 
 migrate_app = typer.Typer(
@@ -352,7 +352,7 @@ def testdb_status() -> None:
 
 @testdb_app.command("shell")
 def testdb_shell() -> None:
-    """Drop into an interactive shell (psql, or sqlcmd for MSSQL) against
+    """Drop into an interactive shell (psql, sqlcmd for MSSQL, or mariadb) against
     this workspace's database."""
     binary, argv = testdb.shell_argv()
     os.execvp(binary, argv)
