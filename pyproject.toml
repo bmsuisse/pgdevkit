@@ -101,7 +101,7 @@ select = [
 ]
 ignore = [
     "ANN401",  # `Any` is a warning via the ruff-warn-any prek hook, not an error
-    # DiffKind(str, Enum) is public API: StrEnum would change str()/format() of its members (follow-up issue)
+    # DiffKind(str, Enum) is public API: StrEnum would change str()/format() of its members (see https://github.com/bmsuisse/pgdevkit/issues/71)
     "UP042",
 ]
 
