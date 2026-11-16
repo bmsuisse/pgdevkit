@@ -4,6 +4,7 @@ from collections.abc import Iterator
 
 import psycopg
 import pytest
+from psycopg.sql import SQL, Identifier
 
 from pgdevkit.migrate import created_table_names, execute_sql_script, missing_privileges
 
@@ -69,7 +70,7 @@ def test_missing_privileges_reports_table_without_grant(clean_db: str, app_role:
 def test_missing_privileges_empty_once_granted(clean_db: str, app_role: str) -> None:
     with psycopg.connect(clean_db, autocommit=True) as con:
         con.execute("CREATE TABLE public.widgets (id int primary key)")
-        con.execute(f"GRANT SELECT ON public.widgets TO {app_role}")
+        con.execute(SQL("GRANT SELECT ON public.widgets TO {}").format(Identifier(app_role)))
     assert missing_privileges(clean_db, app_role, ["public.widgets"]) == []
 
 

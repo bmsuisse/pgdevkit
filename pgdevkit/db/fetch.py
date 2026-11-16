@@ -5,7 +5,7 @@ import logging
 import math
 import re
 import uuid
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, suppress
 from string.templatelib import Template
 from typing import TYPE_CHECKING, Any, Literal, LiteralString, Protocol, cast, overload
@@ -71,7 +71,7 @@ def _connection_cm(source: PoolLike) -> AbstractAsyncContextManager[AsyncConnect
 
 
 @asynccontextmanager
-async def _acquire(con: AsyncConnection | None, pool: ConnectionSource | None) -> AsyncIterator[AsyncConnection]:
+async def _acquire(con: AsyncConnection | None, pool: ConnectionSource | None) -> AsyncGenerator[AsyncConnection]:
     """Yield `con` untouched (the caller owns it: no commit/close/return-to-pool here), or a
     connection borrowed from `pool` / the default pool for the duration of the block."""
     if con is not None:
@@ -157,7 +157,7 @@ SELECT current_setting('statement_timeout'), set_config('statement_timeout', (
 
 
 @asynccontextmanager
-async def _statement_timeout(c: AsyncConnection, seconds: float | None) -> AsyncIterator[None]:
+async def _statement_timeout(c: AsyncConnection, seconds: float | None) -> AsyncGenerator[None]:
     """Run the block under Postgres' `statement_timeout`, set with `set_config(..., is_local => true)`: it is
     scoped to the current transaction (so it can't leak into a pool, and it is safe behind PgBouncer's
     transaction pooling) and put back afterwards for a borrowed connection that stays in its transaction.

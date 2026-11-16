@@ -68,11 +68,13 @@ async def _effective(pool: AsyncConnectionPool, seconds: float, current: str) ->
         await con.execute("SELECT set_config('statement_timeout', %(current)s, false)", {"current": current})
         await con.commit()
         try:
-            return await fetch_scalar(
+            effective = await fetch_scalar(
                 "SELECT setting::bigint FROM pg_settings WHERE name = 'statement_timeout'",
                 con=con,
                 statement_timeout=seconds,
             )
+            assert effective is not None
+            return effective
         finally:
             await con.execute("SELECT set_config('statement_timeout', '0', false)")
             await con.commit()

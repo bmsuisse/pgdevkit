@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Iterator, Sequence
-from typing import Any, Self
+from typing import Any, Self, cast
 
 import psycopg
 import pytest
+from psycopg.sql import SQL, Identifier
+from psycopg.types.composite import CompositeInfo
 from psycopg.types.enum import EnumInfo
 
 from pgdevkit.db import (
@@ -40,11 +42,11 @@ def _db_dsn() -> str:
 def complex_types_test_db() -> Iterator[None]:
     ensure_container()
     with psycopg.connect(_admin_dsn(), autocommit=True) as con:
-        con.execute(f'DROP DATABASE IF EXISTS "{TEST_DB}"')
-        con.execute(f'CREATE DATABASE "{TEST_DB}"')
+        con.execute(SQL("DROP DATABASE IF EXISTS {}").format(Identifier(TEST_DB)))
+        con.execute(SQL("CREATE DATABASE {}").format(Identifier(TEST_DB)))
     yield
     with psycopg.connect(_admin_dsn(), autocommit=True) as con:
-        con.execute(f'DROP DATABASE IF EXISTS "{TEST_DB}"')
+        con.execute(SQL("DROP DATABASE IF EXISTS {}").format(Identifier(TEST_DB)))
 
 
 @requires_podman
@@ -69,7 +71,9 @@ async def test_array_of_enum_column_is_detected_and_converted(complex_types_test
             await helper.register_on(cur, info)  # on this cursor only, never on the connection (#54)
             await cur.execute("INSERT INTO gadget (id, moods) VALUES (1, %s)", (converted,))
             await cur.execute("SELECT moods FROM gadget WHERE id = 1")
-            (moods,) = await cur.fetchone()
+            fetched = await cur.fetchone()
+            assert fetched is not None
+            (moods,) = fetched
     assert [m.name for m in moods] == ["happy", "sad"]
 
 
@@ -132,13 +136,15 @@ async def test_jsonb_array_column_wraps_each_element_not_the_whole_list(complex_
         )
         async with con.cursor() as cur:
             await cur.execute("SELECT tags, metadata FROM gadget WHERE id = 1")
-            tags, metadata = await cur.fetchone()
+            fetched = await cur.fetchone()
+            assert fetched is not None
+            tags, metadata = fetched
     assert tags == tags_value
     assert metadata == metadata_value
 
 
 def test_helper_attributes_stay_assignable() -> None:
-    helper = ComplexHelper(con=None)  # type: ignore[arg-type]
+    helper = ComplexHelper(con=None)  # ty: ignore[invalid-argument-type]
     helper.complex_types = {}
     with pytest.warns(DeprecationWarning, match="register_on"):
         helper.registered = set()  # deprecated and ignored: nothing is registered on the connection any more
@@ -156,28 +162,30 @@ def test_complex_types_cache_is_per_instance_not_shared() -> None:
     # exactly what happens across pgdevkit's per-worktree isolated test
     # databases, which legitimately reuse type names like "locale_labels"
     # with different OIDs per database.
-    helper_a = ComplexHelper(con=None)  # con is unused by this path
-    helper_b = ComplexHelper(con=None)
+    helper_a = ComplexHelper(con=None)  # ty: ignore[invalid-argument-type]  # con is unused by this path
+    helper_b = ComplexHelper(con=None)  # ty: ignore[invalid-argument-type]
 
-    helper_a.complex_types[("app", "dimensions")] = object()  # type: ignore[assignment]
+    helper_a.complex_types[("app", "dimensions")] = object()  # ty: ignore[invalid-assignment]
 
     assert helper_b.complex_types == {}
     assert helper_a.complex_types is not helper_b.complex_types
 
 
+class _CountingConnection(psycopg.AsyncConnection):
+    """A connection that counts the statements run through its cursors (every psycopg helper uses them)."""
+
+    queries = 0
+
+
 class _CountingCursor(psycopg.AsyncCursor):
     async def execute(self, *args: Any, **kwargs: Any) -> Self:
-        type(self.connection).queries += 1
+        connection = cast(_CountingConnection, self.connection)
+        connection.queries += 1
         return await super().execute(*args, **kwargs)
 
 
-async def _connect() -> psycopg.AsyncConnection:
-    """A connection that counts the statements run through its cursors (every psycopg helper uses them)."""
-
-    class CountingConnection(psycopg.AsyncConnection):
-        queries = 0
-
-    return await CountingConnection.connect(_db_dsn(), autocommit=True, cursor_factory=_CountingCursor)
+async def _connect() -> _CountingConnection:
+    return await _CountingConnection.connect(_db_dsn(), autocommit=True, cursor_factory=_CountingCursor)
 
 
 class Gadget(PostgresTableModel):
@@ -202,10 +210,10 @@ async def _setup_gadget(con: psycopg.AsyncConnection) -> None:
     await con.execute("INSERT INTO gadget VALUES (1, 'happy', ROW(3, 4), 'a'), (2, 'sad', NULL, 'b')")
 
 
-async def _queries_of(con: psycopg.AsyncConnection, call: Callable[[], Awaitable[object]]) -> tuple[int, object]:
-    before = type(con).queries
+async def _queries_of[T](con: _CountingConnection, call: Callable[[], Awaitable[T]]) -> tuple[int, T]:
+    before = con.queries
     result = await call()
-    return type(con).queries - before, result
+    return con.queries - before, result
 
 
 @requires_podman
@@ -227,7 +235,7 @@ async def test_pg_retrieve_does_not_requery_the_catalog_for_every_call(complex_t
         count, rows = await _queries_of(
             con, lambda: pg_retrieve_many(con, Gadget, {"mood": "sad"}, complex_helper=ComplexHelper(con))
         )
-        assert count == 1 and [r.id for r in rows] == [2]  # type: ignore[union-attr]
+        assert count == 1 and [r.id for r in rows] == [2]
         count, _ = await _queries_of(
             con,
             lambda: pg_insert(
@@ -248,7 +256,7 @@ async def test_pg_retrieve_does_not_requery_the_catalog_for_every_call(complex_t
             ),
         )
         assert count == 1
-        assert row["dims"] == {"w": 1, "h": 2}  # type: ignore[index]  # RETURNING gives plain values, like pg_retrieve
+        assert row["dims"] == {"w": 1, "h": 2}  # RETURNING gives plain values, like pg_retrieve
 
 
 @requires_podman
@@ -327,11 +335,13 @@ async def test_complex_helper_auto_works_for_every_crud_helper(complex_types_tes
 # --- Fixes #54: a ComplexHelper must not change how *other* code on the same connection reads enums/composites ---
 
 
-async def _plain_read(con: psycopg.AsyncConnection) -> tuple[Any, ...] | None:
+async def _plain_read(con: psycopg.AsyncConnection) -> tuple[Any, ...]:
     """What unrelated code on `con` sees: an enum label, a composite and an enum array, read with a plain SELECT."""
     async with con.cursor() as cur:
         await cur.execute("SELECT 'sad'::mood, ROW(1, 2)::dims, ARRAY['happy']::mood[]")
-        return await cur.fetchone()
+        row = await cur.fetchone()
+        assert row is not None
+        return row
 
 
 @requires_podman
@@ -411,7 +421,9 @@ async def test_enum_label_survives_pg_retrieve_many_on_the_same_connection(compl
         await _setup_gadget(con)
 
         async def plain() -> tuple:
-            return await (await con.execute("select 'happy'::mood")).fetchone()  # type: ignore[return-value]
+            row = await (await con.execute("select 'happy'::mood")).fetchone()
+            assert row is not None
+            return row
 
         assert await plain() == ("happy",)
         await pg_retrieve_many(con, Gadget, {}, limit=1, complex_helper=ComplexHelper(con))
@@ -441,7 +453,9 @@ async def test_registration_is_scoped_to_the_cursor_that_writes(complex_types_te
                 ),
             )
             await cur.execute("SELECT moods, d, d2 FROM gadget")
-            moods, d, d2 = await cur.fetchone()  # type: ignore[misc]
+            fetched = await cur.fetchone()
+            assert fetched is not None
+            moods, d, d2 = fetched
         assert [m.name for m in moods] == ["happy", "sad"]
         assert (d.w, d.h.name) == (1, "sad") and (d2[0].w, d2[0].h.name) == (2, "happy")  # nested types registered too
         # a plain SELECT on the connection (or on another cursor) is untouched
@@ -504,4 +518,4 @@ async def test_composite_whose_field_is_an_enum_array_is_converted(complex_types
         row = await pg_insert(con, ("public", "holder"), {"id": 1, "a": {"ms": ["sad"]}}, complex_helper="auto")
         assert row == {"id": 1, "a": {"ms": ["sad"]}}
         got = await ComplexHelper(con).load_all_complex_types(("public", "holder"))
-        assert isinstance(got["a"], psycopg.types.composite.CompositeInfo)
+        assert isinstance(got["a"], CompositeInfo)

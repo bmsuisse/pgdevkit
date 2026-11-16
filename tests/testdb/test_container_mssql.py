@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from typing import Any, cast
+
+import docker
 import pytest
 
 from pgdevkit.testdb.mssql import constants
@@ -8,9 +11,9 @@ from pgdevkit.testdb.mssql.container import _create_container
 
 class _FakeContainers:
     def __init__(self) -> None:
-        self.run_kwargs: dict | None = None
+        self.run_kwargs: dict[str, Any] = {}
 
-    def run(self, image: str, **kwargs: object) -> None:
+    def run(self, image: str, **kwargs: Any) -> None:
         self.run_kwargs = kwargs
 
 
@@ -22,7 +25,7 @@ class _FakeClient:
 def test_create_container_omits_resource_kwargs_by_default() -> None:
     client = _FakeClient()
 
-    _create_container(client)
+    _create_container(cast("docker.DockerClient", client))
 
     for key in ("tmpfs", "shm_size", "mem_limit", "nano_cpus"):
         assert key not in client.containers.run_kwargs
@@ -35,7 +38,7 @@ def test_create_container_passes_through_resource_overrides(monkeypatch: pytest.
     monkeypatch.setattr(constants, "CPUS", "2")
     client = _FakeClient()
 
-    _create_container(client)
+    _create_container(cast("docker.DockerClient", client))
 
     assert client.containers.run_kwargs["tmpfs"] == {"/var/opt/mssql": "size=512m"}
     assert client.containers.run_kwargs["shm_size"] == "256m"
@@ -47,7 +50,7 @@ def test_create_container_omits_user_by_default(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(constants, "CONTAINER_USER", "")
     client = _FakeClient()
 
-    _create_container(client)
+    _create_container(cast("docker.DockerClient", client))
 
     assert "user" not in client.containers.run_kwargs
 
@@ -56,6 +59,6 @@ def test_create_container_passes_container_user(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(constants, "CONTAINER_USER", "0")
     client = _FakeClient()
 
-    _create_container(client)
+    _create_container(cast("docker.DockerClient", client))
 
     assert client.containers.run_kwargs["user"] == "0"

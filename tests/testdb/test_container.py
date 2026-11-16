@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from typing import Never
+from typing import Any, Never, cast
 
+import docker
 import psycopg
 import pytest
 
@@ -54,9 +55,9 @@ def test_ensure_container_skips_everything_when_skip_env_set(monkeypatch: pytest
 
 class _FakeContainers:
     def __init__(self) -> None:
-        self.run_kwargs: dict | None = None
+        self.run_kwargs: dict[str, Any] = {}
 
-    def run(self, image: str, **kwargs: object) -> None:
+    def run(self, image: str, **kwargs: Any) -> None:
         self.run_kwargs = kwargs
 
 
@@ -72,7 +73,7 @@ def test_create_container_forces_utc_timezone() -> None:
     silently disagree between test and prod for rows near local midnight."""
     client = _FakeClient()
 
-    _create_container(client)
+    _create_container(cast("docker.DockerClient", client))
 
     assert client.containers.run_kwargs is not None
     assert "-c" in client.containers.run_kwargs["command"]
@@ -85,7 +86,7 @@ def test_create_container_forces_utc_timezone() -> None:
 def test_create_container_omits_resource_kwargs_by_default() -> None:
     client = _FakeClient()
 
-    _create_container(client)
+    _create_container(cast("docker.DockerClient", client))
 
     for key in ("tmpfs", "shm_size", "mem_limit", "nano_cpus"):
         assert key not in client.containers.run_kwargs
@@ -98,7 +99,7 @@ def test_create_container_passes_through_resource_overrides(monkeypatch: pytest.
     monkeypatch.setattr(constants, "CPUS", "2")
     client = _FakeClient()
 
-    _create_container(client)
+    _create_container(cast("docker.DockerClient", client))
 
     assert client.containers.run_kwargs["tmpfs"] == {"/var/lib/postgresql/data": "size=512m"}
     assert client.containers.run_kwargs["shm_size"] == "256m"

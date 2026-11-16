@@ -182,7 +182,7 @@ def _set_local_env(monkeypatch: pytest.MonkeyPatch, dsn: str) -> None:
         ("USER", "user"),
         ("PASSWORD", "password"),
     ):
-        monkeypatch.setenv(f"PGDEVKIT_CONNLIVE_{key}", info.get(field, ""))
+        monkeypatch.setenv(f"PGDEVKIT_CONNLIVE_{key}", str(info.get(field, "")))
 
 
 async def test_pool_options_are_passed_through(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
+from typing import cast
 
 import psycopg
 import pytest
-from psycopg.sql import SQL, Placeholder
+from psycopg.sql import SQL, Identifier, Placeholder
 from psycopg.sql import Literal as SqlLiteral
 from pydantic import ConfigDict
 
@@ -23,6 +24,7 @@ from pgdevkit.db import (
     pg_upsert_many,
     pg_upsert_many_dict,
 )
+from pgdevkit.db.crud import OrderBy
 from pgdevkit.testdb import constants
 from pgdevkit.testdb.container import ensure_container
 from tests.testdb.conftest import RUN_SUFFIX, requires_podman
@@ -81,8 +83,8 @@ class Gadget(PostgresTableModel):
 async def pool(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[PgPool]:
     ensure_container()
     with psycopg.connect(_admin_dsn(), autocommit=True) as con:
-        con.execute(f'DROP DATABASE IF EXISTS "{TEST_DB}"')
-        con.execute(f'CREATE DATABASE "{TEST_DB}"')
+        con.execute(SQL("DROP DATABASE IF EXISTS {}").format(Identifier(TEST_DB)))
+        con.execute(SQL("CREATE DATABASE {}").format(Identifier(TEST_DB)))
     with psycopg.connect(constants.conninfo(TEST_DB), autocommit=True) as con:
         con.execute("CREATE TABLE widget (id serial PRIMARY KEY, name text NOT NULL)")
         con.execute("CREATE TYPE label_pair AS (en text, de text)")
@@ -101,7 +103,7 @@ async def pool(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[PgPool]:
     yield p
     await p.close()
     with psycopg.connect(_admin_dsn(), autocommit=True) as con:
-        con.execute(f'DROP DATABASE IF EXISTS "{TEST_DB}"')
+        con.execute(SQL("DROP DATABASE IF EXISTS {}").format(Identifier(TEST_DB)))
 
 
 @requires_podman
@@ -335,14 +337,16 @@ async def test_pg_retrieve_many_where_order_by_and_limit(pool: PgPool) -> None:
             await pg_retrieve_many(con, Widget, {}, where=t"true", params={"x": 1})
         with pytest.raises(ValueError, match="use a list"):
             await pg_retrieve_many(con, Widget, {}, order_by=("name", "desc"))  # type: ignore[arg-type]
-        assert names(await pg_retrieve_many(con, Widget, {}, order_by=[("name", "DESC")], limit=1)) == ["sprocket"]
+        # the direction is case-insensitive at runtime, though typed lowercase-only
+        desc_upper = cast("OrderBy", [("name", "DESC")])
+        assert names(await pg_retrieve_many(con, Widget, {}, order_by=desc_upper, limit=1)) == ["sprocket"]
         # `params` without `where` is simply unused; a missing `where` placeholder is psycopg's error
         assert names(await pg_retrieve_many(con, Widget, {"name": "cog"}, params={"unused": 1})) == ["cog"]
         with pytest.raises(ValueError, match="direction"):
-            await pg_retrieve_many(con, Widget, {}, order_by=[("name", "sideways")])  # type: ignore[list-item]
+            await pg_retrieve_many(con, Widget, {}, order_by=[("name", "sideways")])  # ty: ignore[invalid-argument-type]
         for bad in (-1, True, "3", 1.5):
             with pytest.raises(ValueError, match="limit"):
-                await pg_retrieve_many(con, Widget, {}, limit=bad)  # type: ignore[arg-type]
+                await pg_retrieve_many(con, Widget, {}, limit=bad)  # ty: ignore[invalid-argument-type]
         # a column name is an identifier, never SQL
         with pytest.raises(psycopg.errors.UndefinedColumn):
             await pg_retrieve_many(con, Widget, {}, order_by="name; DROP TABLE widget")
@@ -375,7 +379,7 @@ async def test_pooled_connection_is_unchanged_after_pg_helpers_with_complex_help
         async def plain_read() -> tuple[int, tuple]:
             async with single.connection() as con:
                 row = await (await con.execute(plain)).fetchone()
-                return con.pgconn.backend_pid, row  # type: ignore[return-value]
+                return con.pgconn.backend_pid, row  # ty: ignore[invalid-return-type]
 
         pid, before = await plain_read()
         assert before == ("active", "(a,b)")

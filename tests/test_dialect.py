@@ -43,4 +43,4 @@ def test_mssql_dialect_fields() -> None:
 
 def test_dialect_is_frozen() -> None:
     with pytest.raises(FrozenInstanceError):
-        POSTGRES.name = "mssql"  # type: ignore[misc]
+        POSTGRES.name = "mssql"  # ty: ignore[invalid-assignment]

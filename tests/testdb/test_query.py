@@ -4,6 +4,7 @@ from collections.abc import Iterator
 
 import psycopg
 import pytest
+from psycopg.sql import SQL, Identifier
 
 from pgdevkit.testdb import constants, query
 from pgdevkit.testdb.container import ensure_container
@@ -77,11 +78,11 @@ def _db_dsn() -> str:
 def query_test_db() -> Iterator[None]:
     ensure_container()
     with psycopg.connect(_admin_dsn(), autocommit=True) as con:
-        con.execute(f'DROP DATABASE IF EXISTS "{TEST_DB}"')
-        con.execute(f'CREATE DATABASE "{TEST_DB}"')
+        con.execute(SQL("DROP DATABASE IF EXISTS {}").format(Identifier(TEST_DB)))
+        con.execute(SQL("CREATE DATABASE {}").format(Identifier(TEST_DB)))
     yield
     with psycopg.connect(_admin_dsn(), autocommit=True) as con:
-        con.execute(f'DROP DATABASE IF EXISTS "{TEST_DB}"')
+        con.execute(SQL("DROP DATABASE IF EXISTS {}").format(Identifier(TEST_DB)))
 
 
 @requires_podman

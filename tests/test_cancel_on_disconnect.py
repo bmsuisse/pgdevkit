@@ -13,6 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from psycopg_pool import AsyncConnectionPool
 from pydantic import BaseModel
+from starlette.types import Message, Receive
 
 from pgdevkit.db import fetch_all
 from pgdevkit.fastapi import CancelOnDisconnectRoute, cancel_on_disconnect
@@ -34,7 +35,7 @@ class HttpClient:
         self.chunks = [body] if isinstance(body, bytes) else list(body)
         self.chunks_read = 0
         self.disconnect = asyncio.Event()
-        self.sent: list[dict] = []
+        self.sent: list[Message] = []
         self.gone_at_start = False  # the client disconnected before the body arrived
         self.gone_after_body = False  # ... right after it
 
@@ -49,7 +50,7 @@ class HttpClient:
             await self.disconnect.wait()
         return {"type": "http.disconnect"}
 
-    async def send(self, message: dict) -> None:
+    async def send(self, message: Message) -> None:
         self.sent.append(message)
 
     async def call(self, app: FastAPI) -> None:
@@ -335,8 +336,8 @@ async def test_a_watcher_whose_cancellation_is_swallowed_leaves_the_finished_sco
     cancellation. If it ever does, the watcher wakes up after the handler's cancel scope has been exited."""
 
     class Receiver(cancel_on_disconnect._Receiver):
-        def __init__(self, *args: object) -> None:
-            super().__init__(*args)
+        def __init__(self, receive: Receive) -> None:
+            super().__init__(receive)
             self.disconnected = _SwallowingEvent()
 
     monkeypatch.setattr(cancel_on_disconnect, "_Receiver", Receiver)

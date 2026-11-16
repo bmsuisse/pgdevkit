@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import cast
+
 import docker.errors
 import pytest
 
@@ -71,7 +73,7 @@ def _record_cli(monkeypatch: pytest.MonkeyPatch, result: _Completed) -> list[tup
     calls: list[tuple[list[str], dict | None]] = []
 
     def fake_run(argv: list[str], **kwargs: object) -> _Completed:
-        calls.append((argv, kwargs.get("env")))
+        calls.append((argv, cast("dict | None", kwargs.get("env"))))
         return result
 
     monkeypatch.setattr(_docker.subprocess, "run", fake_run)

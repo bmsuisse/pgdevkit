@@ -100,7 +100,7 @@ def _parse_file(path: Path, db_schema: DatabaseSchema, dialect: Dialect = POSTGR
         exprs = []
 
     for expr in exprs:
-        if expr is None:
+        if not isinstance(expr, exp.Expression):
             continue
         try:
             _handle_expr(expr, content, db_schema, dialect)

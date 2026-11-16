@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import psycopg
+from psycopg.sql import SQL, Identifier
 from typer.testing import CliRunner
 
 from pgdevkit.cli import app
@@ -38,8 +39,8 @@ def test_update_stats_then_get_stats(tmp_path: Path) -> None:
     admin = constants.conninfo("postgres")
     dsn = constants.conninfo(TEST_DB)
     with psycopg.connect(admin, autocommit=True) as con:
-        con.execute(f'DROP DATABASE IF EXISTS "{TEST_DB}"')
-        con.execute(f'CREATE DATABASE "{TEST_DB}"')
+        con.execute(SQL("DROP DATABASE IF EXISTS {}").format(Identifier(TEST_DB)))
+        con.execute(SQL("CREATE DATABASE {}").format(Identifier(TEST_DB)))
     try:
         with psycopg.connect(dsn, autocommit=True) as con:
             con.execute("CREATE TABLE public.zeta (id int PRIMARY KEY, note text)")
@@ -74,4 +75,4 @@ def test_update_stats_then_get_stats(tmp_path: Path) -> None:
         assert got["public.zeta"]["columns"]["id"]["data_type"] == "integer"
     finally:
         with psycopg.connect(admin, autocommit=True) as con:
-            con.execute(f'DROP DATABASE IF EXISTS "{TEST_DB}"')
+            con.execute(SQL("DROP DATABASE IF EXISTS {}").format(Identifier(TEST_DB)))

@@ -13,7 +13,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 def _apply_sql(dsn: str, sql: str) -> None:
     with psycopg.connect(dsn, autocommit=True) as conn:
-        conn.execute(sql)  # type: ignore[arg-type]
+        conn.execute(sql.encode())  # bytes: psycopg's str overload only takes a LiteralString
 
 
 def _apply_fixtures(dsn: str) -> None:

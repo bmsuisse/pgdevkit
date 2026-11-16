@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import psycopg
+from psycopg.sql import SQL, Identifier
 from typer.testing import CliRunner
 
 from pgdevkit.cli import app
@@ -27,8 +28,8 @@ def _db_dsn() -> str:
 def test_fetch_missing_dry_run_then_write(tmp_path: Path) -> None:
     ensure_container()
     with psycopg.connect(_admin_dsn(), autocommit=True) as con:
-        con.execute(f'DROP DATABASE IF EXISTS "{TEST_DB}"')
-        con.execute(f'CREATE DATABASE "{TEST_DB}"')
+        con.execute(SQL("DROP DATABASE IF EXISTS {}").format(Identifier(TEST_DB)))
+        con.execute(SQL("CREATE DATABASE {}").format(Identifier(TEST_DB)))
     with psycopg.connect(_db_dsn(), autocommit=True) as con:
         con.execute("CREATE TABLE public.orphan (id serial PRIMARY KEY, name text NOT NULL)")
 
@@ -49,4 +50,4 @@ def test_fetch_missing_dry_run_then_write(tmp_path: Path) -> None:
         assert "orphan" in dest.read_text(encoding="utf-8")
     finally:
         with psycopg.connect(_admin_dsn(), autocommit=True) as con:
-            con.execute(f'DROP DATABASE IF EXISTS "{TEST_DB}"')
+            con.execute(SQL("DROP DATABASE IF EXISTS {}").format(Identifier(TEST_DB)))

@@ -10,6 +10,7 @@ import subprocess
 import sys
 
 import pytest
+from psycopg.sql import Composed
 from sqlglot import exp, select
 
 from pgdevkit.db.fetch import _render
@@ -35,7 +36,9 @@ def test_render_union_and_subquery() -> None:
 
 def test_postgres_json_response_accepts_union_and_subquery() -> None:
     for query in (_union(), _subquery()):
-        assert _render(query) in PostgresJsonResponse(query).query.as_string()
+        built = PostgresJsonResponse(query).query
+        assert isinstance(built, Composed)
+        assert _render(query) in built.as_string()
     with pytest.raises(ValueError, match="Command"):
         PostgresJsonResponse(select("1").union(select(exp.Command(this="SELECT", expression=" version()"))))
 

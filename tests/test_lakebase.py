@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from email.message import Message
 from io import BytesIO
 from typing import Never
 from urllib.error import HTTPError
@@ -83,7 +84,7 @@ def test_get_lakebase_password_raises_on_http_error(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(lakebase, "_databricks_resource_token", lambda: "ENTRA_TOKEN")
 
     def fake_urlopen(req: Request, timeout: int = 10) -> Never:
-        raise HTTPError(req.full_url, 403, "Forbidden", {}, BytesIO(b'{"message": "no access"}'))
+        raise HTTPError(req.full_url, 403, "Forbidden", Message(), BytesIO(b'{"message": "no access"}'))
 
     monkeypatch.setattr(lakebase.urllib_request, "urlopen", fake_urlopen)
 

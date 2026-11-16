@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -15,7 +16,7 @@ def _write(base: Path, rel: str, content: str) -> Path:
     return p
 
 
-def _names(base: Path, **kwargs: object) -> set[Path]:
+def _names(base: Path, **kwargs: Any) -> set[Path]:
     return {f.relative_to(base) for f, _ in _iter_sql_files(base, **kwargs)}
 
 

@@ -145,19 +145,25 @@ class _FakeConnection:
 def test_mssql_insert_serializes_dict_value_before_binding() -> None:
     con = _FakeConnection(row=(1, '{"a": 1}'))
     asyncio.run(mssql_insert(con, ("dbo", "widget"), {"id": 1, "payload": {"a": 1}}))
-    _, params = con.cursor_obj.executed
+    executed = con.cursor_obj.executed
+    assert executed is not None
+    _, params = executed
     assert params == [1, '{"a": 1}']
 
 
 def test_mssql_update_dict_serializes_dict_value_before_binding() -> None:
     con = _FakeConnection(row=(1, '{"a": 1}'))
     asyncio.run(mssql_update_dict(con, ("dbo", "widget"), {"id": 1, "payload": {"a": 1}}, ["id"]))
-    _, params = con.cursor_obj.executed
+    executed = con.cursor_obj.executed
+    assert executed is not None
+    _, params = executed
     assert params == ['{"a": 1}', 1]
 
 
 def test_mssql_upsert_dict_serializes_list_value_before_binding() -> None:
     con = _FakeConnection(row=(1, "[1, 2]"))
     asyncio.run(mssql_upsert_dict(con, ("dbo", "widget"), {"id": 1, "payload": [1, 2]}, ["id"]))
-    _, params = con.cursor_obj.executed
+    executed = con.cursor_obj.executed
+    assert executed is not None
+    _, params = executed
     assert params == [1, "[1, 2]"]

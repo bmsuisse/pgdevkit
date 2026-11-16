@@ -7,6 +7,7 @@ import inspect
 import time
 import uuid
 from collections.abc import AsyncIterator
+from typing import LiteralString
 
 import anyio
 import pytest
@@ -160,7 +161,7 @@ async def test_a_second_cancellation_during_cleanup_does_not_skip_it(postgres_ds
 
 @pytest.mark.parametrize("query", ["select 1 / 0 as boom", "select 1 as one"])
 async def test_a_receive_that_swallows_the_watchers_cancellation_does_not_break_it(
-    pool: AsyncConnectionPool, query: str
+    pool: AsyncConnectionPool, query: LiteralString
 ) -> None:
     """Issue #59 (Granian, BaseHTTPMiddleware in front): that middleware's receive() waits in an anyio task group,
     which it cancels once the response has been sent. The watcher's own cancellation arrives with it and is swallowed

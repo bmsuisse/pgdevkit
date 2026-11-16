@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import time
+from typing import Any
 
 import docker
 import docker.errors
@@ -25,6 +26,7 @@ def _available(timeout: float = 3.0) -> bool:
 
 def _create_container(client: docker.DockerClient | _docker.CliClient) -> None:
     constants.validate_sa_password(constants.PASSWORD)
+    user_kwargs: dict[str, Any] = {"user": constants.CONTAINER_USER} if constants.CONTAINER_USER else {}
     try:
         client.containers.run(
             constants.IMAGE,
@@ -40,7 +42,7 @@ def _create_container(client: docker.DockerClient | _docker.CliClient) -> None:
                 "MSSQL_PID": "Developer",
                 "MSSQL_MEMORY_LIMIT_MB": str(constants.MEMORY_LIMIT_MB),
             },
-            **({"user": constants.CONTAINER_USER} if constants.CONTAINER_USER else {}),
+            **user_kwargs,
             **_docker.resource_kwargs(
                 tmpfs=constants.TMPFS,
                 shm_size=constants.SHM_SIZE,

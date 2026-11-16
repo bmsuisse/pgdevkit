@@ -7,6 +7,7 @@ from pathlib import Path
 
 import psycopg
 import pytest
+from psycopg.sql import SQL, Identifier
 
 from pgdevkit.testdb import constants
 from pgdevkit.testdb.api import (
@@ -53,7 +54,9 @@ def test_clean_all_removes_every_branch_database(project_factory: Callable[[str,
     prefix = slugify(load_config(project_a).name)
     with psycopg.connect(_admin_dsn()) as con, con.cursor() as cur:
         cur.execute("SELECT count(*) FROM pg_database WHERE datname LIKE %s", (f"{prefix}_%",))
-        (count,) = cur.fetchone()
+        fetched = cur.fetchone()
+        assert fetched is not None
+        (count,) = fetched
     assert count == 0
 
 
@@ -79,7 +82,9 @@ def test_clean_all_does_not_match_prefix_colliding_project_name(
                 "SELECT count(*) FROM pg_database WHERE datname = %s",
                 (status(project_long)["database"],),
             )
-            (count,) = cur.fetchone()
+            fetched = cur.fetchone()
+            assert fetched is not None
+            (count,) = fetched
         assert count == 1
     finally:
         clean_testdb(project_short)
@@ -101,7 +106,9 @@ def test_reset_testdb_only_touches_own_database(project_factory: Callable[[str, 
                 "SELECT count(*) FROM pg_database WHERE datname = %s",
                 (status(project_b)["database"],),
             )
-            (count,) = cur.fetchone()
+            fetched = cur.fetchone()
+            assert fetched is not None
+            (count,) = fetched
         assert count == 1
     finally:
         clean_testdb(project_a)
@@ -180,7 +187,9 @@ def test_clean_orphaned_drops_only_orphaned_dbs(
         assert find_orphaned_dbs(repo) == []
         with psycopg.connect(constants.conninfo("postgres")) as con, con.cursor() as cur:
             cur.execute("SELECT count(*) FROM pg_database WHERE datname = %s", (feature_db,))
-            (count,) = cur.fetchone()
+            fetched = cur.fetchone()
+            assert fetched is not None
+            (count,) = fetched
         assert count == 1
     finally:
         clean_testdb(repo, all=True)
@@ -201,8 +210,8 @@ def test_find_orphaned_dbs_respects_extra_db_suffixes(
         sibling_db = f"{main_db}_sibling"
         stray_db = f"{main_db}_stray"
         with psycopg.connect(constants.conninfo("postgres"), autocommit=True) as con:
-            con.execute(f'CREATE DATABASE "{sibling_db}"')
-            con.execute(f'CREATE DATABASE "{stray_db}"')
+            con.execute(SQL("CREATE DATABASE {}").format(Identifier(sibling_db)))
+            con.execute(SQL("CREATE DATABASE {}").format(Identifier(stray_db)))
 
         assert find_orphaned_dbs(repo) == [stray_db]
     finally:

@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import gc
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 
 import psycopg
 
@@ -59,7 +59,7 @@ async def wait_until(condition: Callable[[], Awaitable[bool] | bool], *, max_wai
 
 
 @contextlib.asynccontextmanager
-async def unhandled_loop_errors() -> AsyncIterator[list[dict]]:
+async def unhandled_loop_errors() -> AsyncGenerator[list[dict]]:
     """Collect what the event loop would log, e.g. "Task exception was never retrieved" for a failed watcher task."""
     loop = asyncio.get_running_loop()
     errors: list[dict] = []

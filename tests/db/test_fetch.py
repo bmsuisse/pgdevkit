@@ -10,6 +10,7 @@ import psycopg
 import pytest
 from psycopg import sql
 from psycopg.errors import QueryCanceled
+from psycopg.sql import SQL, Identifier
 from pydantic import BaseModel
 from sqlglot import exp, select
 
@@ -39,8 +40,8 @@ def _no_default_pool() -> Iterator[None]:
 async def pool(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[PgPool]:
     ensure_container()
     with psycopg.connect(constants.conninfo("postgres"), autocommit=True) as con:
-        con.execute(f'DROP DATABASE IF EXISTS "{TEST_DB}"')
-        con.execute(f'CREATE DATABASE "{TEST_DB}"')
+        con.execute(SQL("DROP DATABASE IF EXISTS {}").format(Identifier(TEST_DB)))
+        con.execute(SQL("CREATE DATABASE {}").format(Identifier(TEST_DB)))
     with psycopg.connect(constants.conninfo(TEST_DB), autocommit=True) as con:
         con.execute("CREATE TABLE widget (id int PRIMARY KEY, name text NOT NULL)")
         con.execute("INSERT INTO widget VALUES (1, 'sprocket'), (2, 'cog')")
@@ -56,12 +57,12 @@ async def pool(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[PgPool]:
     yield p
     await p.close()
     with psycopg.connect(constants.conninfo("postgres"), autocommit=True) as con:
-        con.execute(f'DROP DATABASE IF EXISTS "{TEST_DB}"')
+        con.execute(SQL("DROP DATABASE IF EXISTS {}").format(Identifier(TEST_DB)))
 
 
 async def test_model_and_row_mapper_are_exclusive() -> None:
     with pytest.raises(TypeError, match="model"):
-        await fetch_all("SELECT 1", model=Widget, row_mapper=dict)  # type: ignore[call-overload]
+        await fetch_all("SELECT 1", model=Widget, row_mapper=dict)  # ty: ignore[no-matching-overload]
 
 
 async def test_without_any_connection_source_raises() -> None:
@@ -72,7 +73,7 @@ async def test_without_any_connection_source_raises() -> None:
 async def test_t_string_rejects_params() -> None:
     value = 1
     with pytest.raises(TypeError, match="t-string"):
-        await fetch_all(t"SELECT {value}", {"x": 1})  # type: ignore[call-overload]
+        await fetch_all(t"SELECT {value}", {"x": 1})  # ty: ignore[invalid-argument-type]
 
 
 @requires_podman
@@ -190,7 +191,7 @@ async def test_cancelling_the_task_cancels_the_query_on_the_server(pool: PgPool)
 async def test_unsupported_query_type_and_unsafe_sqlglot_nodes_are_rejected() -> None:
     set_default_pool(None)
     with pytest.raises(TypeError, match="unsupported query type"):
-        await fetch_all(123)  # type: ignore[call-overload]
+        await fetch_all(123)  # ty: ignore[no-matching-overload]
     with pytest.raises(ValueError, match="Command"):
         await fetch_all(exp.Command(this="SELECT", expression=" version()"), pool=_NoPool())  # type: ignore[call-overload]
     with pytest.raises(ValueError, match="placeholder name"):
@@ -275,17 +276,17 @@ async def test_failing_cancel_request_closes_the_connection_and_returns_promptly
 
 async def test_siblings_validate_their_arguments_before_touching_a_connection() -> None:
     with pytest.raises(TypeError, match="model"):
-        await fetch_one("SELECT 1", model=Widget, row_mapper=dict)  # type: ignore[call-overload]
+        await fetch_one("SELECT 1", model=Widget, row_mapper=dict)  # ty: ignore[no-matching-overload]
     value = 1
     for fn in (fetch_one, fetch_scalar, execute):
         with pytest.raises(TypeError, match="t-string"):
-            await fn(t"SELECT {value}", {"x": 1})  # type: ignore[call-overload]
+            await fn(t"SELECT {value}", {"x": 1})  # ty: ignore[invalid-argument-type]
         with pytest.raises(ValueError, match="statement_timeout"):
             await fn("SELECT 1", statement_timeout=0)
         with pytest.raises(RuntimeError, match="set_default_pool"):
             await fn("SELECT 1")
         with pytest.raises(TypeError, match=fn.__name__):
-            await fn(123, pool=_NoPool())  # type: ignore[call-overload]
+            await fn(123, pool=_NoPool())  # ty: ignore[no-matching-overload]
         cancel = asyncio.Event()
         cancel.set()
         with pytest.raises(QueryCanceled, match=fn.__name__):
