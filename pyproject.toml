@@ -99,7 +99,11 @@ select = [
     "FLY",           # f-string instead of str.join on literals
     "PLE", "PLW",    # pylint errors + warnings
 ]
-ignore = ["ANN401"]  # `Any` is a warning via the ruff-warn-any prek hook, not an error
+ignore = [
+    "ANN401",  # `Any` is a warning via the ruff-warn-any prek hook, not an error
+    # DiffKind(str, Enum) is public API: StrEnum would change str()/format() of its members (follow-up issue)
+    "UP042",
+]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"

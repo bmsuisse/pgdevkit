@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, TypeVar
+from typing import Any
 
 from pgdevkit.db.model import TableModel
 from pgdevkit.db.mssql_sql import ident, json_encode_values, qualified
 
-T = TypeVar("T", bound=TableModel)
 
 # `con` below is an mssql-python (github.com/microsoft/mssql-python)
 # connection, but typed as `Any` rather than `mssql_python.Connection` so
@@ -119,7 +118,7 @@ async def _execute_many(con: Any, sql: str, param_rows: Sequence[Sequence]) -> N
     await asyncio.to_thread(_run)
 
 
-async def mssql_retrieve(
+async def mssql_retrieve[T: TableModel](
     con: Any,
     data_type: type[T],
     pks: dict,
@@ -134,7 +133,7 @@ async def mssql_retrieve(
     return data_type(**row) if row else None
 
 
-async def mssql_retrieve_many(
+async def mssql_retrieve_many[T: TableModel](
     con: Any,
     data_type: type[T],
     filters: dict,
@@ -202,7 +201,7 @@ async def mssql_update_dict(
     return await _execute_returning(con, sql, params)
 
 
-async def mssql_update(con: Any, data: T, data_type: type[T]) -> dict | None:
+async def mssql_update[T: TableModel](con: Any, data: T, data_type: type[T]) -> dict | None:
     """Update a typed model instance."""
     return await mssql_update_dict(con, data_type.get_table_name(), data.model_dump(), data_type.get_primary_key())
 
@@ -223,7 +222,9 @@ async def mssql_upsert_dict(
     return row
 
 
-async def mssql_upsert(con: Any, data: T, data_type: type[T], *, complex_helper: Any | None = None) -> dict:
+async def mssql_upsert[T: TableModel](
+    con: Any, data: T, data_type: type[T], *, complex_helper: Any | None = None
+) -> dict:
     """Upsert a typed model instance."""
     return await mssql_upsert_dict(con, data_type.get_table_name(), data.model_dump(), data_type.get_primary_key())
 
@@ -270,7 +271,7 @@ async def mssql_upsert_many_dict(
             await asyncio.to_thread(_run)
 
 
-async def mssql_upsert_many(
+async def mssql_upsert_many[T: TableModel](
     con: Any, data: Sequence[T], data_type: type[T], *, complex_helper: Any | None = None
 ) -> None:
     await mssql_upsert_many_dict(
@@ -284,7 +285,7 @@ async def mssql_delete_dict(con: Any, table_name: tuple[str, str], data: dict) -
     return await _execute_returning(con, sql, params)
 
 
-async def mssql_delete(con: Any, data: T, data_type: type[T]) -> T | None:
+async def mssql_delete[T: TableModel](con: Any, data: T, data_type: type[T]) -> T | None:
     """Delete a typed model instance by its primary key(s)."""
     pk_dict = {pk: getattr(data, pk) for pk in data_type.get_primary_key()}
     row = await mssql_delete_dict(con, data_type.get_table_name(), pk_dict)
