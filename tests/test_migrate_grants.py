@@ -75,9 +75,7 @@ def test_missing_privileges_empty_for_no_tables(clean_db: str, app_role: str):
     assert missing_privileges(clean_db, app_role, []) == []
 
 
-def test_execute_sql_script_grant_on_all_tables_covers_tables_created_after_the_fact(
-    clean_db: str, app_role: str
-):
+def test_execute_sql_script_grant_on_all_tables_covers_tables_created_after_the_fact(clean_db: str, app_role: str):
     """The actual use case: a re-run of `GRANT ... ON ALL TABLES IN SCHEMA` after a new
     table appears picks it up automatically -- unlike ALTER DEFAULT PRIVILEGES, which only
     covers tables created later by the exact role that ran the ALTER DEFAULT PRIVILEGES

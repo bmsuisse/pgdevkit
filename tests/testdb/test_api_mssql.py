@@ -12,9 +12,7 @@ from pgdevkit.testdb.mssql.api import _snapshot_db_name
 def _make_mssql_project(base: Path, name: str) -> Path:
     project = base / name
     project.mkdir()
-    (project / "pyproject.toml").write_text(
-        f'[tool.pgdevkit]\nname = "{name}"\nengine = "mssql"\n', encoding="utf-8"
-    )
+    (project / "pyproject.toml").write_text(f'[tool.pgdevkit]\nname = "{name}"\nengine = "mssql"\n', encoding="utf-8")
     for cmd in (
         ["git", "init", "-q"],
         ["git", "config", "user.email", "test@example.com"],

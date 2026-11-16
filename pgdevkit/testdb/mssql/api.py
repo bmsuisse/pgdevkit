@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import mssql_python
 
@@ -126,8 +127,13 @@ async def _apply(
         if not database_dir.is_dir():
             return
         for file, sql in _iter_sql_files(
-            database_dir, MSSQL,
-            env=env, areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
+            database_dir,
+            MSSQL,
+            env=env,
+            areas=areas,
+            exclude_areas=exclude_areas,
+            schemas=schemas,
+            exclude_schemas=exclude_schemas,
         ):
             for batch in query.split_tsql_batches(sql):
 
@@ -178,8 +184,14 @@ def ensure_testdb(
         await _ensure_database(db_name)
         if apply_scripts:
             await _apply(
-                config, db_name, force_reset,
-                env=env, areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
+                config,
+                db_name,
+                force_reset,
+                env=env,
+                areas=areas,
+                exclude_areas=exclude_areas,
+                schemas=schemas,
+                exclude_schemas=exclude_schemas,
             )
         if apply is not None:
             await _run_apply_hook(db_name, apply)
@@ -355,9 +367,13 @@ def shell_argv(config: ProjectConfig, db_name: str) -> tuple[str, list[str]]:
     required since sqlcmd v18+ defaults to encrypted+verified connections."""
     return "sqlcmd", [
         "sqlcmd",
-        "-S", f"{constants.HOST},{constants.PORT}",
-        "-U", constants.USER,
-        "-P", constants.PASSWORD,
-        "-d", db_name,
+        "-S",
+        f"{constants.HOST},{constants.PORT}",
+        "-U",
+        constants.USER,
+        "-P",
+        constants.PASSWORD,
+        "-d",
+        db_name,
         "-C",
     ]

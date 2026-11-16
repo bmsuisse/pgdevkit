@@ -7,7 +7,6 @@ from psycopg.conninfo import conninfo_to_dict
 from pgdevkit.db import fetch_scalar
 from pgdevkit.db.connection import PgPool
 
-
 ENV_PREFIX = "PGDEVKIT_CONNTEST_"
 
 
@@ -35,8 +34,7 @@ async def test_dsn_azure_postgres_entra(monkeypatch):
     pool = PgPool(env_prefix=ENV_PREFIX, entra_user="alice@example.com")
     dsn = await pool._dsn()
     assert dsn == (
-        "host=myserver.postgres.database.azure.com port=5432 dbname=mydb "
-        "user=alice@example.com password=AADTOKEN"
+        "host=myserver.postgres.database.azure.com port=5432 dbname=mydb user=alice@example.com password=AADTOKEN"
     )
 
 
@@ -70,8 +68,7 @@ async def test_dsn_extra_params_appended(monkeypatch):
     )
     dsn = await pool._dsn()
     assert dsn == (
-        "host=localhost port=5432 dbname=mydb user=myuser password=mypassword "
-        "sslmode=require application_name=myapp"
+        "host=localhost port=5432 dbname=mydb user=myuser password=mypassword sslmode=require application_name=myapp"
     )
 
 
@@ -178,7 +175,13 @@ async def test_azure_token_is_quoted_too(monkeypatch):
 
 def _set_local_env(monkeypatch, dsn: str) -> None:
     info = conninfo_to_dict(dsn)
-    for key, field in (("HOST", "host"), ("PORT", "port"), ("DB", "dbname"), ("USER", "user"), ("PASSWORD", "password")):
+    for key, field in (
+        ("HOST", "host"),
+        ("PORT", "port"),
+        ("DB", "dbname"),
+        ("USER", "user"),
+        ("PASSWORD", "password"),
+    ):
         monkeypatch.setenv(f"PGDEVKIT_CONNLIVE_{key}", info.get(field, ""))
 
 

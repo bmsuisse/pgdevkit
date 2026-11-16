@@ -62,9 +62,7 @@ async def test_timeout_after_the_first_byte_cuts_the_response_short(pool: AsyncC
 
 async def test_fast_query_with_a_timeout_is_complete(pool: AsyncConnectionPool) -> None:
     client = FakeClient()
-    await client.call(
-        PostgresJsonResponse("select i from generate_series(1, 2500) i", pool=pool, statement_timeout=10)
-    )
+    await client.call(PostgresJsonResponse("select i from generate_series(1, 2500) i", pool=pool, statement_timeout=10))
     assert [r["i"] for r in json.loads(client.body)] == list(range(1, 2501))
 
 

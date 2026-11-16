@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
+from pathlib import Path
 
 import mssql_python
 import pytest
-from pathlib import Path
 
-from pgdevkit.testdb.mssql import constants
 from pgdevkit.testdb.api import (
     clean_testdb,
     ensure_testdb,
@@ -15,6 +14,7 @@ from pgdevkit.testdb.api import (
     snapshot_testdb,
     status,
 )
+from pgdevkit.testdb.mssql import constants
 from tests.testdb.conftest import requires_mssql
 
 # Selects these (live, container-requiring) tests in the dedicated GitHub
@@ -77,7 +77,9 @@ def test_ensure_testdb_resolves_view_to_view_dependency(project_factory: Callabl
 def _generated_ddl(conn) -> None:
     cur = conn.cursor()
     cur.execute("IF SCHEMA_ID('gen') IS NULL EXEC('CREATE SCHEMA gen')")
-    cur.execute("IF OBJECT_ID('gen.[Company$Cust_ Ledg_ Entry é]') IS NULL CREATE TABLE gen.[Company$Cust_ Ledg_ Entry é] (id int PRIMARY KEY)")
+    cur.execute(
+        "IF OBJECT_ID('gen.[Company$Cust_ Ledg_ Entry é]') IS NULL CREATE TABLE gen.[Company$Cust_ Ledg_ Entry é] (id int PRIMARY KEY)"
+    )
 
 
 @requires_mssql
@@ -164,7 +166,9 @@ def test_snapshot_is_not_an_orphan_and_goes_with_its_database(project_factory: C
         assert _query(status(project)["dsn"], f"SELECT count(*) FROM sys.databases WHERE name = '{snapshot}'") == [(1,)]
     finally:
         clean_testdb(project)
-    assert _query(constants.conninfo("master"), f"SELECT count(*) FROM sys.databases WHERE name = '{snapshot}'") == [(0,)]
+    assert _query(constants.conninfo("master"), f"SELECT count(*) FROM sys.databases WHERE name = '{snapshot}'") == [
+        (0,)
+    ]
 
 
 @requires_mssql

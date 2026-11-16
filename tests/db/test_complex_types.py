@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
 import psycopg
 import pytest
@@ -229,12 +229,22 @@ async def test_pg_retrieve_does_not_requery_the_catalog_for_every_call(complex_t
         assert count == 1 and [r.id for r in rows] == [2]  # type: ignore[union-attr]
         count, _ = await _queries_of(
             con,
-            lambda: pg_insert(con, ("public", "gadget"), {"id": 3, "mood": "sad", "dims": {"w": 1, "h": 2}}, complex_helper=ComplexHelper(con)),
+            lambda: pg_insert(
+                con,
+                ("public", "gadget"),
+                {"id": 3, "mood": "sad", "dims": {"w": 1, "h": 2}},
+                complex_helper=ComplexHelper(con),
+            ),
         )
         assert count > 1  # first conversion of values on this connection: looks the two columns up
         count, row = await _queries_of(
             con,
-            lambda: pg_insert(con, ("public", "gadget"), {"id": 4, "mood": "sad", "dims": {"w": 1, "h": 2}}, complex_helper=ComplexHelper(con)),
+            lambda: pg_insert(
+                con,
+                ("public", "gadget"),
+                {"id": 4, "mood": "sad", "dims": {"w": 1, "h": 2}},
+                complex_helper=ComplexHelper(con),
+            ),
         )
         assert count == 1
         assert row["dims"] == {"w": 1, "h": 2}  # type: ignore[index]  # RETURNING gives plain values, like pg_retrieve
@@ -295,10 +305,19 @@ async def test_complex_helper_auto_works_for_every_crud_helper(complex_types_tes
         assert row["mood"] == "sad" and row["dims"] == {"w": 1, "h": 2}  # type: ignore[index]
         await pg_update_dict(con, table, {"id": 5, "dims": {"w": 9, "h": 9}}, ["id"], complex_helper="auto")
         await pg_upsert_dict(con, table, {"id": 5, "mood": "happy"}, ["id"], complex_helper="auto")
-        await pg_insert_many(con, table, [{"id": 6, "mood": "sad", "dims": {"w": 1, "h": 1}}, {"id": 7, "mood": "happy", "dims": {"w": 2, "h": 2}}], complex_helper="auto")
+        await pg_insert_many(
+            con,
+            table,
+            [{"id": 6, "mood": "sad", "dims": {"w": 1, "h": 1}}, {"id": 7, "mood": "happy", "dims": {"w": 2, "h": 2}}],
+            complex_helper="auto",
+        )
         got = await pg_retrieve(con, Gadget, {"id": 5}, complex_helper="auto")
         assert got == Gadget(id=5, mood="happy", dims={"w": 9, "h": 9}, note=None)
-        assert {g.id for g in await pg_retrieve_many(con, Gadget, {"mood": "happy"}, complex_helper="auto")} == {1, 5, 7}
+        assert {g.id for g in await pg_retrieve_many(con, Gadget, {"mood": "happy"}, complex_helper="auto")} == {
+            1,
+            5,
+            7,
+        }
         # one helper per call, yet the catalog was asked once: the next call is just the statement itself
         count, _ = await _queries_of(con, lambda: pg_retrieve(con, Gadget, {"id": 1}, complex_helper="auto"))
         assert count == 1
@@ -330,30 +349,49 @@ async def test_pg_helpers_do_not_change_how_the_connection_reads_enums_and_compo
             kw = {"complex_helper": helper_arg}
             await check("pg_retrieve", lambda: pg_retrieve(con, Gadget, {"id": 1}, **kw))
             await check("pg_retrieve_many", lambda: pg_retrieve_many(con, Gadget, {}, limit=1, **kw))
-            await check("pg_insert", lambda: pg_insert(con, table, {"id": 10, "mood": "sad", "dims": {"w": 1, "h": 2}}, **kw))
+            await check(
+                "pg_insert", lambda: pg_insert(con, table, {"id": 10, "mood": "sad", "dims": {"w": 1, "h": 2}}, **kw)
+            )
             await check("pg_insert (enum only)", lambda: pg_insert(con, table, {"id": 11, "mood": "happy"}, **kw))
-            await check("pg_update_dict", lambda: pg_update_dict(con, table, {"id": 10, "dims": {"w": 5, "h": 5}}, ["id"], **kw))
-            await check("pg_update", lambda: pg_update(con, Gadget(id=10, mood="happy", dims={"w": 6, "h": 6}), Gadget, **kw))
-            await check("pg_upsert_dict", lambda: pg_upsert_dict(con, table, {"id": 10, "dims": {"w": 7, "h": 7}}, ["id"], **kw))
-            await check("pg_upsert", lambda: pg_upsert(con, Gadget(id=12, mood="sad", dims={"w": 1, "h": 1}), Gadget, **kw))
+            await check(
+                "pg_update_dict", lambda: pg_update_dict(con, table, {"id": 10, "dims": {"w": 5, "h": 5}}, ["id"], **kw)
+            )
+            await check(
+                "pg_update", lambda: pg_update(con, Gadget(id=10, mood="happy", dims={"w": 6, "h": 6}), Gadget, **kw)
+            )
+            await check(
+                "pg_upsert_dict", lambda: pg_upsert_dict(con, table, {"id": 10, "dims": {"w": 7, "h": 7}}, ["id"], **kw)
+            )
+            await check(
+                "pg_upsert", lambda: pg_upsert(con, Gadget(id=12, mood="sad", dims={"w": 1, "h": 1}), Gadget, **kw)
+            )
             await check(
                 "pg_insert_many",
-                lambda: pg_insert_many(con, table, [{"id": 20, "dims": {"w": 1, "h": 1}}, {"id": 21, "dims": {"w": 2, "h": 2}}], **kw),
+                lambda: pg_insert_many(
+                    con, table, [{"id": 20, "dims": {"w": 1, "h": 1}}, {"id": 21, "dims": {"w": 2, "h": 2}}], **kw
+                ),
             )
             await check(
                 "pg_upsert_many_dict",
-                lambda: pg_upsert_many_dict(con, table, [{"id": 20, "dims": {"w": 3, "h": 3}}, {"id": 22, "dims": None}], ["id"], **kw),
+                lambda: pg_upsert_many_dict(
+                    con, table, [{"id": 20, "dims": {"w": 3, "h": 3}}, {"id": 22, "dims": None}], ["id"], **kw
+                ),
             )
             await check(
                 "pg_upsert_many_dict(must_exist)",
-                lambda: pg_upsert_many_dict(con, table, [{"id": 20, "dims": {"w": 4, "h": 4}}], ["id"], must_exist=True, **kw),
+                lambda: pg_upsert_many_dict(
+                    con, table, [{"id": 20, "dims": {"w": 4, "h": 4}}], ["id"], must_exist=True, **kw
+                ),
             )
             await con.execute("DELETE FROM gadget WHERE id >= 10")
 
         # an enum *array* (a list converted to enum members) written through the helper
         await con.execute("ALTER TABLE gadget ADD COLUMN moods mood[]")
         helper_arg = ComplexHelper(con, cache=False)  # sees the new column
-        await check("pg_insert (enum array)", lambda: pg_insert(con, table, {"id": 40, "moods": ["happy", "sad"]}, complex_helper=helper_arg))
+        await check(
+            "pg_insert (enum array)",
+            lambda: pg_insert(con, table, {"id": 40, "moods": ["happy", "sad"]}, complex_helper=helper_arg),
+        )
         assert (await (await con.execute("SELECT moods FROM gadget WHERE id = 40")).fetchone()) == ("{happy,sad}",)
 
         # the data written through the helper is right nevertheless
@@ -417,7 +455,9 @@ async def test_repeated_writes_do_not_grow_psycopgs_loader_class_cache(complex_t
         size = psycopg_composite._make_loader.cache_info().currsize
         for i in range(5):
             await pg_upsert_dict(con, ("public", "gadget"), {**row, "id": i + 2}, ["id"], complex_helper="auto")
-        assert psycopg_composite._make_loader.cache_info().currsize == size  # one registration per write, no new classes
+        assert (
+            psycopg_composite._make_loader.cache_info().currsize == size
+        )  # one registration per write, no new classes
 
 
 @requires_podman
@@ -431,7 +471,9 @@ async def test_returning_rows_are_plain_values_whichever_columns_were_written(co
             r1 = await pg_upsert_dict(con, table, {"id": 1, "dims": {"w": 3, "h": 4}}, ["id"], complex_helper=helper)
             # ... as when only the enum is written, or both, or neither
             r2 = await pg_upsert_dict(con, table, {"id": 1, "mood": "happy"}, ["id"], complex_helper=helper)
-            r3 = await pg_upsert_dict(con, table, {"id": 1, "mood": "happy", "dims": {"w": 3, "h": 4}}, ["id"], complex_helper=helper)
+            r3 = await pg_upsert_dict(
+                con, table, {"id": 1, "mood": "happy", "dims": {"w": 3, "h": 4}}, ["id"], complex_helper=helper
+            )
             r4 = await pg_upsert_dict(con, table, {"id": 1, "note": "a"}, ["id"], complex_helper=helper)
             r5 = await pg_insert(con, table, {"id": 9, "note": "z"}, complex_helper=helper)
             await con.execute("DELETE FROM gadget WHERE id = 9")
@@ -442,7 +484,10 @@ async def test_returning_rows_are_plain_values_whichever_columns_were_written(co
             assert u1 == u2 == (1, "happy", {"w": 3, "h": 4}, "a")  # the raw tuple, in column order
         # without a helper nothing changes: RETURNING * as psycopg reads it
         assert await pg_upsert_dict(con, table, {"id": 1, "note": "a"}, ["id"]) == {
-            "id": 1, "mood": "happy", "dims": "(3,4)", "note": "a"
+            "id": 1,
+            "mood": "happy",
+            "dims": "(3,4)",
+            "note": "a",
         }
 
 

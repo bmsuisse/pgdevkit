@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Callable, Mapping, Optional, Sequence, Type, TypeVar
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any, TypeVar
 
-from .mssql_sql import ident, json_encode_values, qualified
 from .model import TableModel
+from .mssql_sql import ident, json_encode_values, qualified
 
 T = TypeVar("T", bound=TableModel)
 
@@ -120,7 +121,7 @@ async def _execute_many(con: Any, sql: str, param_rows: Sequence[Sequence]) -> N
 
 async def mssql_retrieve(
     con: Any,
-    data_type: Type[T],
+    data_type: type[T],
     pks: dict,
     *,
     complex_helper: Any | None = None,
@@ -135,10 +136,10 @@ async def mssql_retrieve(
 
 async def mssql_retrieve_many(
     con: Any,
-    data_type: Type[T],
+    data_type: type[T],
     filters: dict,
     *,
-    from_dict: Optional[Callable[[Mapping], T]] = None,
+    from_dict: Callable[[Mapping], T] | None = None,
     complex_helper: Any | None = None,
 ) -> Sequence[T]:
     """Fetch multiple rows matching all filter key=value pairs."""
@@ -222,9 +223,7 @@ async def mssql_upsert_dict(
     return row
 
 
-async def mssql_upsert(
-    con: Any, data: T, data_type: type[T], *, complex_helper: Any | None = None
-) -> dict:
+async def mssql_upsert(con: Any, data: T, data_type: type[T], *, complex_helper: Any | None = None) -> dict:
     """Upsert a typed model instance."""
     return await mssql_upsert_dict(con, data_type.get_table_name(), data.model_dump(), data_type.get_primary_key())
 
@@ -274,7 +273,9 @@ async def mssql_upsert_many_dict(
 async def mssql_upsert_many(
     con: Any, data: Sequence[T], data_type: type[T], *, complex_helper: Any | None = None
 ) -> None:
-    await mssql_upsert_many_dict(con, data_type.get_table_name(), [d.model_dump() for d in data], data_type.get_primary_key())
+    await mssql_upsert_many_dict(
+        con, data_type.get_table_name(), [d.model_dump() for d in data], data_type.get_primary_key()
+    )
 
 
 async def mssql_delete_dict(con: Any, table_name: tuple[str, str], data: dict) -> dict | None:

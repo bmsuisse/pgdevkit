@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import psycopg
 import pytest
@@ -51,10 +51,9 @@ def test_clean_all_removes_every_branch_database(project_factory: Callable[[str,
     clean_testdb(project_a, all=True)
 
     prefix = slugify(load_config(project_a).name)
-    with psycopg.connect(_admin_dsn()) as con:
-        with con.cursor() as cur:
-            cur.execute("SELECT count(*) FROM pg_database WHERE datname LIKE %s", (f"{prefix}_%",))
-            (count,) = cur.fetchone()
+    with psycopg.connect(_admin_dsn()) as con, con.cursor() as cur:
+        cur.execute("SELECT count(*) FROM pg_database WHERE datname LIKE %s", (f"{prefix}_%",))
+        (count,) = cur.fetchone()
     assert count == 0
 
 
@@ -75,13 +74,12 @@ def test_clean_all_does_not_match_prefix_colliding_project_name(
 
         clean_testdb(project_short, all=True)
 
-        with psycopg.connect(_admin_dsn()) as con:
-            with con.cursor() as cur:
-                cur.execute(
-                    "SELECT count(*) FROM pg_database WHERE datname = %s",
-                    (status(project_long)["database"],),
-                )
-                (count,) = cur.fetchone()
+        with psycopg.connect(_admin_dsn()) as con, con.cursor() as cur:
+            cur.execute(
+                "SELECT count(*) FROM pg_database WHERE datname = %s",
+                (status(project_long)["database"],),
+            )
+            (count,) = cur.fetchone()
         assert count == 1
     finally:
         clean_testdb(project_short)
@@ -98,13 +96,12 @@ def test_reset_testdb_only_touches_own_database(project_factory: Callable[[str, 
 
         reset_testdb(project_a)  # must not raise or affect project_b
 
-        with psycopg.connect(_admin_dsn()) as con:
-            with con.cursor() as cur:
-                cur.execute(
-                    "SELECT count(*) FROM pg_database WHERE datname = %s",
-                    (status(project_b)["database"],),
-                )
-                (count,) = cur.fetchone()
+        with psycopg.connect(_admin_dsn()) as con, con.cursor() as cur:
+            cur.execute(
+                "SELECT count(*) FROM pg_database WHERE datname = %s",
+                (status(project_b)["database"],),
+            )
+            (count,) = cur.fetchone()
         assert count == 1
     finally:
         clean_testdb(project_a)
@@ -181,10 +178,9 @@ def test_clean_orphaned_drops_only_orphaned_dbs(
         clean_testdb(repo, orphaned=True)
 
         assert find_orphaned_dbs(repo) == []
-        with psycopg.connect(constants.conninfo("postgres")) as con:
-            with con.cursor() as cur:
-                cur.execute("SELECT count(*) FROM pg_database WHERE datname = %s", (feature_db,))
-                (count,) = cur.fetchone()
+        with psycopg.connect(constants.conninfo("postgres")) as con, con.cursor() as cur:
+            cur.execute("SELECT count(*) FROM pg_database WHERE datname = %s", (feature_db,))
+            (count,) = cur.fetchone()
         assert count == 1
     finally:
         clean_testdb(repo, all=True)

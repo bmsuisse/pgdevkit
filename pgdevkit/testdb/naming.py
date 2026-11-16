@@ -116,7 +116,7 @@ def escape_like_prefix(prefix: str) -> str:
     return prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def expected_db_names(config: "ProjectConfig", branches: list[str]) -> set[str]:
+def expected_db_names(config: ProjectConfig, branches: list[str]) -> set[str]:
     """Every DB name a currently live worktree of this project is entitled
     to own: the main workspace DB per branch, plus one `<main>{suffix}`
     sibling per `[tool.pgdevkit].extra_db_suffixes` entry."""

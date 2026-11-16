@@ -9,6 +9,7 @@ from pgdevkit.backends import get_backend
 from pgdevkit.diff import compute_diff
 from pgdevkit.parser import parse_directory
 from pgdevkit.testdb.api import clean_testdb, ensure_testdb, status
+
 # _make_project (not the project_factory fixture) -- project_factory lives
 # in tests/testdb/conftest.py, whose fixtures pytest only injects into tests
 # under tests/testdb/ itself. This file sits outside that directory, so it

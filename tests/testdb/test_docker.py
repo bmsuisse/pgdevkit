@@ -8,9 +8,7 @@ from pgdevkit.testdb._docker import _parse_tmpfs, resource_kwargs
 
 
 def test_parse_tmpfs_single_mount():
-    assert _parse_tmpfs("/var/lib/postgresql/data:rw,size=512m") == {
-        "/var/lib/postgresql/data": "rw,size=512m"
-    }
+    assert _parse_tmpfs("/var/lib/postgresql/data:rw,size=512m") == {"/var/lib/postgresql/data": "rw,size=512m"}
 
 
 def test_parse_tmpfs_multiple_mounts_semicolon_separated():
@@ -57,9 +55,7 @@ def test_resource_kwargs_memswap_limit_without_mem_limit_is_ignored():
 
 
 def test_resource_kwargs_cpus_converted_to_nano_cpus():
-    assert resource_kwargs(tmpfs="", shm_size="", mem_limit="", cpus="1.5") == {
-        "nano_cpus": 1_500_000_000
-    }
+    assert resource_kwargs(tmpfs="", shm_size="", mem_limit="", cpus="1.5") == {"nano_cpus": 1_500_000_000}
 
 
 def test_resource_kwargs_shm_size_passed_through():

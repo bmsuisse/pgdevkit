@@ -8,10 +8,10 @@ from pathlib import Path
 
 import psycopg
 import typer
+from rich import box
 from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
-from rich import box
 from tqdm import tqdm
 
 from . import migrate, migrate_mssql, stats, testdb
@@ -49,7 +49,9 @@ _TESTDB_ENV_OPTION = typer.Option(
     help="Environment to apply: skips any <name>.<other-env>.sql file (e.g. grants.prod.sql); untagged files always apply",
 )
 _MIGRATE_DIALECT_OPTION = typer.Option(
-    "postgres", "--dialect", help="postgres (default) or mssql; mssql needs the mssql extra and uses --url as an ODBC connection string"
+    "postgres",
+    "--dialect",
+    help="postgres (default) or mssql; mssql needs the mssql extra and uses --url as an ODBC connection string",
 )
 _MIGRATE_ENV_OPTION = typer.Option(
     None,
@@ -61,6 +63,7 @@ _MIGRATE_ENV_OPTION = typer.Option(
 
 def _as_set(values: list[str]) -> frozenset[str] | None:
     return frozenset(values) if values else None
+
 
 testdb_app = typer.Typer(name="testdb", help="Manage the shared local Postgres test container")
 app.add_typer(testdb_app, name="testdb")
@@ -103,7 +106,7 @@ def compare(
     if report_extra_db and (area or exclude_area or schema or exclude_schema):
         console.print(
             "[yellow]⚠[/yellow]  --report-extra-db with --area/--exclude-area/--schema/--exclude-schema will "
-            "report every DB object outside the filtered area(s)/schema(s) as \"missing in scripts\", since the "
+            'report every DB object outside the filtered area(s)/schema(s) as "missing in scripts", since the '
             "live database has no concept of areas — and isn't itself filtered by --schema either — only the "
             "scripts side is filtered."
         )
@@ -220,7 +223,7 @@ def fetch_missing(
                 continue
             try:
                 ddl = reconstruct_ddl(conn, m)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 err_console.print(f"[red]Error[/red] reconstructing {m.qualified_name}: {e}")
                 continue
             dest_dir.mkdir(parents=True, exist_ok=True)
@@ -254,7 +257,9 @@ def update_stats(
     conninfo = build_conninfo(url, entra_user)
     try:
         with console.status("Collecting stats..."):
-            tables, columns = stats.collect_stats(conninfo, set(table) or None, exact=exact, analyze=analyze, dialect=dialect)
+            tables, columns = stats.collect_stats(
+                conninfo, set(table) or None, exact=exact, analyze=analyze, dialect=dialect
+            )
     except KeyError as e:
         err_console.print(f"[red]Error:[/red] unknown table(s): {e.args[0]}")
         raise typer.Exit(2)
@@ -287,7 +292,10 @@ def testdb_up(
 ) -> None:
     """Ensure the container is running, the workspace DB exists, and schema is applied."""
     testdb.ensure_testdb(
-        env=env, areas=_as_set(area), exclude_areas=_as_set(exclude_area), schemas=_as_set(schema),
+        env=env,
+        areas=_as_set(area),
+        exclude_areas=_as_set(exclude_area),
+        schemas=_as_set(schema),
         exclude_schemas=_as_set(exclude_schema),
     )
     info = testdb.status()
@@ -304,7 +312,10 @@ def testdb_reset(
 ) -> None:
     """Drop and recreate only this workspace's database, then reapply schema + seed data."""
     testdb.reset_testdb(
-        env=env, areas=_as_set(area), exclude_areas=_as_set(exclude_area), schemas=_as_set(schema),
+        env=env,
+        areas=_as_set(area),
+        exclude_areas=_as_set(exclude_area),
+        schemas=_as_set(schema),
         exclude_schemas=_as_set(exclude_schema),
     )
     info = testdb.status()
@@ -552,12 +563,14 @@ def migrate_apply(
                 dialect=dialect,
             )
         except migrate.TrackingTableMissing:
-            err_console.print(
-                f"[yellow]⚠[/yellow]  {tracking_table} not found — treating every migration as pending"
-            )
+            err_console.print(f"[yellow]⚠[/yellow]  {tracking_table} not found — treating every migration as pending")
             targets = migrate.list_migration_files(
-                migrations_dir, areas=areas, exclude_areas=exclude_areas, schemas=schemas,
-                exclude_schemas=exclude_schemas, env=env,
+                migrations_dir,
+                areas=areas,
+                exclude_areas=exclude_areas,
+                schemas=schemas,
+                exclude_schemas=exclude_schemas,
+                env=env,
             )
 
     if not targets:
@@ -592,7 +605,7 @@ def migrate_apply(
                     result = migrate.apply_migration(
                         conninfo, path, tracking_table, already_done=already_done, dialect=dialect
                     )
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     failure = e
                     stop.set()
                     bar_write(f"FAILED {path.name}: {e}")
@@ -629,9 +642,7 @@ def migrate_apply(
                     bar.write(f"\n=== {path.name} ===")
                     bar.write(path.read_text(encoding="utf-8"))
                     answer = (
-                        typer.prompt("[Y]es execute / [n]o skip / [a]lready done / [q]uit", default="y")
-                        .strip()
-                        .lower()
+                        typer.prompt("[Y]es execute / [n]o skip / [a]lready done / [q]uit", default="y").strip().lower()
                     )
                 if answer in ("q", "quit"):
                     quit_requested = True

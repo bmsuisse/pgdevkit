@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from pgdevkit.diff import DiffKind, _norm_type, _parse_index_def, compute_diff
 from pgdevkit.dialect import MSSQL
+from pgdevkit.diff import DiffKind, _norm_type, _parse_index_def, compute_diff
 from pgdevkit.models import ColumnDef, DatabaseSchema, IndexDef, TableDef
 
 
@@ -27,7 +27,9 @@ def test_compute_diff_reports_missing_table_for_mssql():
     scripts = DatabaseSchema(tables={"dbo.widget": _table("dbo", "widget", id=("int", False))})
     db = DatabaseSchema()
     diffs = compute_diff(scripts, db, dialect="mssql")
-    assert any(d.kind == DiffKind.MISSING_IN_DB and d.object_type == "table" and d.object_name == "dbo.widget" for d in diffs)
+    assert any(
+        d.kind == DiffKind.MISSING_IN_DB and d.object_type == "table" and d.object_name == "dbo.widget" for d in diffs
+    )
 
 
 def test_compute_diff_column_type_synonym_insensitive_for_mssql():
@@ -53,7 +55,12 @@ def test_parse_index_def_parses_tsql_filtered_index():
 
 
 def test_diff_index_matches_equivalent_tsql_definitions():
-    idx = IndexDef(schema="dbo", table="widget", name="ix_widget_name", definition="create index ix_widget_name on dbo.widget (name)")
+    idx = IndexDef(
+        schema="dbo",
+        table="widget",
+        name="ix_widget_name",
+        definition="create index ix_widget_name on dbo.widget (name)",
+    )
     scripts = DatabaseSchema(indexes={idx.qualified_name: idx})
     db = DatabaseSchema(indexes={idx.qualified_name: idx})
     diffs = compute_diff(scripts, db, dialect="mssql")
@@ -71,7 +78,10 @@ def test_index_columns_compare_equal_whether_or_not_they_are_bracket_quoted():
     scripts = "create index [ix$1] on dbo.[company$cust ledger entry é] ([posting date], [flag])"
     unquoted = "create index ix on dbo.t (a, b)"
     assert _parse_index_def(scripts, MSSQL)["columns"] == ["posting date", "flag"]
-    assert _parse_index_def(unquoted, MSSQL)["columns"] == _parse_index_def("create index ix on dbo.t ([a], [b])", MSSQL)["columns"]
+    assert (
+        _parse_index_def(unquoted, MSSQL)["columns"]
+        == _parse_index_def("create index ix on dbo.t ([a], [b])", MSSQL)["columns"]
+    )
 
 
 def test_index_where_clause_compares_equal_whether_or_not_bracket_quoted():

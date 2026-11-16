@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from ..dialect import POSTGRES, Dialect
 from ..introspect import introspect_db

@@ -175,9 +175,7 @@ def test_applied_migrations_raises_tracking_table_missing(fake: FakeConnection):
 def test_applied_migrations_reads_rows(fake: FakeConnection):
     fake.objects = {"[dbo].[schema_migrations]"}
     fake.applied_rows = [("001_a.sql", "2026-01-01", "sa")]
-    assert migrate.applied_migrations("conn", "dbo.schema_migrations", "mssql") == {
-        "001_a.sql": ("2026-01-01", "sa")
-    }
+    assert migrate.applied_migrations("conn", "dbo.schema_migrations", "mssql") == {"001_a.sql": ("2026-01-01", "sa")}
 
 
 def test_already_fully_applied(fake: FakeConnection, tmp_path: Path):
@@ -246,8 +244,17 @@ def test_cli_entra_user_with_mssql_adds_authentication(monkeypatch: pytest.Monke
 def test_cli_rejects_conflicting_authentication_and_unknown_dialect(tmp_path: Path):
     result = runner.invoke(
         app,
-        ["migrate", "check", str(tmp_path), "--url", "Server=x;Authentication=ActiveDirectoryMSI",
-         "--dialect", "mssql", "--entra-user", "a@b.c"],
+        [
+            "migrate",
+            "check",
+            str(tmp_path),
+            "--url",
+            "Server=x;Authentication=ActiveDirectoryMSI",
+            "--dialect",
+            "mssql",
+            "--entra-user",
+            "a@b.c",
+        ],
     )
     assert result.exit_code == 2
     result = runner.invoke(app, ["migrate", "check", str(tmp_path), "--url", "x", "--dialect", "oracle"])
@@ -265,8 +272,10 @@ def test_late_statement_error_surfaced_by_draining_result_sets_rolls_back(fake: 
 
 
 def test_strip_comments_handles_block_nested_line_and_literals():
-    sql = "/* CREATE TABLE a (id int) /* nested */ still comment */ CREATE TABLE b (id int) -- CREATE TABLE c\n" \
-          "SELECT '/* not a comment */', '--nope', [we--ird]"
+    sql = (
+        "/* CREATE TABLE a (id int) /* nested */ still comment */ CREATE TABLE b (id int) -- CREATE TABLE c\n"
+        "SELECT '/* not a comment */', '--nope', [we--ird]"
+    )
     out = migrate_mssql.strip_comments(sql)
     assert "CREATE TABLE a" not in out and "CREATE TABLE c" not in out
     assert "CREATE TABLE b" in out
@@ -295,8 +304,15 @@ def test_confirmation_prompt_never_shows_mssql_credentials(fake: FakeConnection,
     fake.objects = {"[dbo].[schema_migrations]"}
     result = runner.invoke(
         app,
-        ["migrate", "apply", str(tmp_path), "--dialect", "mssql",
-         "--url", "Server=h,1433;Database=d;UID=u;PWD=s3@cret"],
+        [
+            "migrate",
+            "apply",
+            str(tmp_path),
+            "--dialect",
+            "mssql",
+            "--url",
+            "Server=h,1433;Database=d;UID=u;PWD=s3@cret",
+        ],
         input="y\n",
     )
     assert result.exit_code == 0, result.output

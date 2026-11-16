@@ -1,9 +1,8 @@
 """PostgresJsonResponse: output shape, connections and error handling, through a real FastAPI app and real Postgres."""
 
+import json
 from collections.abc import AsyncIterator, Iterator
 from contextlib import AbstractAsyncContextManager
-
-import json
 
 import httpx
 import psycopg
@@ -112,7 +111,9 @@ async def client(pool: AsyncConnectionPool) -> AsyncIterator[httpx.AsyncClient]:
     @app.get("/t-string-json")
     async def t_string_json():
         return PostgresJsonResponse(
-            t"select json_build_object('a', i)::text from generate_series(1, {2}) i", pool=pool, query_produces_json=True
+            t"select json_build_object('a', i)::text from generate_series(1, {2}) i",
+            pool=pool,
+            query_produces_json=True,
         )
 
     @app.get("/default-pool")

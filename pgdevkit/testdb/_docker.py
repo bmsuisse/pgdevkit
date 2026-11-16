@@ -125,7 +125,7 @@ def _sdk_client() -> docker.DockerClient | None:
         c = docker.from_env()
         c.ping()
         return c
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
     for base_url in _FALLBACK_SOCKET_URLS:
         if base_url is None:
@@ -134,7 +134,7 @@ def _sdk_client() -> docker.DockerClient | None:
             c = docker.DockerClient(base_url=base_url)
             c.ping()
             return c
-        except Exception:  # noqa: BLE001
+        except Exception:
             continue
     return None
 

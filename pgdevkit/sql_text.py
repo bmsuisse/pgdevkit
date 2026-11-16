@@ -23,7 +23,7 @@ def strip_line_comments(sql: str) -> str:
                 buf.append(c)
         elif dollar_tag is not None:
             buf.append(c)
-            if c == "$" and sql[i:i + len(dollar_tag)] == dollar_tag:
+            if c == "$" and sql[i : i + len(dollar_tag)] == dollar_tag:
                 buf.extend(list(dollar_tag[1:]))
                 i += len(dollar_tag)
                 dollar_tag = None
@@ -34,7 +34,7 @@ def strip_line_comments(sql: str) -> str:
                 buf.append(sql[i + 1])
                 i += 2
                 continue
-            elif c == "'":
+            if c == "'":
                 in_string = False
             buf.append(c)
         elif c == "-" and i + 1 < len(sql) and sql[i + 1] == "-":

@@ -33,6 +33,7 @@ def test_split_statements_handles_tagged_dollar_quotes():
     statements = _split_statements("SELECT $tag$a;b$tag$ AS x; SELECT 2")
     assert statements == ["SELECT $tag$a;b$tag$ AS x", "SELECT 2"]
 
+
 def test_split_tsql_batches_splits_on_standalone_go_line():
     sql = "CREATE TABLE dbo.widget (id INT);\nGO\nINSERT INTO dbo.widget VALUES (1);\nGO\n"
     batches = split_tsql_batches(sql)

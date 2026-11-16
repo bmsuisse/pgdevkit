@@ -41,7 +41,11 @@ def layer_folder_for(scripts_dir: Path, schema: str) -> Path:
     if no existing folder matches."""
     if scripts_dir.is_dir():
         for entry in scripts_dir.iterdir():
-            if not entry.is_dir() or entry.name in ("migrations", "_migration_scripts") or entry.name in IGNORED_DIR_NAMES:
+            if (
+                not entry.is_dir()
+                or entry.name in ("migrations", "_migration_scripts")
+                or entry.name in IGNORED_DIR_NAMES
+            ):
                 continue
             if _LAYER_PREFIX_RE.sub("", entry.name).lower() == schema.lower():
                 return entry

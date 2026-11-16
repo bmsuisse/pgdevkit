@@ -86,6 +86,7 @@ async def test_aborted_client_cancels_the_query(
     server: str, server_log: Path, postgres_dsn: str, app_name: str
 ) -> None:
     log_start = len(server_log.read_text())
+
     async def query_running() -> bool:
         return await active_queries(postgres_dsn, app_name) == 1
 

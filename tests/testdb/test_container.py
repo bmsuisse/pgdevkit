@@ -112,10 +112,9 @@ def _admin_dsn() -> str:
 def test_ensure_container_starts_and_accepts_connections():
     ensure_container()
 
-    with psycopg.connect(_admin_dsn()) as con:
-        with con.cursor() as cur:
-            cur.execute("SELECT 1")
-            assert cur.fetchone() == (1,)
+    with psycopg.connect(_admin_dsn()) as con, con.cursor() as cur:
+        cur.execute("SELECT 1")
+        assert cur.fetchone() == (1,)
 
 
 @requires_podman
@@ -123,10 +122,9 @@ def test_ensure_container_is_idempotent():
     ensure_container()
     ensure_container()  # must not raise, must not error on "name already in use"
 
-    with psycopg.connect(_admin_dsn()) as con:
-        with con.cursor() as cur:
-            cur.execute("SELECT 1")
-            assert cur.fetchone() == (1,)
+    with psycopg.connect(_admin_dsn()) as con, con.cursor() as cur:
+        cur.execute("SELECT 1")
+        assert cur.fetchone() == (1,)
 
 
 @requires_podman
@@ -135,17 +133,15 @@ def test_create_container_falls_back_to_start_when_name_in_use():
 
     _create_container(container._client())  # run will conflict; must fall back to start()
 
-    with psycopg.connect(_admin_dsn()) as con:
-        with con.cursor() as cur:
-            cur.execute("SELECT 1")
-            assert cur.fetchone() == (1,)
+    with psycopg.connect(_admin_dsn()) as con, con.cursor() as cur:
+        cur.execute("SELECT 1")
+        assert cur.fetchone() == (1,)
 
 
 @requires_podman
 def test_ensure_container_runs_with_utc_timezone():
     ensure_container()
 
-    with psycopg.connect(_admin_dsn()) as con:
-        with con.cursor() as cur:
-            cur.execute("SHOW timezone")
-            assert cur.fetchone() == ("UTC",)
+    with psycopg.connect(_admin_dsn()) as con, con.cursor() as cur:
+        cur.execute("SHOW timezone")
+        assert cur.fetchone() == ("UTC",)

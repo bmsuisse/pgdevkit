@@ -95,7 +95,7 @@ def _split_sql(sql: str) -> list[str]:
                 in_line_comment = False
             buf.append(c)
         elif block_depth:
-            two = sql[i:i + 2]
+            two = sql[i : i + 2]
             if two == "/*":
                 block_depth += 1
             elif two == "*/":
@@ -109,7 +109,7 @@ def _split_sql(sql: str) -> list[str]:
             continue
         elif dollar_tag is not None:
             buf.append(c)
-            if c == "$" and sql[i:i + len(dollar_tag)] == dollar_tag:
+            if c == "$" and sql[i : i + len(dollar_tag)] == dollar_tag:
                 buf.extend(list(dollar_tag[1:]))
                 i += len(dollar_tag)
                 dollar_tag = None
@@ -120,7 +120,7 @@ def _split_sql(sql: str) -> list[str]:
                 buf.append(sql[i + 1])
                 i += 2
                 continue
-            elif c == "'":
+            if c == "'":
                 in_string = False
             buf.append(c)
         elif in_identifier:
@@ -182,9 +182,7 @@ def _created_table_names(stmts: list[str]) -> list[str]:
             continue
         names.extend(
             m.group(1)
-            for m in re.finditer(
-                r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w."]+)', stripped, re.IGNORECASE
-            )
+            for m in re.finditer(r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w."]+)', stripped, re.IGNORECASE)
         )
     return names
 
@@ -242,8 +240,7 @@ def _target_exists(con: psycopg.Connection, target: tuple[str, ...]) -> bool:
         row = con.execute("select to_regnamespace(%s)", (target[1],)).fetchone()
     else:  # column
         row = con.execute(
-            "select 1 from pg_attribute where attrelid = to_regclass(%s) "
-            "and attname = %s and not attisdropped",
+            "select 1 from pg_attribute where attrelid = to_regclass(%s) and attname = %s and not attisdropped",
             (target[1], target[2]),
         ).fetchone()
     return bool(row and row[0])
@@ -338,9 +335,7 @@ def pending_migrations(
     return [p for p in files if p.name not in applied]
 
 
-def record_applied(
-    conninfo: str, tracking_table: str, filename: str, dialect: str | Dialect = "postgres"
-) -> bool:
+def record_applied(conninfo: str, tracking_table: str, filename: str, dialect: str | Dialect = "postgres") -> bool:
     """Best-effort insert into the tracking table. Returns False without raising if the
     tracking table doesn't exist yet — e.g. this migration is the one that creates it."""
     if _is_mssql(dialect):
@@ -476,8 +471,7 @@ def apply_migration(
     missing = verify_created_tables(conninfo, stmts, dialect)
     if missing:
         raise MigrationVerificationError(
-            f"{filename}: table(s) not found after apply — migration may have rolled back: "
-            + ", ".join(missing)
+            f"{filename}: table(s) not found after apply — migration may have rolled back: " + ", ".join(missing)
         )
     created = migrate_mssql.created_table_names(stmts) if mssql else _created_table_names(stmts)
     return ApplyResult(filename, executed=True, verified_tables=created)

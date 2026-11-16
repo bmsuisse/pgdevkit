@@ -66,4 +66,3 @@ def test_render_rejects_command_and_bad_placeholder_nested_in_a_union():
 def test_importing_pgdevkit_db_does_not_import_sqlglot():
     code = "import sys, pgdevkit.db; sys.exit('sqlglot' in sys.modules)"
     assert subprocess.run([sys.executable, "-c", code], check=False).returncode == 0
-

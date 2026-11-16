@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import psycopg
 from psycopg.sql import SQL, Identifier
@@ -146,12 +147,19 @@ def ensure_testdb(
     config, db_name = _resolve(project_root)
     if config.engine == "mssql":
         return _mssql_api().ensure_testdb(
-            config, db_name, force_reset,
-            env=env, areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
-            apply=apply, apply_scripts=apply_scripts,
+            config,
+            db_name,
+            force_reset,
+            env=env,
+            areas=areas,
+            exclude_areas=exclude_areas,
+            schemas=schemas,
+            exclude_schemas=exclude_schemas,
+            apply=apply,
+            apply_scripts=apply_scripts,
         )
     if apply is not None or not apply_scripts:
-        raise ValueError("ensure_testdb: apply/apply_scripts are only supported for engine = \"mssql\"")
+        raise ValueError('ensure_testdb: apply/apply_scripts are only supported for engine = "mssql"')
 
     ensure_container()
 
@@ -160,8 +168,14 @@ def ensure_testdb(
             await _drop_database(db_name)
         await _ensure_database(db_name)
         await _apply(
-            config, db_name, force_reset,
-            env=env, areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
+            config,
+            db_name,
+            force_reset,
+            env=env,
+            areas=areas,
+            exclude_areas=exclude_areas,
+            schemas=schemas,
+            exclude_schemas=exclude_schemas,
         )
 
     asyncio.run(_run())
@@ -182,9 +196,15 @@ def reset_testdb(
     """Drop and recreate only this workspace's database, then reapply
     schema and seed data."""
     return ensure_testdb(
-        project_root, force_reset=True,
-        env=env, areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
-        apply=apply, apply_scripts=apply_scripts,
+        project_root,
+        force_reset=True,
+        env=env,
+        areas=areas,
+        exclude_areas=exclude_areas,
+        schemas=schemas,
+        exclude_schemas=exclude_schemas,
+        apply=apply,
+        apply_scripts=apply_scripts,
     )
 
 
@@ -198,7 +218,7 @@ def snapshot_testdb(project_root: Path | None = None, name: str = "template") ->
     PGDEVKIT_TESTDB_MSSQL_SNAPSHOT_DIR (a path in the container) is set."""
     config, db_name = _resolve(project_root)
     if config.engine != "mssql":
-        raise ValueError("snapshot_testdb is only supported for engine = \"mssql\"")
+        raise ValueError('snapshot_testdb is only supported for engine = "mssql"')
     return _mssql_api().snapshot_testdb(config, db_name, name)
 
 
@@ -209,7 +229,7 @@ def restore_testdb(project_root: Path | None = None, name: str = "template") -> 
     from a database's *sole* snapshot, so keep one snapshot per database."""
     config, db_name = _resolve(project_root)
     if config.engine != "mssql":
-        raise ValueError("restore_testdb is only supported for engine = \"mssql\"")
+        raise ValueError('restore_testdb is only supported for engine = "mssql"')
     _mssql_api().restore_testdb(config, db_name, name)
 
 

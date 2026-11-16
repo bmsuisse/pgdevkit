@@ -45,8 +45,7 @@ def fetchmissing_db(tmp_path: Path):
         con.execute("CREATE VIEW app.untracked_view AS SELECT id, name FROM app.untracked")
         con.execute("CREATE FUNCTION app.double_it(x int) RETURNS int AS 'SELECT x * 2' LANGUAGE sql")
         con.execute(
-            "CREATE FUNCTION app.list_names() RETURNS TABLE(name text) AS "
-            "'SELECT name FROM app.untracked' LANGUAGE sql"
+            "CREATE FUNCTION app.list_names() RETURNS TABLE(name text) AS 'SELECT name FROM app.untracked' LANGUAGE sql"
         )
 
     scripts_dir = tmp_path / "database"

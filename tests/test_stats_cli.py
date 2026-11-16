@@ -59,7 +59,9 @@ def test_update_stats_then_get_stats(tmp_path: Path):
         assert r.exit_code == 0, r.output
         assert "public.zeta" in json.loads((tmp_path / "_stats" / "_tables.json").read_text())
 
-        assert runner.invoke(app, ["update-stats", str(tmp_path), "--url", dsn, "--table", "public.nope"]).exit_code == 2
+        assert (
+            runner.invoke(app, ["update-stats", str(tmp_path), "--url", dsn, "--table", "public.nope"]).exit_code == 2
+        )
 
         # A full run prunes dropped tables.
         with psycopg.connect(dsn, autocommit=True) as con:
@@ -73,4 +75,3 @@ def test_update_stats_then_get_stats(tmp_path: Path):
     finally:
         with psycopg.connect(admin, autocommit=True) as con:
             con.execute(f'DROP DATABASE IF EXISTS "{TEST_DB}"')
-

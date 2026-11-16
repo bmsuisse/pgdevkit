@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import re
 from dataclasses import dataclass
 from enum import Enum
@@ -6,7 +7,7 @@ from enum import Enum
 import sqlglot
 import sqlglot.expressions as exp
 
-from .dialect import Dialect, POSTGRES, resolve_dialect
+from .dialect import POSTGRES, Dialect, resolve_dialect
 from .models import DatabaseSchema, FunctionDef, IndexDef, TableDef
 
 

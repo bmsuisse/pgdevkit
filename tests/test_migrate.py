@@ -86,16 +86,12 @@ def test_default_tracking_table_falls_back_when_no_pyproject_section(tmp_path):
 
 
 def test_default_tracking_table_reads_pyproject_override(tmp_path):
-    (tmp_path / "pyproject.toml").write_text(
-        "[tool.pgdevkit]\nmigrations_table = 'myschema.migrations'\n"
-    )
+    (tmp_path / "pyproject.toml").write_text("[tool.pgdevkit]\nmigrations_table = 'myschema.migrations'\n")
     assert default_tracking_table(tmp_path) == "myschema.migrations"
 
 
 def test_default_tracking_table_searches_parent_directories(tmp_path):
-    (tmp_path / "pyproject.toml").write_text(
-        "[tool.pgdevkit]\nmigrations_table = 'myschema.migrations'\n"
-    )
+    (tmp_path / "pyproject.toml").write_text("[tool.pgdevkit]\nmigrations_table = 'myschema.migrations'\n")
     nested = tmp_path / "database" / "_migration_scripts"
     nested.mkdir(parents=True)
     assert default_tracking_table(nested) == "myschema.migrations"

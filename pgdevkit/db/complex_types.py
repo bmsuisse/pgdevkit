@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import warnings
 import weakref
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from psycopg import AsyncConnection
 from psycopg import adapters as _psycopg_adapters
@@ -268,8 +269,7 @@ class ComplexHelper:
         return info
 
     async def _get_complex_type(self, name: str, is_enum: bool, con: AsyncConnection) -> CompositeInfo | EnumInfo:
-        if name.endswith("[]"):
-            name = name[:-2]
+        name = name.removesuffix("[]")
         schema, type_name = name.split(".") if "." in name else ("public", name)
         if type_name.startswith("_"):  # the array type in PostgreSQL starts with an underscore
             type_name = type_name[1:]

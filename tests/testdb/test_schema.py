@@ -115,13 +115,15 @@ async def test_apply_schema_applies_permissions_after_a_delayed_table(schema_tes
     # permissions/grants.sql creates this login role itself -- a fixed,
     # non-secret password, matching pgdevkit's own testdb container convention.
     reader_dsn = make_conninfo(
-        host=constants.HOST, port=str(constants.PORT), dbname=TEST_DB,
-        user="pgdevkit_test_reader", password="testpwd",
+        host=constants.HOST,
+        port=str(constants.PORT),
+        dbname=TEST_DB,
+        user="pgdevkit_test_reader",
+        password="testpwd",
     )
-    async with await psycopg.AsyncConnection.connect(reader_dsn, autocommit=True) as con:
-        async with con.cursor() as cur:
-            await cur.execute("SELECT count(*) FROM app.event")  # must not raise InsufficientPrivilege
-            (count,) = await cur.fetchone()
+    async with await psycopg.AsyncConnection.connect(reader_dsn, autocommit=True) as con, con.cursor() as cur:
+        await cur.execute("SELECT count(*) FROM app.event")  # must not raise InsufficientPrivilege
+        (count,) = await cur.fetchone()
     assert count == 0
 
 

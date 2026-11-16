@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping, Sequence
 from string.templatelib import Interpolation, Template
-from typing import Any, Callable, Literal, Mapping, Optional, Sequence, Type, TypeVar
+from typing import Any, Literal, TypeVar
 
 from psycopg import AsyncCursor
 from psycopg.connection_async import AsyncConnection
 from psycopg.rows import dict_row
-from psycopg.sql import Literal as SqlLiteral
 from psycopg.sql import SQL, Composable, Composed, Identifier, Placeholder
+from psycopg.sql import Literal as SqlLiteral
 from pydantic import BaseModel
 
 from .complex_types import ComplexHelper
@@ -100,7 +101,7 @@ async def _convert_complex_values_many(
 
 async def pg_retrieve(
     con: AsyncConnection,
-    data_type: Type[T],
+    data_type: type[T],
     pks: dict,
     *,
     complex_helper: ComplexHelperArg = None,
@@ -148,10 +149,10 @@ def _order_by_sql(order_by: OrderBy | None) -> Composable | None:
 
 async def pg_retrieve_many(
     con: AsyncConnection,
-    data_type: Type[T],
+    data_type: type[T],
     filters: dict,
     *,
-    from_dict: Optional[Callable[[Mapping], T]] = None,
+    from_dict: Callable[[Mapping], T] | None = None,
     complex_helper: ComplexHelperArg = None,
     where: Composable | Template | None = None,
     params: Mapping[str, Any] | None = None,

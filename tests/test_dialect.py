@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from pgdevkit.dialect import MSSQL, POSTGRES, Dialect, resolve_dialect
+from pgdevkit.dialect import MSSQL, POSTGRES, resolve_dialect
 
 
 def test_resolve_dialect_defaults_to_postgres():

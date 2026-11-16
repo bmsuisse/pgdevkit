@@ -23,7 +23,7 @@ from pathlib import Path
 import sqlglot
 import sqlglot.expressions as exp
 
-from .dialect import Dialect, POSTGRES, SYSTEM_SCHEMAS
+from .dialect import POSTGRES, SYSTEM_SCHEMAS, Dialect
 from .sql_text import strip_line_comments
 
 _CREATE_SCHEMA_RE = re.compile(
@@ -55,7 +55,7 @@ def sql_schemas(content: str, dialect: Dialect = POSTGRES) -> frozenset[str]:
     when sqlglot can't parse the content, or finds no reference at all."""
     try:
         exprs = sqlglot.parse(content, dialect=dialect.sqlglot_name, error_level=sqlglot.ErrorLevel.IGNORE)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return _regex_fallback(content)
 
     schemas: set[str] = set()

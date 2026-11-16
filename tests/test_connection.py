@@ -41,9 +41,7 @@ def test_build_conninfo_without_entra_user_returns_url_unchanged():
 
 def test_build_conninfo_azure_postgres_uses_token_as_password(monkeypatch):
     monkeypatch.setattr("pgdevkit.connection.get_azure_postgres_password", lambda **kwargs: "TOKEN123")
-    conninfo = build_conninfo(
-        "postgresql://myserver.postgres.database.azure.com:5432/db", "alice@example.com"
-    )
+    conninfo = build_conninfo("postgresql://myserver.postgres.database.azure.com:5432/db", "alice@example.com")
     assert conninfo == "postgresql://alice%40example.com:TOKEN123@myserver.postgres.database.azure.com:5432/db"
 
 

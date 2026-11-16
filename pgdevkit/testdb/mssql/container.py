@@ -19,7 +19,7 @@ def _available(timeout: float = 3.0) -> bool:
         conn = mssql_python.connect(constants.conninfo("master"), timeout=max(1, round(timeout)))
         conn.close()
         return True
-    except Exception:  # noqa: BLE001
+    except Exception:
         return False
 
 
@@ -69,7 +69,7 @@ def _wait_ready(timeout: float = 90.0) -> None:
             conn = mssql_python.connect(constants.conninfo("master"), timeout=2)
             conn.close()
             return
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             last_error = e
             time.sleep(0.5)
     raise RuntimeError(f"SQL Server did not become ready within {timeout}s: {last_error}")

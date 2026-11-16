@@ -22,7 +22,7 @@ def _available(timeout: float = 3.0) -> bool:
     try:
         with psycopg.connect(dsn):
             return True
-    except Exception:  # noqa: BLE001
+    except Exception:
         return False
 
 
@@ -66,7 +66,7 @@ def _wait_ready(timeout: float = 30.0) -> None:
         try:
             with psycopg.connect(dsn):
                 return
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             last_error = e
             time.sleep(0.5)
     raise RuntimeError(f"Postgres did not become ready within {timeout}s: {last_error}")

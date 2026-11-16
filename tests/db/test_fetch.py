@@ -123,7 +123,9 @@ async def test_accepts_sqlglot_expression_psycopg_sql_and_t_string(pool: PgPool)
 @requires_podman
 async def test_accepts_exp_query_typed_union_and_subquery(pool: PgPool):
     # annotated exp.Query on purpose (issue #56)
-    union: exp.Query = select("name").from_("widget").where("id = 1").union(select("name").from_("widget").where("id = 2"))
+    union: exp.Query = (
+        select("name").from_("widget").where("id = 1").union(select("name").from_("widget").where("id = 2"))
+    )
     assert sorted(r["name"] for r in await fetch_all(union, pool=pool)) == ["cog", "sprocket"]
     sub: exp.Query = select("name").from_(select("name").from_("widget").subquery("w")).where("name = 'cog'")
     assert await fetch_all(sub, pool=pool) == [{"name": "cog"}]
@@ -291,8 +293,13 @@ async def test_siblings_validate_their_arguments_before_touching_a_connection():
 async def test_fetch_one_returns_first_row_or_none(pool: PgPool):
     assert await fetch_one("SELECT id, name FROM widget ORDER BY id", pool=pool) == {"id": 1, "name": "sprocket"}
     assert await fetch_one("SELECT id FROM widget WHERE id = %(id)s", {"id": 99}, pool=pool) is None
-    assert await fetch_one("SELECT id, name FROM widget WHERE id = 2", model=Widget, pool=pool) == Widget(id=2, name="cog")
-    assert await fetch_one("SELECT name FROM widget WHERE id = 2", row_mapper=lambda r: r["name"].upper(), pool=pool) == "COG"
+    assert await fetch_one("SELECT id, name FROM widget WHERE id = 2", model=Widget, pool=pool) == Widget(
+        id=2, name="cog"
+    )
+    assert (
+        await fetch_one("SELECT name FROM widget WHERE id = 2", row_mapper=lambda r: r["name"].upper(), pool=pool)
+        == "COG"
+    )
     assert await fetch_one("SELECT name FROM widget WHERE id = 99", model=Widget, pool=pool) is None
     widget_id = 1
     assert await fetch_one(t"SELECT name FROM widget WHERE id = {widget_id}", pool=pool) == {"name": "sprocket"}
@@ -407,6 +414,8 @@ async def test_percent_in_sqlglot_string_literals_works_with_and_without_params(
     assert await fetch_scalar(select(exp.Literal.string("50%").as_("pct")), {}, pool=pool) == "50%"
     assert await fetch_scalar(select(exp.Literal.string("50%").as_("pct")), pool=pool) == "50%"
     # the modulo operator, and a literal that looks like a placeholder
-    modulo = select((exp.column("id") % 2).as_("odd")).from_("widget").where(exp.column("id").eq(exp.Placeholder(this="id")))
+    modulo = (
+        select((exp.column("id") % 2).as_("odd")).from_("widget").where(exp.column("id").eq(exp.Placeholder(this="id")))
+    )
     assert await fetch_scalar(modulo, {"id": 1}, pool=pool) == 1
     assert await fetch_scalar(select(exp.Literal.string("%(id)s")), {}, pool=pool) == "%(id)s"

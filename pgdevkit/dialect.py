@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-
 # Postgres type-name synonyms so scripts-vs-db type comparisons in diff.py
 # are spelling-insensitive (e.g. a script written as "int4" matching a
 # catalog-reported "integer"). Moved here (unchanged) from diff.py so both
 # dialects' tables live next to the Dialect they belong to.
 _POSTGRES_TYPE_SYNONYMS = {
-    "int": "integer", "int4": "integer",
+    "int": "integer",
+    "int4": "integer",
     "int2": "smallint",
     "int8": "bigint",
     "float4": "real",
@@ -16,15 +16,19 @@ _POSTGRES_TYPE_SYNONYMS = {
     "bool": "boolean",
     "decimal": "numeric",
     "varchar": "character varying",
-    "char": "character", "bpchar": "character",
+    "char": "character",
+    "bpchar": "character",
     "timestamptz": "timestamp with time zone",
     "timestamp": "timestamp without time zone",
     "timetz": "time with time zone",
     "time": "time without time zone",
     "varbit": "bit varying",
-    "serial": "integer", "serial4": "integer",
-    "smallserial": "smallint", "serial2": "smallint",
-    "bigserial": "bigint", "serial8": "bigint",
+    "serial": "integer",
+    "serial4": "integer",
+    "smallserial": "smallint",
+    "serial2": "smallint",
+    "bigserial": "bigint",
+    "serial8": "bigint",
 }
 
 # T-SQL's ISO/ODBC synonyms (per Microsoft's documented list) plus the one

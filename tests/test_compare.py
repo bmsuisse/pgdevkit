@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import psycopg
-import pytest
 
 from pgdevkit.diff import DiffKind, compute_diff
 from pgdevkit.introspect import introspect_db
@@ -53,10 +52,7 @@ class TestCompare:
         scripts = parse_directory(FIXTURES)
         db = introspect_db(clean_db)
         diffs = compute_diff(scripts, db, report_extra_db=True)
-        assert any(
-            d.kind == DiffKind.MISSING_IN_SCRIPTS and d.object_name == "myapp.extra"
-            for d in diffs
-        )
+        assert any(d.kind == DiffKind.MISSING_IN_SCRIPTS and d.object_name == "myapp.extra" for d in diffs)
 
     def test_column_type_mismatch(self, clean_db: str) -> None:
         _apply_fixtures(clean_db)
@@ -65,8 +61,7 @@ class TestCompare:
         db = introspect_db(clean_db)
         diffs = compute_diff(scripts, db)
         assert any(
-            d.kind == DiffKind.MISMATCH and d.object_type == "column"
-            and d.object_name == "myapp.users.email"
+            d.kind == DiffKind.MISMATCH and d.object_type == "column" and d.object_name == "myapp.users.email"
             for d in diffs
         )
 
@@ -77,8 +72,7 @@ class TestCompare:
         db = introspect_db(clean_db)
         diffs = compute_diff(scripts, db)
         assert any(
-            d.kind == DiffKind.MISSING_IN_DB and d.object_type == "column"
-            and d.object_name == "myapp.users.tags"
+            d.kind == DiffKind.MISSING_IN_DB and d.object_type == "column" and d.object_name == "myapp.users.tags"
             for d in diffs
         )
 
@@ -89,8 +83,7 @@ class TestCompare:
         db = introspect_db(clean_db)
         diffs = compute_diff(scripts, db)
         assert any(
-            d.kind == DiffKind.MISSING_IN_DB and d.object_type == "view"
-            and d.object_name == "myapp.active_users"
+            d.kind == DiffKind.MISSING_IN_DB and d.object_type == "view" and d.object_name == "myapp.active_users"
             for d in diffs
         )
 
@@ -101,19 +94,19 @@ class TestCompare:
         db = introspect_db(clean_db)
         diffs = compute_diff(scripts, db)
         assert any(
-            d.kind == DiffKind.MISSING_IN_DB and d.object_type == "function"
-            and d.object_name == "myapp.greet"
+            d.kind == DiffKind.MISSING_IN_DB and d.object_type == "function" and d.object_name == "myapp.greet"
             for d in diffs
         )
 
     def test_missing_enum_in_db(self, clean_db: str) -> None:
         _apply_fixtures(clean_db)
-        _apply_sql(clean_db, "ALTER TABLE myapp.users ALTER COLUMN status TYPE TEXT USING status::TEXT; DROP TYPE myapp.status")
+        _apply_sql(
+            clean_db, "ALTER TABLE myapp.users ALTER COLUMN status TYPE TEXT USING status::TEXT; DROP TYPE myapp.status"
+        )
         scripts = parse_directory(FIXTURES)
         db = introspect_db(clean_db)
         diffs = compute_diff(scripts, db)
         assert any(
-            d.kind == DiffKind.MISSING_IN_DB and d.object_type == "enum"
-            and d.object_name == "myapp.status"
+            d.kind == DiffKind.MISSING_IN_DB and d.object_type == "enum" and d.object_name == "myapp.status"
             for d in diffs
         )

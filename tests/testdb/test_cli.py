@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from typer.testing import CliRunner
 
@@ -33,9 +33,7 @@ def test_testdb_run_sql_inline_with_results(project_factory: Callable[[str, str]
     monkeypatch.chdir(project)
     try:
         runner.invoke(app, ["testdb", "up"])
-        result = runner.invoke(
-            app, ["testdb", "run-sql", "--sql", "SELECT id, name FROM app.widget", "--results"]
-        )
+        result = runner.invoke(app, ["testdb", "run-sql", "--sql", "SELECT id, name FROM app.widget", "--results"])
         assert result.exit_code == 0, result.output
         assert "sprocket" in result.output
     finally:
@@ -43,9 +41,7 @@ def test_testdb_run_sql_inline_with_results(project_factory: Callable[[str, str]
 
 
 @requires_podman
-def test_testdb_run_sql_file_with_dollar_quoted_semicolon(
-    project_factory: Callable[[str, str], Path], monkeypatch
-):
+def test_testdb_run_sql_file_with_dollar_quoted_semicolon(project_factory: Callable[[str, str], Path], monkeypatch):
     # A naive ';'-split would cut this function body in half at the embedded
     # semicolon inside the dollar-quoted body, breaking both statements.
     project = project_factory("clitest6", "main")
@@ -122,9 +118,7 @@ def test_testdb_list_orphaned_reports_none_for_a_single_live_worktree(
         clean_testdb(project)
 
 
-def test_testdb_clean_rejects_all_and_orphaned_together(
-    project_factory: Callable[[str, str], Path], monkeypatch
-):
+def test_testdb_clean_rejects_all_and_orphaned_together(project_factory: Callable[[str, str], Path], monkeypatch):
     project = project_factory("clitest8", "main")
     monkeypatch.chdir(project)
     result = runner.invoke(app, ["testdb", "clean", "--all", "--orphaned"])

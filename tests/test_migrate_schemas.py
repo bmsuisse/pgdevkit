@@ -42,9 +42,7 @@ class TestListMigrationFilesSchemaFiltering:
     def test_area_and_schema_filters_combine(self, tmp_path: Path):
         keep = _write(tmp_path, "001_keep.sql", "-- area: billing\nCREATE TABLE reporting.a (id int);\n")
         wrong_area = _write(tmp_path, "002_wrong_area.sql", "-- area: ops\nCREATE TABLE reporting.b (id int);\n")
-        wrong_schema = _write(
-            tmp_path, "003_wrong_schema.sql", "-- area: billing\nCREATE TABLE billing.c (id int);\n"
-        )
+        wrong_schema = _write(tmp_path, "003_wrong_schema.sql", "-- area: billing\nCREATE TABLE billing.c (id int);\n")
 
         result = list_migration_files(tmp_path, areas=frozenset({"billing"}), schemas=frozenset({"reporting"}))
         assert result == [keep]
