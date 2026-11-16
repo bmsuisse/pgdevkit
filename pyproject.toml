@@ -57,6 +57,10 @@ test = [
     "pytest-env>=1.1.0",
 ]
 
+[tool.uv]
+# Dependency cooldown: releases younger than 5 days are not resolved
+exclude-newer = "5 days"
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 asyncio_mode = "auto"
