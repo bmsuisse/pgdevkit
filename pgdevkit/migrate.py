@@ -65,8 +65,8 @@ def default_tracking_table(start: Path | None = None, dialect: str | Dialect = "
     """The project's configured tracking table: `[tool.pgdevkit].migrations_table` in the
     nearest pyproject.toml at or above `start` (default: cwd), or "public.schema_migrations"
     if neither is set. For MSSQL the key is `mssql_migrations_table` (default
-    "dbo.schema_migrations"), so a Postgres-style `migrations_table` never leaks into it. Lets a project fix its tracking table once instead of passing
-    --tracking-table on every `pgdb migrate` invocation."""
+    "dbo.schema_migrations"), so a Postgres-style `migrations_table` never leaks into it. Lets a project fix its
+    tracking table once instead of passing --tracking-table on every `pgdb migrate` invocation."""
     default = f"{resolve_dialect(dialect).default_schema}.schema_migrations"
     pyproject = _find_pyproject((start or Path.cwd()).resolve())
     if pyproject is None:
@@ -78,7 +78,8 @@ def default_tracking_table(start: Path | None = None, dialect: str | Dialect = "
 
 
 def _split_sql(sql: str) -> list[str]:
-    """Split SQL on semicolons, ignoring those inside comments (`--` and nested `/* */`), '...' strings, "..." identifiers, or $$...$$ blocks."""
+    """Split SQL on semicolons, ignoring those inside comments (`--` and nested `/* */`), '...' strings, "..."
+    identifiers, or $$...$$ blocks."""
     stmts: list[str] = []
     buf: list[str] = []
     i = 0

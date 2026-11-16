@@ -280,7 +280,8 @@ def snapshot_testdb(config: ProjectConfig, db_name: str, name: str) -> str:
     try:
         cur = conn.cursor()
         cur.execute(
-            "SELECT name, physical_name FROM sys.master_files WHERE database_id = DB_ID(?) AND type = 0 ORDER BY file_id",
+            "SELECT name, physical_name FROM sys.master_files WHERE database_id = DB_ID(?) AND type = 0 "
+            "ORDER BY file_id",
             [db_name],
         )
         files = [(row[0], row[1]) for row in cur.fetchall()]

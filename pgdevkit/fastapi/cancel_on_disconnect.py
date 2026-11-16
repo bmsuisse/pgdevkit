@@ -113,7 +113,8 @@ class _Receiver:
         self.disconnected = asyncio.Event()
 
     async def read(self) -> None:
-        """Pump the server's messages into the queue until the client is gone (the queue's limit is the back-pressure)."""
+        """Pump the server's messages into the queue until the client is gone (the queue's limit is the
+        back-pressure)."""
         try:
             while True:
                 message = await self._receive()

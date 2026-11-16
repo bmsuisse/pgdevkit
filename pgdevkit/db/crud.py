@@ -309,7 +309,8 @@ async def pg_upsert_dict(
         fields = list(data)
         updates = [SQL("{col} = EXCLUDED.{col}").format(col=Identifier(k)) for k in fields]
         query = SQL(
-            "INSERT INTO {tbl} ({cols}) VALUES ({vals}) ON CONFLICT ({pks}) DO UPDATE SET {updates} RETURNING {returning}"
+            "INSERT INTO {tbl} ({cols}) VALUES ({vals}) ON CONFLICT ({pks}) DO UPDATE SET {updates} "
+            "RETURNING {returning}"
         ).format(
             tbl=Identifier(*table_name),
             cols=SQL(", ").join(Identifier(k) for k in fields),

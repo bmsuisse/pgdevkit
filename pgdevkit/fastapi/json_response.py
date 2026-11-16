@@ -67,9 +67,9 @@ class PostgresJsonResponse(StreamingResponse):
 
     Errors before the first byte become a JSON ``{"error": ...}`` response (status 500, or the status of a raised
     ``HTTPException``); FastAPI's own handlers use ``{"detail": ...}``, so a subclass can set ``error_key = "detail"``
-    to keep an existing frontend's error handling working. After that the status line is gone: the error is logged and re-raised, and the response
-    ends without its closing ``]``, so clients can't mistake it for a complete array. Subclass and set
-    ``expose_errors = True`` (e.g. in dev/test) to include ``str(error)`` in the 500 response.
+    to keep an existing frontend's error handling working. After that the status line is gone: the error is logged and
+    re-raised, and the response ends without its closing ``]``, so clients can't mistake it for a complete array.
+    Subclass and set ``expose_errors = True`` (e.g. in dev/test) to include ``str(error)`` in the 500 response.
 
     Postgres sends rows in 8 kB buffers, so a slow query with small rows delivers its first bytes late. A
     ``timestamptz`` is written as ``...+00:00`` (``row_to_json``), where FastAPI/Pydantic emit ``...Z``.

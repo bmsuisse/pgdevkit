@@ -46,7 +46,8 @@ _EXCLUDE_SCHEMA_OPTION = typer.Option(
 _TESTDB_ENV_OPTION = typer.Option(
     "local_test",
     "--env",
-    help="Environment to apply: skips any <name>.<other-env>.sql file (e.g. grants.prod.sql); untagged files always apply",
+    help="Environment to apply: skips any <name>.<other-env>.sql file (e.g. grants.prod.sql); "
+    "untagged files always apply",
 )
 _MIGRATE_DIALECT_OPTION = typer.Option(
     "postgres",

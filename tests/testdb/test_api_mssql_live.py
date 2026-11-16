@@ -78,7 +78,8 @@ def _generated_ddl(conn: mssql_python.Connection) -> None:
     cur = conn.cursor()
     cur.execute("IF SCHEMA_ID('gen') IS NULL EXEC('CREATE SCHEMA gen')")
     cur.execute(
-        "IF OBJECT_ID('gen.[Company$Cust_ Ledg_ Entry é]') IS NULL CREATE TABLE gen.[Company$Cust_ Ledg_ Entry é] (id int PRIMARY KEY)"
+        "IF OBJECT_ID('gen.[Company$Cust_ Ledg_ Entry é]') IS NULL "
+        "CREATE TABLE gen.[Company$Cust_ Ledg_ Entry é] (id int PRIMARY KEY)"
     )
 
 

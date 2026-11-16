@@ -219,7 +219,8 @@ class ComplexHelper:
               from information_schema.columns c
                  left join enum_types e on e.enum_schema=c.udt_schema
                      and (e.enum_name=c.udt_name or (c.data_type='ARRAY' and c.udt_name='_'||e.enum_name))
-              where table_schema=%(schema)s and table_name = %(tbl)s and (is_generated <> 'ALWAYS' or %(include_generated)s)
+              where table_schema=%(schema)s and table_name = %(tbl)s
+                and (is_generated <> 'ALWAYS' or %(include_generated)s)
               order by c.ordinal_position"""
         async with self.con.cursor(row_factory=dict_row) as cur:
             await cur.execute(

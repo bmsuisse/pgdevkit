@@ -234,7 +234,8 @@ async def test_failing_cancel_request_closes_the_connection_and_returns_promptly
 
     async def sleeping() -> int:
         cur = await observer.execute(
-            "SELECT count(*) FROM pg_stat_activity WHERE query LIKE '%pg_sleep(30)%' AND state = 'active' AND pid <> pg_backend_pid()"
+            "SELECT count(*) FROM pg_stat_activity WHERE query LIKE '%pg_sleep(30)%' AND state = 'active' "
+            "AND pid <> pg_backend_pid()"
         )
         row = await cur.fetchone()
         assert row is not None
