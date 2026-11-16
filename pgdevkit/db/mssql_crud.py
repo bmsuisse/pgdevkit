@@ -7,7 +7,6 @@ from typing import Any
 from pgdevkit.db.model import TableModel
 from pgdevkit.db.mssql_sql import ident, json_encode_values, qualified
 
-
 # `con` below is an mssql-python (github.com/microsoft/mssql-python)
 # connection, but typed as `Any` rather than `mssql_python.Connection` so
 # this module -- and, importantly, the pure `_build_*` query builders

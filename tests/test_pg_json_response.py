@@ -3,6 +3,7 @@
 import json
 from collections.abc import AsyncIterator, Iterator
 from contextlib import AbstractAsyncContextManager
+from typing import Annotated
 
 import httpx
 import psycopg
@@ -94,7 +95,7 @@ async def client(pool: AsyncConnectionPool) -> AsyncIterator[httpx.AsyncClient]:
             yield conn
 
     @app.get("/caller-owned")
-    async def caller_owned(conn: AsyncConnection = Depends(own_connection)) -> PostgresJsonResponse:
+    async def caller_owned(conn: Annotated[AsyncConnection, Depends(own_connection)]) -> PostgresJsonResponse:
         return PostgresJsonResponse("select pg_backend_pid() as pid", con=conn)
 
     @app.get("/pid")

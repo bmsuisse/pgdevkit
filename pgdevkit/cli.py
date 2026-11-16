@@ -62,6 +62,23 @@ _MIGRATE_ENV_OPTION = typer.Option(
 )
 
 
+_COMPARE_SCRIPTS_DIR_ARGUMENT = typer.Argument(..., help="Directory containing SQL scripts")
+_FETCH_MISSING_SCRIPTS_DIR_ARGUMENT = typer.Argument(..., help="The database/ folder to compare against and write into")
+_FETCH_MISSING_ONLY_OPTION = typer.Option(
+    [], "--only", help="Only fetch schema.name (repeatable); default is everything"
+)
+_UPDATE_STATS_SCRIPTS_DIR_ARGUMENT = typer.Argument(
+    ..., help="The database/ folder; stats are written to <scripts_dir>/_stats/"
+)
+_UPDATE_STATS_TABLE_OPTION = typer.Option(
+    [], "--table", help="Only update schema.name (repeatable); default is every table"
+)
+_GET_STATS_SCRIPTS_DIR_ARGUMENT = typer.Argument(..., help="The database/ folder containing _stats/")
+_GET_STATS_TABLES_ARGUMENT = typer.Argument(None, help="schema.name of the tables (default: all)")
+_TESTDB_RUN_SQL_FILE_ARGUMENT = typer.Argument(None, help="Path to a .sql file")
+_MIGRATIONS_DIR_ARGUMENT = typer.Argument(..., help="Directory of numbered .sql migration files")
+
+
 def _as_set(values: list[str]) -> frozenset[str] | None:
     return frozenset(values) if values else None
 
@@ -98,7 +115,7 @@ def compare(
     exclude_area: list[str] = _EXCLUDE_AREA_OPTION,
     schema: list[str] = _SCHEMA_OPTION,
     exclude_schema: list[str] = _EXCLUDE_SCHEMA_OPTION,
-    scripts_dir: Path = typer.Argument(..., help="Directory containing SQL scripts"),
+    scripts_dir: Path = _COMPARE_SCRIPTS_DIR_ARGUMENT,
 ) -> None:
     """Compare SQL scripts to a live database and report differences."""
     if not scripts_dir.is_dir():
@@ -172,11 +189,11 @@ def compare(
 
 @app.command("fetch-missing")
 def fetch_missing(
-    scripts_dir: Path = typer.Argument(..., help="The database/ folder to compare against and write into"),
+    scripts_dir: Path = _FETCH_MISSING_SCRIPTS_DIR_ARGUMENT,
     url: str = typer.Option(..., "--url", help="PostgreSQL DSN (postgresql://user:pass@host:port/db)"),
     entra_user: str | None = typer.Option(None, "--entra-user", help="Azure Entra user (triggers token auth)"),
     write: bool = typer.Option(False, "--write", help="Write the reconstructed .sql files (default: dry run)"),
-    only: list[str] = typer.Option([], "--only", help="Only fetch schema.name (repeatable); default is everything"),
+    only: list[str] = _FETCH_MISSING_ONLY_OPTION,
 ) -> None:
     """Find tables/views/functions that exist in the database but aren't
     tracked under scripts_dir, and reverse-engineer their DDL into new files.
@@ -237,10 +254,10 @@ def fetch_missing(
 
 @app.command("update-stats")
 def update_stats(
-    scripts_dir: Path = typer.Argument(..., help="The database/ folder; stats are written to <scripts_dir>/_stats/"),
+    scripts_dir: Path = _UPDATE_STATS_SCRIPTS_DIR_ARGUMENT,
     url: str = typer.Option(..., "--url", help="PostgreSQL DSN (postgresql://user:pass@host:port/db)"),
     entra_user: str | None = typer.Option(None, "--entra-user", help="Azure Entra user (triggers token auth)"),
-    table: list[str] = typer.Option([], "--table", help="Only update schema.name (repeatable); default is every table"),
+    table: list[str] = _UPDATE_STATS_TABLE_OPTION,
     exact: bool = typer.Option(False, "--exact", help="Use count(*) for row counts instead of the planner estimate"),
     analyze: bool = typer.Option(False, "--analyze", help="Run ANALYZE first so column stats are fresh"),
     dialect: str = typer.Option("postgres", "--dialect", help="postgres (default) or mssql"),
@@ -270,8 +287,8 @@ def update_stats(
 
 @app.command("get-stats")
 def get_stats(
-    scripts_dir: Path = typer.Argument(..., help="The database/ folder containing _stats/"),
-    tables: list[str] = typer.Argument(None, help="schema.name of the tables (default: all)"),
+    scripts_dir: Path = _GET_STATS_SCRIPTS_DIR_ARGUMENT,
+    tables: list[str] = _GET_STATS_TABLES_ARGUMENT,
     no_columns: bool = typer.Option(False, "--no-columns", help="Omit column stats"),
 ) -> None:
     """Print stored stats (read from the _stats JSON files, no DB access) as JSON."""
@@ -325,7 +342,7 @@ def testdb_reset(
 
 @testdb_app.command("run-sql")
 def testdb_run_sql(
-    file: Path | None = typer.Argument(None, help="Path to a .sql file"),
+    file: Path | None = _TESTDB_RUN_SQL_FILE_ARGUMENT,
     sql: str | None = typer.Option(None, "--sql", help="Inline SQL string"),
     results: bool = typer.Option(False, "--results", help="Print query results as a table"),
 ) -> None:
@@ -439,7 +456,7 @@ def _migrate_target(
 
 @migrate_app.command("check")
 def migrate_check(
-    migrations_dir: Path = typer.Argument(..., help="Directory of numbered .sql migration files"),
+    migrations_dir: Path = _MIGRATIONS_DIR_ARGUMENT,
     url: str = typer.Option(
         ...,
         "--url",
@@ -504,7 +521,7 @@ def migrate_check(
 
 @migrate_app.command("apply")
 def migrate_apply(
-    migrations_dir: Path = typer.Argument(..., help="Directory of numbered .sql migration files"),
+    migrations_dir: Path = _MIGRATIONS_DIR_ARGUMENT,
     url: str = typer.Option(
         ...,
         "--url",

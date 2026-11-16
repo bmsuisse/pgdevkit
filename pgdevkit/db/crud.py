@@ -14,7 +14,6 @@ from pydantic import BaseModel
 from pgdevkit.db.complex_types import ComplexHelper
 from pgdevkit.db.model import PostgresTableModel
 
-
 # `complex_helper=` of every function below: a `ComplexHelper` you configured (e.g. with `normalizers`), `"auto"` for
 # a default one on the connection (what it learns is cached per connection), or None for plain psycopg behaviour.
 type ComplexHelperArg = ComplexHelper | Literal["auto"] | None
