@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import quote, urlparse, urlunparse
 
 _LAKEBASE_HOST_SUFFIXES = (
@@ -13,8 +13,8 @@ _AZURE_POSTGRES_HOST_SUFFIXES = (
     ".postgres.cosmos.azure.com",
 )
 
-_default_credential = None
-_managed_identity_credential = None
+# Process-wide credential cache, keyed "default" / "managed_identity" (see get_azure_postgres_password)
+_credentials: dict[str, Any] = {}
 
 
 def detect_provider(host: str) -> Literal["azure_postgres", "databricks_lakebase"]:
@@ -51,19 +51,18 @@ def get_azure_postgres_password(
     connection) don't re-probe the credential chain every time."""
     try:
         from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
-    except ImportError:
-        raise ImportError("Install azure-identity extra: pip install pgdevkit[azure]")
-    global _default_credential, _managed_identity_credential
-    if managed_identity:
-        if _managed_identity_credential is None:
-            _managed_identity_credential = ManagedIdentityCredential()
-        credential = _managed_identity_credential
-    else:
-        if _default_credential is None:
-            _default_credential = DefaultAzureCredential(
+    except ImportError as e:
+        raise ImportError("Install azure-identity extra: pip install pgdevkit[azure]") from e
+    key = "managed_identity" if managed_identity else "default"
+    credential = _credentials.get(key)
+    if credential is None:
+        if managed_identity:
+            credential = ManagedIdentityCredential()
+        else:
+            credential = DefaultAzureCredential(
                 exclude_interactive_browser_credential=exclude_interactive_browser_credential
             )
-        credential = _default_credential
+        _credentials[key] = credential
     token = credential.get_token("https://ossrdbms-aad.database.windows.net/.default")
     return token.token
 
@@ -101,10 +100,8 @@ def build_conninfo(
 
     if detect_provider(host) == "databricks_lakebase":
         if not databricks_workspace_host or not databricks_instance:
-            raise ValueError(
-                "Lakebase host detected — pass --databricks-workspace-host and --databricks-instance"
-            )
-        from .lakebase import get_lakebase_password
+            raise ValueError("Lakebase host detected — pass --databricks-workspace-host and --databricks-instance")
+        from pgdevkit.lakebase import get_lakebase_password
 
         password = get_lakebase_password(databricks_workspace_host, databricks_instance)
     else:

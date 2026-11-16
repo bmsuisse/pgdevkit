@@ -3,14 +3,15 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager
 from typing import Any, Literal
 
 from psycopg import AsyncConnection
 from psycopg.conninfo import make_conninfo
 from psycopg_pool import AsyncConnectionPool, AsyncNullConnectionPool
 
-from ..connection import detect_provider, get_azure_postgres_password, is_azure_postgres_host
-from ..lakebase import get_lakebase_password
+from pgdevkit.connection import detect_provider, get_azure_postgres_password, is_azure_postgres_host
+from pgdevkit.lakebase import get_lakebase_password
 
 
 class PgPool:
@@ -141,7 +142,7 @@ class PgPool:
         if self._pool is not None:
             await self._pool.close()
 
-    def connection(self):
+    def connection(self) -> AbstractAsyncContextManager[AsyncConnection[Any]]:
         """Return an async connection context manager from the pool."""
         if self._pool is None:
             raise RuntimeError("Call open() first (e.g. in app startup).")

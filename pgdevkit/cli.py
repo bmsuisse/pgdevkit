@@ -8,18 +8,18 @@ from pathlib import Path
 
 import psycopg
 import typer
+from rich import box
 from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
-from rich import box
 from tqdm import tqdm
 
-from . import migrate, migrate_mssql, stats, testdb
-from .backends import get_backend
-from .connection import build_conninfo, build_mssql_conninfo
-from .diff import DiffKind, compute_diff
-from .fetch_missing import SUBFOLDER, find_missing_objects, layer_folder_for, reconstruct_ddl
-from .parser import parse_directory
+from pgdevkit import migrate, migrate_mssql, stats, testdb
+from pgdevkit.backends import get_backend
+from pgdevkit.connection import build_conninfo, build_mssql_conninfo
+from pgdevkit.diff import DiffKind, compute_diff
+from pgdevkit.fetch_missing import SUBFOLDER, find_missing_objects, layer_folder_for, reconstruct_ddl
+from pgdevkit.parser import parse_directory
 
 app = typer.Typer(name="pgdb", help="PostgreSQL database schema tools")
 console = Console()
@@ -46,10 +46,13 @@ _EXCLUDE_SCHEMA_OPTION = typer.Option(
 _TESTDB_ENV_OPTION = typer.Option(
     "local_test",
     "--env",
-    help="Environment to apply: skips any <name>.<other-env>.sql file (e.g. grants.prod.sql); untagged files always apply",
+    help="Environment to apply: skips any <name>.<other-env>.sql file (e.g. grants.prod.sql); "
+    "untagged files always apply",
 )
 _MIGRATE_DIALECT_OPTION = typer.Option(
-    "postgres", "--dialect", help="postgres (default) or mssql; mssql needs the mssql extra and uses --url as an ODBC connection string"
+    "postgres",
+    "--dialect",
+    help="postgres (default) or mssql; mssql needs the mssql extra and uses --url as an ODBC connection string",
 )
 _MIGRATE_ENV_OPTION = typer.Option(
     None,
@@ -59,8 +62,26 @@ _MIGRATE_ENV_OPTION = typer.Option(
 )
 
 
+_COMPARE_SCRIPTS_DIR_ARGUMENT = typer.Argument(..., help="Directory containing SQL scripts")
+_FETCH_MISSING_SCRIPTS_DIR_ARGUMENT = typer.Argument(..., help="The database/ folder to compare against and write into")
+_FETCH_MISSING_ONLY_OPTION = typer.Option(
+    [], "--only", help="Only fetch schema.name (repeatable); default is everything"
+)
+_UPDATE_STATS_SCRIPTS_DIR_ARGUMENT = typer.Argument(
+    ..., help="The database/ folder; stats are written to <scripts_dir>/_stats/"
+)
+_UPDATE_STATS_TABLE_OPTION = typer.Option(
+    [], "--table", help="Only update schema.name (repeatable); default is every table"
+)
+_GET_STATS_SCRIPTS_DIR_ARGUMENT = typer.Argument(..., help="The database/ folder containing _stats/")
+_GET_STATS_TABLES_ARGUMENT = typer.Argument(None, help="schema.name of the tables (default: all)")
+_TESTDB_RUN_SQL_FILE_ARGUMENT = typer.Argument(None, help="Path to a .sql file")
+_MIGRATIONS_DIR_ARGUMENT = typer.Argument(..., help="Directory of numbered .sql migration files")
+
+
 def _as_set(values: list[str]) -> frozenset[str] | None:
     return frozenset(values) if values else None
+
 
 testdb_app = typer.Typer(name="testdb", help="Manage the shared local Postgres test container")
 app.add_typer(testdb_app, name="testdb")
@@ -94,7 +115,7 @@ def compare(
     exclude_area: list[str] = _EXCLUDE_AREA_OPTION,
     schema: list[str] = _SCHEMA_OPTION,
     exclude_schema: list[str] = _EXCLUDE_SCHEMA_OPTION,
-    scripts_dir: Path = typer.Argument(..., help="Directory containing SQL scripts"),
+    scripts_dir: Path = _COMPARE_SCRIPTS_DIR_ARGUMENT,
 ) -> None:
     """Compare SQL scripts to a live database and report differences."""
     if not scripts_dir.is_dir():
@@ -103,7 +124,7 @@ def compare(
     if report_extra_db and (area or exclude_area or schema or exclude_schema):
         console.print(
             "[yellow]⚠[/yellow]  --report-extra-db with --area/--exclude-area/--schema/--exclude-schema will "
-            "report every DB object outside the filtered area(s)/schema(s) as \"missing in scripts\", since the "
+            'report every DB object outside the filtered area(s)/schema(s) as "missing in scripts", since the '
             "live database has no concept of areas — and isn't itself filtered by --schema either — only the "
             "scripts side is filtered."
         )
@@ -112,7 +133,7 @@ def compare(
         backend = get_backend(dialect)
     except ValueError as e:
         err_console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(2)
+        raise typer.Exit(2) from e
 
     try:
         if backend.dialect.name == "mssql":
@@ -126,7 +147,7 @@ def compare(
             )
     except ValueError as e:
         err_console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(2)
+        raise typer.Exit(2) from e
 
     with console.status("Parsing SQL scripts..."):
         scripts_schema = parse_directory(
@@ -168,11 +189,11 @@ def compare(
 
 @app.command("fetch-missing")
 def fetch_missing(
-    scripts_dir: Path = typer.Argument(..., help="The database/ folder to compare against and write into"),
+    scripts_dir: Path = _FETCH_MISSING_SCRIPTS_DIR_ARGUMENT,
     url: str = typer.Option(..., "--url", help="PostgreSQL DSN (postgresql://user:pass@host:port/db)"),
     entra_user: str | None = typer.Option(None, "--entra-user", help="Azure Entra user (triggers token auth)"),
     write: bool = typer.Option(False, "--write", help="Write the reconstructed .sql files (default: dry run)"),
-    only: list[str] = typer.Option([], "--only", help="Only fetch schema.name (repeatable); default is everything"),
+    only: list[str] = _FETCH_MISSING_ONLY_OPTION,
 ) -> None:
     """Find tables/views/functions that exist in the database but aren't
     tracked under scripts_dir, and reverse-engineer their DDL into new files.
@@ -220,7 +241,7 @@ def fetch_missing(
                 continue
             try:
                 ddl = reconstruct_ddl(conn, m)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 err_console.print(f"[red]Error[/red] reconstructing {m.qualified_name}: {e}")
                 continue
             dest_dir.mkdir(parents=True, exist_ok=True)
@@ -233,10 +254,10 @@ def fetch_missing(
 
 @app.command("update-stats")
 def update_stats(
-    scripts_dir: Path = typer.Argument(..., help="The database/ folder; stats are written to <scripts_dir>/_stats/"),
+    scripts_dir: Path = _UPDATE_STATS_SCRIPTS_DIR_ARGUMENT,
     url: str = typer.Option(..., "--url", help="PostgreSQL DSN (postgresql://user:pass@host:port/db)"),
     entra_user: str | None = typer.Option(None, "--entra-user", help="Azure Entra user (triggers token auth)"),
-    table: list[str] = typer.Option([], "--table", help="Only update schema.name (repeatable); default is every table"),
+    table: list[str] = _UPDATE_STATS_TABLE_OPTION,
     exact: bool = typer.Option(False, "--exact", help="Use count(*) for row counts instead of the planner estimate"),
     analyze: bool = typer.Option(False, "--analyze", help="Run ANALYZE first so column stats are fresh"),
     dialect: str = typer.Option("postgres", "--dialect", help="postgres (default) or mssql"),
@@ -250,22 +271,24 @@ def update_stats(
         dialect = get_backend(dialect).dialect.name
     except ValueError as e:
         err_console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(2)
+        raise typer.Exit(2) from e
     conninfo = build_conninfo(url, entra_user)
     try:
         with console.status("Collecting stats..."):
-            tables, columns = stats.collect_stats(conninfo, set(table) or None, exact=exact, analyze=analyze, dialect=dialect)
+            tables, columns = stats.collect_stats(
+                conninfo, set(table) or None, exact=exact, analyze=analyze, dialect=dialect
+            )
     except KeyError as e:
         err_console.print(f"[red]Error:[/red] unknown table(s): {e.args[0]}")
-        raise typer.Exit(2)
+        raise typer.Exit(2) from e
     path = stats.write_stats(scripts_dir, tables, columns, prune=not table)
     console.print(f"Updated stats for {len(tables)} table(s) in {path.parent}")
 
 
 @app.command("get-stats")
 def get_stats(
-    scripts_dir: Path = typer.Argument(..., help="The database/ folder containing _stats/"),
-    tables: list[str] = typer.Argument(None, help="schema.name of the tables (default: all)"),
+    scripts_dir: Path = _GET_STATS_SCRIPTS_DIR_ARGUMENT,
+    tables: list[str] = _GET_STATS_TABLES_ARGUMENT,
     no_columns: bool = typer.Option(False, "--no-columns", help="Omit column stats"),
 ) -> None:
     """Print stored stats (read from the _stats JSON files, no DB access) as JSON."""
@@ -273,7 +296,7 @@ def get_stats(
         result = stats.read_stats(scripts_dir, tables or [], columns=not no_columns)
     except (FileNotFoundError, KeyError) as e:
         err_console.print(f"[red]Error:[/red] {e.args[0]}")
-        raise typer.Exit(2)
+        raise typer.Exit(2) from e
     typer.echo(json.dumps(result, indent=2, sort_keys=True))
 
 
@@ -287,7 +310,10 @@ def testdb_up(
 ) -> None:
     """Ensure the container is running, the workspace DB exists, and schema is applied."""
     testdb.ensure_testdb(
-        env=env, areas=_as_set(area), exclude_areas=_as_set(exclude_area), schemas=_as_set(schema),
+        env=env,
+        areas=_as_set(area),
+        exclude_areas=_as_set(exclude_area),
+        schemas=_as_set(schema),
         exclude_schemas=_as_set(exclude_schema),
     )
     info = testdb.status()
@@ -304,7 +330,10 @@ def testdb_reset(
 ) -> None:
     """Drop and recreate only this workspace's database, then reapply schema + seed data."""
     testdb.reset_testdb(
-        env=env, areas=_as_set(area), exclude_areas=_as_set(exclude_area), schemas=_as_set(schema),
+        env=env,
+        areas=_as_set(area),
+        exclude_areas=_as_set(exclude_area),
+        schemas=_as_set(schema),
         exclude_schemas=_as_set(exclude_schema),
     )
     info = testdb.status()
@@ -313,7 +342,7 @@ def testdb_reset(
 
 @testdb_app.command("run-sql")
 def testdb_run_sql(
-    file: Path | None = typer.Argument(None, help="Path to a .sql file"),
+    file: Path | None = _TESTDB_RUN_SQL_FILE_ARGUMENT,
     sql: str | None = typer.Option(None, "--sql", help="Inline SQL string"),
     results: bool = typer.Option(False, "--results", help="Print query results as a table"),
 ) -> None:
@@ -392,9 +421,7 @@ def _describe_target(url: str, dialect: str) -> str:
     """Where a migrate command points, without credentials: host/db for a Postgres URL,
     Server/Database only for an MSSQL connection string (never UID/PWD)."""
     if dialect == "mssql":
-        parts = dict(
-            (k.strip().lower(), v.strip()) for k, _, v in (p.partition("=") for p in url.split(";")) if k.strip()
-        )
+        parts = {k.strip().lower(): v.strip() for k, _, v in (p.partition("=") for p in url.split(";")) if k.strip()}
         server = parts.get("server") or parts.get("data source") or "?"
         database = parts.get("database") or parts.get("initial catalog")
         return f"{server}/{database}" if database else server
@@ -409,25 +436,25 @@ def _migrate_target(
         resolved = get_backend(dialect).dialect
     except ValueError as e:
         err_console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(2)
+        raise typer.Exit(2) from e
     if resolved.name == "mssql":
         try:
             migrate_mssql.require_driver()
         except ImportError as e:
             err_console.print(f"[red]Error:[/red] {escape(str(e))}")
-            raise typer.Exit(2)
+            raise typer.Exit(2) from e
     try:
         conninfo = (build_mssql_conninfo if resolved.name == "mssql" else build_conninfo)(url, entra_user)
     except ValueError as e:
         err_console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(2)
+        raise typer.Exit(2) from e
     tracking_table = tracking_table or migrate.default_tracking_table(migrations_dir, dialect=resolved)
     return conninfo, resolved.name, tracking_table
 
 
 @migrate_app.command("check")
 def migrate_check(
-    migrations_dir: Path = typer.Argument(..., help="Directory of numbered .sql migration files"),
+    migrations_dir: Path = _MIGRATIONS_DIR_ARGUMENT,
     url: str = typer.Option(
         ...,
         "--url",
@@ -492,7 +519,7 @@ def migrate_check(
 
 @migrate_app.command("apply")
 def migrate_apply(
-    migrations_dir: Path = typer.Argument(..., help="Directory of numbered .sql migration files"),
+    migrations_dir: Path = _MIGRATIONS_DIR_ARGUMENT,
     url: str = typer.Option(
         ...,
         "--url",
@@ -552,12 +579,14 @@ def migrate_apply(
                 dialect=dialect,
             )
         except migrate.TrackingTableMissing:
-            err_console.print(
-                f"[yellow]⚠[/yellow]  {tracking_table} not found — treating every migration as pending"
-            )
+            err_console.print(f"[yellow]⚠[/yellow]  {tracking_table} not found — treating every migration as pending")
             targets = migrate.list_migration_files(
-                migrations_dir, areas=areas, exclude_areas=exclude_areas, schemas=schemas,
-                exclude_schemas=exclude_schemas, env=env,
+                migrations_dir,
+                areas=areas,
+                exclude_areas=exclude_areas,
+                schemas=schemas,
+                exclude_schemas=exclude_schemas,
+                env=env,
             )
 
     if not targets:
@@ -592,7 +621,7 @@ def migrate_apply(
                     result = migrate.apply_migration(
                         conninfo, path, tracking_table, already_done=already_done, dialect=dialect
                     )
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     failure = e
                     stop.set()
                     bar_write(f"FAILED {path.name}: {e}")
@@ -629,9 +658,7 @@ def migrate_apply(
                     bar.write(f"\n=== {path.name} ===")
                     bar.write(path.read_text(encoding="utf-8"))
                     answer = (
-                        typer.prompt("[Y]es execute / [n]o skip / [a]lready done / [q]uit", default="y")
-                        .strip()
-                        .lower()
+                        typer.prompt("[Y]es execute / [n]o skip / [a]lready done / [q]uit", default="y").strip().lower()
                     )
                 if answer in ("q", "quit"):
                     quit_requested = True
@@ -656,9 +683,11 @@ def migrate_apply(
     bar.close()
 
     processed = {name for name, _ in outcomes}
-    for path in targets:
-        if stop.is_set() and path.name not in processed:
-            outcomes.append((path.name, "not run (stopped after earlier failure)"))
+    outcomes.extend(
+        (path.name, "not run (stopped after earlier failure)")
+        for path in targets
+        if stop.is_set() and path.name not in processed
+    )
 
     table = Table(box=box.SIMPLE, show_header=True, header_style="bold")
     table.add_column("File")

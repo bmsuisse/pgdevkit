@@ -3,11 +3,14 @@ from __future__ import annotations
 import asyncio
 import gc
 import time
+from collections.abc import AsyncIterator, Iterator
+from typing import Never
 
 import psycopg
 import pytest
 from psycopg import sql
 from psycopg.errors import QueryCanceled
+from psycopg.sql import SQL, Identifier
 from pydantic import BaseModel
 from sqlglot import exp, select
 
@@ -27,18 +30,18 @@ class Widget(BaseModel):
 
 
 @pytest.fixture(autouse=True)
-def _no_default_pool():
+def _no_default_pool() -> Iterator[None]:
     set_default_pool(None)
     yield
     set_default_pool(None)
 
 
 @pytest.fixture
-async def pool(monkeypatch: pytest.MonkeyPatch):
+async def pool(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[PgPool]:
     ensure_container()
     with psycopg.connect(constants.conninfo("postgres"), autocommit=True) as con:
-        con.execute(f'DROP DATABASE IF EXISTS "{TEST_DB}"')
-        con.execute(f'CREATE DATABASE "{TEST_DB}"')
+        con.execute(SQL("DROP DATABASE IF EXISTS {}").format(Identifier(TEST_DB)))
+        con.execute(SQL("CREATE DATABASE {}").format(Identifier(TEST_DB)))
     with psycopg.connect(constants.conninfo(TEST_DB), autocommit=True) as con:
         con.execute("CREATE TABLE widget (id int PRIMARY KEY, name text NOT NULL)")
         con.execute("INSERT INTO widget VALUES (1, 'sprocket'), (2, 'cog')")
@@ -54,27 +57,27 @@ async def pool(monkeypatch: pytest.MonkeyPatch):
     yield p
     await p.close()
     with psycopg.connect(constants.conninfo("postgres"), autocommit=True) as con:
-        con.execute(f'DROP DATABASE IF EXISTS "{TEST_DB}"')
+        con.execute(SQL("DROP DATABASE IF EXISTS {}").format(Identifier(TEST_DB)))
 
 
-async def test_model_and_row_mapper_are_exclusive():
+async def test_model_and_row_mapper_are_exclusive() -> None:
     with pytest.raises(TypeError, match="model"):
-        await fetch_all("SELECT 1", model=Widget, row_mapper=dict)  # type: ignore[call-overload]
+        await fetch_all("SELECT 1", model=Widget, row_mapper=dict)  # ty: ignore[no-matching-overload]
 
 
-async def test_without_any_connection_source_raises():
+async def test_without_any_connection_source_raises() -> None:
     with pytest.raises(RuntimeError, match="set_default_pool"):
         await fetch_all("SELECT 1")
 
 
-async def test_t_string_rejects_params():
+async def test_t_string_rejects_params() -> None:
     value = 1
     with pytest.raises(TypeError, match="t-string"):
-        await fetch_all(t"SELECT {value}", {"x": 1})  # type: ignore[call-overload]
+        await fetch_all(t"SELECT {value}", {"x": 1})  # ty: ignore[invalid-argument-type]
 
 
 @requires_podman
-async def test_returns_dicts_via_pool_and_default_pool(pool: PgPool):
+async def test_returns_dicts_via_pool_and_default_pool(pool: PgPool) -> None:
     assert await fetch_all("SELECT id, name FROM widget ORDER BY id", pool=pool) == [
         {"id": 1, "name": "sprocket"},
         {"id": 2, "name": "cog"},
@@ -84,7 +87,7 @@ async def test_returns_dicts_via_pool_and_default_pool(pool: PgPool):
 
 
 @requires_podman
-async def test_model_and_row_mapper(pool: PgPool):
+async def test_model_and_row_mapper(pool: PgPool) -> None:
     widgets = await fetch_all("SELECT id, name FROM widget ORDER BY id", model=Widget, pool=pool)
     assert widgets == [Widget(id=1, name="sprocket"), Widget(id=2, name="cog")]
     names = await fetch_all("SELECT name FROM widget ORDER BY id", row_mapper=lambda r: r["name"].upper(), pool=pool)
@@ -92,7 +95,7 @@ async def test_model_and_row_mapper(pool: PgPool):
 
 
 @requires_podman
-async def test_given_connection_is_borrowed_not_finalized(pool: PgPool):
+async def test_given_connection_is_borrowed_not_finalized(pool: PgPool) -> None:
     async with pool.connection() as con:
         await con.execute("INSERT INTO widget VALUES (3, 'gear')")
         # same connection => sees its own uncommitted row, and it stays open and usable afterwards
@@ -104,14 +107,14 @@ async def test_given_connection_is_borrowed_not_finalized(pool: PgPool):
 
 
 @requires_podman
-async def test_con_and_pool_are_exclusive(pool: PgPool):
+async def test_con_and_pool_are_exclusive(pool: PgPool) -> None:
     async with pool.connection() as con:
         with pytest.raises(TypeError, match="con"):
             await fetch_all("SELECT 1", con=con, pool=pool)
 
 
 @requires_podman
-async def test_accepts_sqlglot_expression_psycopg_sql_and_t_string(pool: PgPool):
+async def test_accepts_sqlglot_expression_psycopg_sql_and_t_string(pool: PgPool) -> None:
     query = select("name").from_("widget").where(exp.column("id").eq(exp.Placeholder(this="id")))
     assert await fetch_all(query, {"id": 1}, pool=pool) == [{"name": "sprocket"}]
     composed = sql.SQL("SELECT name FROM {t} WHERE id = {i}").format(t=sql.Identifier("widget"), i=sql.Literal(2))
@@ -121,9 +124,11 @@ async def test_accepts_sqlglot_expression_psycopg_sql_and_t_string(pool: PgPool)
 
 
 @requires_podman
-async def test_accepts_exp_query_typed_union_and_subquery(pool: PgPool):
+async def test_accepts_exp_query_typed_union_and_subquery(pool: PgPool) -> None:
     # annotated exp.Query on purpose (issue #56)
-    union: exp.Query = select("name").from_("widget").where("id = 1").union(select("name").from_("widget").where("id = 2"))
+    union: exp.Query = (
+        select("name").from_("widget").where("id = 1").union(select("name").from_("widget").where("id = 2"))
+    )
     assert sorted(r["name"] for r in await fetch_all(union, pool=pool)) == ["cog", "sprocket"]
     sub: exp.Query = select("name").from_(select("name").from_("widget").subquery("w")).where("name = 'cog'")
     assert await fetch_all(sub, pool=pool) == [{"name": "cog"}]
@@ -131,7 +136,7 @@ async def test_accepts_exp_query_typed_union_and_subquery(pool: PgPool):
     assert await fetch_scalar(select("count(*)").from_(union.subquery("u")), pool=pool) == 2
 
 
-async def test_already_set_cancel_raises_before_touching_a_connection():
+async def test_already_set_cancel_raises_before_touching_a_connection() -> None:
     cancel = asyncio.Event()
     cancel.set()
     with pytest.raises(QueryCanceled):
@@ -149,15 +154,15 @@ async def _active_sleeps(pool: PgPool) -> int:
         return row[0]
 
 
-async def _wait_for_active_sleeps(pool: PgPool, expected: int, timeout: float = 10) -> None:
-    deadline = time.monotonic() + timeout
+async def _wait_for_active_sleeps(pool: PgPool, expected: int, max_wait: float = 10) -> None:
+    deadline = time.monotonic() + max_wait
     while await _active_sleeps(pool) != expected:
         assert time.monotonic() < deadline, f"expected {expected} active pg_sleep(30) queries"
         await asyncio.sleep(0.05)
 
 
 @requires_podman
-async def test_cancel_event_aborts_running_query_and_keeps_borrowed_connection_usable(pool: PgPool):
+async def test_cancel_event_aborts_running_query_and_keeps_borrowed_connection_usable(pool: PgPool) -> None:
     cancel = asyncio.Event()
     async with pool.connection() as con:
         task = asyncio.ensure_future(fetch_all("SELECT pg_sleep(30)", con=con, cancel=cancel))
@@ -173,7 +178,7 @@ async def test_cancel_event_aborts_running_query_and_keeps_borrowed_connection_u
 
 
 @requires_podman
-async def test_cancelling_the_task_cancels_the_query_on_the_server(pool: PgPool):
+async def test_cancelling_the_task_cancels_the_query_on_the_server(pool: PgPool) -> None:
     task = asyncio.ensure_future(fetch_all("SELECT pg_sleep(30)", pool=pool))
     await _wait_for_active_sleeps(pool, 1)
     task.cancel()
@@ -183,10 +188,10 @@ async def test_cancelling_the_task_cancels_the_query_on_the_server(pool: PgPool)
     assert await fetch_all("SELECT 1 AS one", pool=pool) == [{"one": 1}]
 
 
-async def test_unsupported_query_type_and_unsafe_sqlglot_nodes_are_rejected():
+async def test_unsupported_query_type_and_unsafe_sqlglot_nodes_are_rejected() -> None:
     set_default_pool(None)
     with pytest.raises(TypeError, match="unsupported query type"):
-        await fetch_all(123)  # type: ignore[call-overload]
+        await fetch_all(123)  # ty: ignore[no-matching-overload]
     with pytest.raises(ValueError, match="Command"):
         await fetch_all(exp.Command(this="SELECT", expression=" version()"), pool=_NoPool())  # type: ignore[call-overload]
     with pytest.raises(ValueError, match="placeholder name"):
@@ -194,12 +199,12 @@ async def test_unsupported_query_type_and_unsafe_sqlglot_nodes_are_rejected():
 
 
 class _NoPool:
-    def connection(self):
+    def connection(self) -> Never:
         raise AssertionError("must be rejected before a connection is needed")
 
 
 @requires_podman
-async def test_second_cancel_during_drain_still_cleans_up(pool: PgPool):
+async def test_second_cancel_during_drain_still_cleans_up(pool: PgPool) -> None:
     loop = asyncio.get_running_loop()
     problems: list[dict] = []
     loop.set_exception_handler(lambda _loop, ctx: problems.append(ctx))
@@ -222,7 +227,7 @@ async def test_second_cancel_during_drain_still_cleans_up(pool: PgPool):
 @requires_podman
 async def test_failing_cancel_request_closes_the_connection_and_returns_promptly(
     pool: PgPool, monkeypatch: pytest.MonkeyPatch
-):
+) -> None:
     # Own connections (not the pool's): the patch below must only affect the one under test.
     dsn = constants.conninfo(TEST_DB)
     observer = await psycopg.AsyncConnection.connect(dsn, autocommit=True)
@@ -230,13 +235,14 @@ async def test_failing_cancel_request_closes_the_connection_and_returns_promptly
 
     async def sleeping() -> int:
         cur = await observer.execute(
-            "SELECT count(*) FROM pg_stat_activity WHERE query LIKE '%pg_sleep(30)%' AND state = 'active' AND pid <> pg_backend_pid()"
+            "SELECT count(*) FROM pg_stat_activity WHERE query LIKE '%pg_sleep(30)%' AND state = 'active' "
+            "AND pid <> pg_backend_pid()"
         )
         row = await cur.fetchone()
         assert row is not None
         return row[0]
 
-    async def broken_cancel(self, **_kwargs) -> None:
+    async def broken_cancel(self: object, **_kwargs: object) -> None:
         raise psycopg.OperationalError("cancel connection refused")
 
     monkeypatch.setattr(psycopg.AsyncConnection, "cancel_safe", broken_cancel)
@@ -268,19 +274,19 @@ async def test_failing_cancel_request_closes_the_connection_and_returns_promptly
 # --- fetch_one / fetch_scalar / execute ---------------------------------------------------------
 
 
-async def test_siblings_validate_their_arguments_before_touching_a_connection():
+async def test_siblings_validate_their_arguments_before_touching_a_connection() -> None:
     with pytest.raises(TypeError, match="model"):
-        await fetch_one("SELECT 1", model=Widget, row_mapper=dict)  # type: ignore[call-overload]
+        await fetch_one("SELECT 1", model=Widget, row_mapper=dict)  # ty: ignore[no-matching-overload]
     value = 1
     for fn in (fetch_one, fetch_scalar, execute):
         with pytest.raises(TypeError, match="t-string"):
-            await fn(t"SELECT {value}", {"x": 1})  # type: ignore[call-overload]
+            await fn(t"SELECT {value}", {"x": 1})  # ty: ignore[invalid-argument-type]
         with pytest.raises(ValueError, match="statement_timeout"):
             await fn("SELECT 1", statement_timeout=0)
         with pytest.raises(RuntimeError, match="set_default_pool"):
             await fn("SELECT 1")
         with pytest.raises(TypeError, match=fn.__name__):
-            await fn(123, pool=_NoPool())  # type: ignore[call-overload]
+            await fn(123, pool=_NoPool())  # ty: ignore[no-matching-overload]
         cancel = asyncio.Event()
         cancel.set()
         with pytest.raises(QueryCanceled, match=fn.__name__):
@@ -288,11 +294,16 @@ async def test_siblings_validate_their_arguments_before_touching_a_connection():
 
 
 @requires_podman
-async def test_fetch_one_returns_first_row_or_none(pool: PgPool):
+async def test_fetch_one_returns_first_row_or_none(pool: PgPool) -> None:
     assert await fetch_one("SELECT id, name FROM widget ORDER BY id", pool=pool) == {"id": 1, "name": "sprocket"}
     assert await fetch_one("SELECT id FROM widget WHERE id = %(id)s", {"id": 99}, pool=pool) is None
-    assert await fetch_one("SELECT id, name FROM widget WHERE id = 2", model=Widget, pool=pool) == Widget(id=2, name="cog")
-    assert await fetch_one("SELECT name FROM widget WHERE id = 2", row_mapper=lambda r: r["name"].upper(), pool=pool) == "COG"
+    assert await fetch_one("SELECT id, name FROM widget WHERE id = 2", model=Widget, pool=pool) == Widget(
+        id=2, name="cog"
+    )
+    assert (
+        await fetch_one("SELECT name FROM widget WHERE id = 2", row_mapper=lambda r: r["name"].upper(), pool=pool)
+        == "COG"
+    )
     assert await fetch_one("SELECT name FROM widget WHERE id = 99", model=Widget, pool=pool) is None
     widget_id = 1
     assert await fetch_one(t"SELECT name FROM widget WHERE id = {widget_id}", pool=pool) == {"name": "sprocket"}
@@ -301,7 +312,7 @@ async def test_fetch_one_returns_first_row_or_none(pool: PgPool):
 
 
 @requires_podman
-async def test_fetch_scalar_returns_first_column_of_first_row_or_none(pool: PgPool):
+async def test_fetch_scalar_returns_first_column_of_first_row_or_none(pool: PgPool) -> None:
     set_default_pool(pool)
     assert await fetch_scalar("SELECT count(*) FROM widget") == 2
     assert await fetch_scalar("SELECT name, id FROM widget ORDER BY id DESC") == "cog"
@@ -312,7 +323,7 @@ async def test_fetch_scalar_returns_first_column_of_first_row_or_none(pool: PgPo
 
 
 @requires_podman
-async def test_execute_returns_rowcount_and_commits_on_a_pooled_connection(pool: PgPool):
+async def test_execute_returns_rowcount_and_commits_on_a_pooled_connection(pool: PgPool) -> None:
     assert await execute("UPDATE widget SET name = upper(name)", pool=pool) == 2
     assert await execute("DELETE FROM widget WHERE id = %(id)s", {"id": 1}, pool=pool) == 1
     assert await execute("DELETE FROM widget WHERE id = %(id)s", {"id": 1}, pool=pool) == 0
@@ -326,7 +337,7 @@ async def test_execute_returns_rowcount_and_commits_on_a_pooled_connection(pool:
 
 
 @requires_podman
-async def test_execute_on_a_given_connection_leaves_the_transaction_to_the_caller(pool: PgPool):
+async def test_execute_on_a_given_connection_leaves_the_transaction_to_the_caller(pool: PgPool) -> None:
     async with pool.connection() as con:
         assert await execute("INSERT INTO widget VALUES (3, 'gear')", con=con) == 1
         assert con.info.transaction_status == psycopg.pq.TransactionStatus.INTRANS
@@ -335,7 +346,7 @@ async def test_execute_on_a_given_connection_leaves_the_transaction_to_the_calle
 
 
 @requires_podman
-async def test_siblings_support_cancel_and_statement_timeout(pool: PgPool):
+async def test_siblings_support_cancel_and_statement_timeout(pool: PgPool) -> None:
     cancel = asyncio.Event()
     task = asyncio.ensure_future(fetch_scalar("SELECT pg_sleep(30)", pool=pool, cancel=cancel))
     await _wait_for_active_sleeps(pool, 1)
@@ -351,8 +362,8 @@ async def test_siblings_support_cancel_and_statement_timeout(pool: PgPool):
 
 
 @requires_podman
-async def test_default_pool_may_be_a_plain_callable(pool: PgPool):
-    set_default_pool(lambda: pool.connection())
+async def test_default_pool_may_be_a_plain_callable(pool: PgPool) -> None:
+    set_default_pool(pool.connection)
     assert await fetch_scalar("SELECT count(*) FROM widget") == 2
     assert await fetch_one("SELECT name FROM widget WHERE id = 1") == {"name": "sprocket"}
 
@@ -360,14 +371,14 @@ async def test_default_pool_may_be_a_plain_callable(pool: PgPool):
 # --- literal `%` in sqlglot expressions ----------------------------------------------------------
 
 
-def test_render_leaves_percent_alone_without_params():
+def test_render_leaves_percent_alone_without_params() -> None:
     query = select("a").from_("t").where(exp.column("a").like("50%"))
     assert _render(query) == "SELECT a FROM t WHERE a LIKE '50%'"
     assert _render(query, None) == "SELECT a FROM t WHERE a LIKE '50%'"
 
 
 @pytest.mark.parametrize("params", [{}, {"id": 1}])
-def test_render_doubles_literal_percent_but_not_placeholders_when_params_are_given(params):
+def test_render_doubles_literal_percent_but_not_placeholders_when_params_are_given(params: dict[str, int]) -> None:
     query = (
         select(exp.column("50%"), exp.column("a") % 2)
         .from_("t")
@@ -383,21 +394,21 @@ def test_render_doubles_literal_percent_but_not_placeholders_when_params_are_giv
     assert query.sql(dialect="postgres").count("%(id)s") == 2  # the placeholder and the literal
 
 
-def test_render_keeps_ten_or_more_placeholders_apart():
+def test_render_keeps_ten_or_more_placeholders_apart() -> None:
     # (placeholder token _1 must not be mistaken for the start of _10)
     names = [f"p{i}" for i in range(25)]
     query = select(*[exp.Placeholder(this=n) for n in names]).where(exp.column("a").like("x%"))
     assert _render(query, {}) == "SELECT " + ", ".join(f"%({n})s" for n in names) + " WHERE a LIKE 'x%%'"
 
 
-def test_render_percent_escaping_leaves_other_query_types_alone():
+def test_render_percent_escaping_leaves_other_query_types_alone() -> None:
     assert _render("SELECT '50%%'", {}) == "SELECT '50%%'"
     composed = sql.SQL("SELECT {}").format(sql.Literal("50%"))
     assert _render(composed, {}) is composed
 
 
 @requires_podman
-async def test_percent_in_sqlglot_string_literals_works_with_and_without_params(pool: PgPool):
+async def test_percent_in_sqlglot_string_literals_works_with_and_without_params(pool: PgPool) -> None:
     like = select("name").from_("widget").where(exp.column("name").like("sp%"))
     assert await fetch_all(like, pool=pool) == [{"name": "sprocket"}]
     assert await fetch_all(like, {}, pool=pool) == [{"name": "sprocket"}]
@@ -407,6 +418,8 @@ async def test_percent_in_sqlglot_string_literals_works_with_and_without_params(
     assert await fetch_scalar(select(exp.Literal.string("50%").as_("pct")), {}, pool=pool) == "50%"
     assert await fetch_scalar(select(exp.Literal.string("50%").as_("pct")), pool=pool) == "50%"
     # the modulo operator, and a literal that looks like a placeholder
-    modulo = select((exp.column("id") % 2).as_("odd")).from_("widget").where(exp.column("id").eq(exp.Placeholder(this="id")))
+    modulo = (
+        select((exp.column("id") % 2).as_("odd")).from_("widget").where(exp.column("id").eq(exp.Placeholder(this="id")))
+    )
     assert await fetch_scalar(modulo, {"id": 1}, pool=pool) == 1
     assert await fetch_scalar(select(exp.Literal.string("%(id)s")), {}, pool=pool) == "%(id)s"

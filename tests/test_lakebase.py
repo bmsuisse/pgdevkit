@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
+from email.message import Message
 from io import BytesIO
+from typing import Never
 from urllib.error import HTTPError
+from urllib.request import Request
 
 import pytest
 
@@ -10,7 +14,7 @@ import pgdevkit.lakebase as lakebase
 
 
 @pytest.fixture(autouse=True)
-def _clear_caches():
+def _clear_caches() -> Iterator[None]:
     lakebase._credential_cache.clear()
     lakebase._dns_cache.clear()
     yield
@@ -25,18 +29,18 @@ class _FakeResponse:
     def read(self) -> bytes:
         return json.dumps(self._payload).encode("utf-8")
 
-    def __enter__(self) -> "_FakeResponse":
+    def __enter__(self) -> _FakeResponse:
         return self
 
-    def __exit__(self, *exc) -> None:
+    def __exit__(self, *exc: object) -> None:
         return None
 
 
-def test_get_lakebase_password_fetches_and_caches(monkeypatch):
+def test_get_lakebase_password_fetches_and_caches(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(lakebase, "_databricks_resource_token", lambda: "ENTRA_TOKEN")
     calls = []
 
-    def fake_urlopen(req, timeout=10):
+    def fake_urlopen(req: Request, timeout: int = 10) -> _FakeResponse:
         calls.append(req)
         return _FakeResponse({"token": "PGTOKEN", "expiration_time": "2099-01-01T00:00:00Z"})
 
@@ -56,7 +60,7 @@ def test_get_lakebase_password_fetches_and_caches(monkeypatch):
     assert len(calls) == 1
 
 
-def test_get_lakebase_password_refreshes_when_near_expiry(monkeypatch):
+def test_get_lakebase_password_refreshes_when_near_expiry(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(lakebase, "_databricks_resource_token", lambda: "ENTRA_TOKEN")
     responses = iter(
         [
@@ -65,7 +69,7 @@ def test_get_lakebase_password_refreshes_when_near_expiry(monkeypatch):
         ]
     )
 
-    def fake_urlopen(req, timeout=10):
+    def fake_urlopen(req: Request, timeout: int = 10) -> _FakeResponse:
         return _FakeResponse(next(responses))
 
     monkeypatch.setattr(lakebase.urllib_request, "urlopen", fake_urlopen)
@@ -76,11 +80,11 @@ def test_get_lakebase_password_refreshes_when_near_expiry(monkeypatch):
     assert second == "SECOND"
 
 
-def test_get_lakebase_password_raises_on_http_error(monkeypatch):
+def test_get_lakebase_password_raises_on_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(lakebase, "_databricks_resource_token", lambda: "ENTRA_TOKEN")
 
-    def fake_urlopen(req, timeout=10):
-        raise HTTPError(req.full_url, 403, "Forbidden", {}, BytesIO(b'{"message": "no access"}'))
+    def fake_urlopen(req: Request, timeout: int = 10) -> Never:
+        raise HTTPError(req.full_url, 403, "Forbidden", Message(), BytesIO(b'{"message": "no access"}'))
 
     monkeypatch.setattr(lakebase.urllib_request, "urlopen", fake_urlopen)
 
@@ -88,11 +92,11 @@ def test_get_lakebase_password_raises_on_http_error(monkeypatch):
         lakebase.get_lakebase_password("https://adb-123.azuredatabricks.net", "myinstance")
 
 
-def test_resolve_read_write_dns_caches(monkeypatch):
+def test_resolve_read_write_dns_caches(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(lakebase, "_databricks_resource_token", lambda: "ENTRA_TOKEN")
     calls = []
 
-    def fake_urlopen(req, timeout=10):
+    def fake_urlopen(req: Request, timeout: int = 10) -> _FakeResponse:
         calls.append(req)
         return _FakeResponse({"read_write_dns": "instance-abc.database.azuredatabricks.net"})
 

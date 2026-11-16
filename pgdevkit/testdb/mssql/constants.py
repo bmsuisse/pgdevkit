@@ -53,16 +53,17 @@ def validate_sa_password(password: str) -> None:
         raise ValueError("MSSQL_SA_PASSWORD must be at least 8 characters long")
     if "sa" in password.lower():
         raise ValueError("MSSQL_SA_PASSWORD must not contain the login name 'sa'")
-    classes_met = sum([
-        any(c.islower() for c in password),
-        any(c.isupper() for c in password),
-        any(c.isdigit() for c in password),
-        any(c in string.punctuation for c in password),
-    ])
+    classes_met = sum(
+        [
+            any(c.islower() for c in password),
+            any(c.isupper() for c in password),
+            any(c.isdigit() for c in password),
+            any(c in string.punctuation for c in password),
+        ]
+    )
     if classes_met < 3:
         raise ValueError(
-            "MSSQL_SA_PASSWORD must contain at least 3 of: uppercase letter, "
-            "lowercase letter, digit, symbol"
+            "MSSQL_SA_PASSWORD must contain at least 3 of: uppercase letter, lowercase letter, digit, symbol"
         )
 
 
@@ -71,7 +72,4 @@ def conninfo(dbname: str) -> str:
     `Driver`/`APP` are deliberately omitted -- mssql-python controls those
     itself (it bundles its own driver, so no system ODBC driver install is
     needed) and raises if a caller tries to set them."""
-    return (
-        f"Server={HOST},{PORT};Database={dbname};UID={USER};PWD={PASSWORD};"
-        "Encrypt=yes;TrustServerCertificate=yes"
-    )
+    return f"Server={HOST},{PORT};Database={dbname};UID={USER};PWD={PASSWORD};Encrypt=yes;TrustServerCertificate=yes"

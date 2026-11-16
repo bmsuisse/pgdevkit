@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import os
 import time
+from typing import Any
 
 import docker
 import docker.errors
 import mssql_python
 
-from .. import _docker
-from . import constants
+from pgdevkit.testdb import _docker
+from pgdevkit.testdb.mssql import constants
 
 
 def _available(timeout: float = 3.0) -> bool:
@@ -19,12 +20,13 @@ def _available(timeout: float = 3.0) -> bool:
         conn = mssql_python.connect(constants.conninfo("master"), timeout=max(1, round(timeout)))
         conn.close()
         return True
-    except Exception:  # noqa: BLE001
+    except Exception:
         return False
 
 
 def _create_container(client: docker.DockerClient | _docker.CliClient) -> None:
     constants.validate_sa_password(constants.PASSWORD)
+    user_kwargs: dict[str, Any] = {"user": constants.CONTAINER_USER} if constants.CONTAINER_USER else {}
     try:
         client.containers.run(
             constants.IMAGE,
@@ -40,7 +42,7 @@ def _create_container(client: docker.DockerClient | _docker.CliClient) -> None:
                 "MSSQL_PID": "Developer",
                 "MSSQL_MEMORY_LIMIT_MB": str(constants.MEMORY_LIMIT_MB),
             },
-            **({"user": constants.CONTAINER_USER} if constants.CONTAINER_USER else {}),
+            **user_kwargs,
             **_docker.resource_kwargs(
                 tmpfs=constants.TMPFS,
                 shm_size=constants.SHM_SIZE,
@@ -69,7 +71,7 @@ def _wait_ready(timeout: float = 90.0) -> None:
             conn = mssql_python.connect(constants.conninfo("master"), timeout=2)
             conn.close()
             return
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             last_error = e
             time.sleep(0.5)
     raise RuntimeError(f"SQL Server did not become ready within {timeout}s: {last_error}")

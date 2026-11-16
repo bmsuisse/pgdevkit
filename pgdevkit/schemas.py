@@ -23,8 +23,8 @@ from pathlib import Path
 import sqlglot
 import sqlglot.expressions as exp
 
-from .dialect import Dialect, POSTGRES, SYSTEM_SCHEMAS
-from .sql_text import strip_line_comments
+from pgdevkit.dialect import POSTGRES, SYSTEM_SCHEMAS, Dialect
+from pgdevkit.sql_text import strip_line_comments
 
 _CREATE_SCHEMA_RE = re.compile(
     r"CREATE\s+SCHEMA\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:AUTHORIZATION\s+)?\"?(\w+)\"?", re.IGNORECASE
@@ -55,7 +55,7 @@ def sql_schemas(content: str, dialect: Dialect = POSTGRES) -> frozenset[str]:
     when sqlglot can't parse the content, or finds no reference at all."""
     try:
         exprs = sqlglot.parse(content, dialect=dialect.sqlglot_name, error_level=sqlglot.ErrorLevel.IGNORE)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return _regex_fallback(content)
 
     schemas: set[str] = set()
@@ -99,9 +99,7 @@ def schema_allowed(
     """Whether a file that references `schemas` passes an `only`/`exclude` filter."""
     if exclude and schemas & exclude:
         return False
-    if only and schemas and not (schemas & only):
-        return False
-    return True
+    return not (only and schemas and not schemas & only)
 
 
 def filter_by_schema(

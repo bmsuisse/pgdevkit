@@ -45,9 +45,7 @@ def load_config(start: Path | None = None) -> ProjectConfig:
 
     extensions = section.get("extensions", [])
     if not isinstance(extensions, list):
-        raise TypeError(
-            f"[tool.pgdevkit].extensions in {pyproject} must be a list, got {type(extensions).__name__}"
-        )
+        raise TypeError(f"[tool.pgdevkit].extensions in {pyproject} must be a list, got {type(extensions).__name__}")
 
     # Lets a repo that layers an extra, literally-suffixed sibling database
     # on top of its main workspace DB (e.g. a mock-service DB used only by
@@ -56,8 +54,7 @@ def load_config(start: Path | None = None) -> ProjectConfig:
     extra_db_suffixes = section.get("extra_db_suffixes", [])
     if not isinstance(extra_db_suffixes, list):
         raise TypeError(
-            f"[tool.pgdevkit].extra_db_suffixes in {pyproject} must be a list, "
-            f"got {type(extra_db_suffixes).__name__}"
+            f"[tool.pgdevkit].extra_db_suffixes in {pyproject} must be a list, got {type(extra_db_suffixes).__name__}"
         )
 
     # PGDEVKIT_TESTDB_ENGINE lets CI/ad-hoc runs flip engines without

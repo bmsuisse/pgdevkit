@@ -61,18 +61,20 @@ async def test_statement_timeout_must_be_positive(seconds: float) -> None:
         await fetch_all("SELECT 1", statement_timeout=seconds)
 
 
-async def _effective(pool: AsyncConnectionPool, timeout: float, current: str) -> int:
-    """The timeout (ms) in force inside a call with `statement_timeout=timeout`, given a connection whose own
+async def _effective(pool: AsyncConnectionPool, seconds: float, current: str) -> int:
+    """The timeout (ms) in force inside a call with `statement_timeout=seconds`, given a connection whose own
     setting is `current`."""
     async with pool.connection() as con:
         await con.execute("SELECT set_config('statement_timeout', %(current)s, false)", {"current": current})
         await con.commit()
         try:
-            return await fetch_scalar(
+            effective = await fetch_scalar(
                 "SELECT setting::bigint FROM pg_settings WHERE name = 'statement_timeout'",
                 con=con,
-                statement_timeout=timeout,
+                statement_timeout=seconds,
             )
+            assert effective is not None
+            return effective
         finally:
             await con.execute("SELECT set_config('statement_timeout', '0', false)")
             await con.commit()

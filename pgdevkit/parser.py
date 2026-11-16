@@ -1,20 +1,28 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
-import logging
+from collections.abc import Iterator
 from pathlib import Path
 
 import sqlglot
 import sqlglot.expressions as exp
 
-from .areas import area_allowed, parse_areas
-from .dialect import Dialect, POSTGRES, resolve_dialect
-from .schemas import schema_allowed, sql_schemas
-from .models import (
-    ColumnDef, ConstraintDef, CompositeTypeDef, DatabaseSchema,
-    EnumDef, FunctionDef, IndexDef, TableDef, ViewDef,
+from pgdevkit.areas import area_allowed, parse_areas
+from pgdevkit.dialect import POSTGRES, Dialect, resolve_dialect
+from pgdevkit.models import (
+    ColumnDef,
+    CompositeTypeDef,
+    ConstraintDef,
+    DatabaseSchema,
+    EnumDef,
+    FunctionDef,
+    IndexDef,
+    TableDef,
+    ViewDef,
 )
+from pgdevkit.schemas import schema_allowed, sql_schemas
 
 logger = logging.getLogger(__name__)
 
@@ -22,27 +30,34 @@ logger = logging.getLogger(__name__)
 # worktrees checked out under database/.worktree for isolated test DBs) but
 # never hold real schema content.
 IGNORED_DIR_NAMES = {
-    ".worktree", ".worktrees", ".claude", ".vscode", "node_modules",
-    "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+    ".worktree",
+    ".worktrees",
+    ".claude",
+    ".vscode",
+    "node_modules",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
 }
 
 # Regex to extract dollar-quoted body (Postgres-only construct)
-_DOLLAR_BODY = re.compile(r'\$(\w*)\$(.*?)\$\1\$', re.DOTALL | re.IGNORECASE)
+_DOLLAR_BODY = re.compile(r"\$(\w*)\$(.*?)\$\1\$", re.DOTALL | re.IGNORECASE)
 
 # Regex for CREATE TYPE AS ENUM inside DO blocks (Postgres-only construct)
 _DO_ENUM = re.compile(
-    r'CREATE\s+TYPE\s+(\w+(?:\.\w+)?)\s+AS\s+ENUM\s*\(([^)]+)\)',
+    r"CREATE\s+TYPE\s+(\w+(?:\.\w+)?)\s+AS\s+ENUM\s*\(([^)]+)\)",
     re.IGNORECASE | re.DOTALL,
 )
 
 # Regex for CREATE TYPE AS composite inside DO blocks (Postgres-only construct)
 _DO_COMPOSITE = re.compile(
-    r'CREATE\s+TYPE\s+(\w+(?:\.\w+)?)\s+AS\s*\(([^)]+)\)',
+    r"CREATE\s+TYPE\s+(\w+(?:\.\w+)?)\s+AS\s*\(([^)]+)\)",
     re.IGNORECASE | re.DOTALL,
 )
 
 
-def _iter_sql_files(scripts_dir: Path):
+def _iter_sql_files(scripts_dir: Path) -> Iterator[Path]:
     for root, dirs, files in os.walk(scripts_dir):
         dirs[:] = [d for d in dirs if d not in IGNORED_DIR_NAMES]
         for name in files:
@@ -75,9 +90,7 @@ def parse_directory(
     return db_schema
 
 
-def _parse_file(
-    path: Path, db_schema: DatabaseSchema, dialect: Dialect = POSTGRES, content: str | None = None
-) -> None:
+def _parse_file(path: Path, db_schema: DatabaseSchema, dialect: Dialect = POSTGRES, content: str | None = None) -> None:
     if content is None:
         content = path.read_text(encoding="utf-8")
     try:
@@ -87,7 +100,7 @@ def _parse_file(
         exprs = []
 
     for expr in exprs:
-        if expr is None:
+        if not isinstance(expr, exp.Expression):
             continue
         try:
             _handle_expr(expr, content, db_schema, dialect)
@@ -121,10 +134,7 @@ def _handle_expr(expr: exp.Expression, raw: str, db_schema: DatabaseSchema, dial
 def _resolve_name(expr: exp.Create, dialect: Dialect) -> tuple[str, str] | None:
     """Return (schema, name) from a CREATE expression."""
     this = expr.this
-    if isinstance(this, exp.Schema):
-        table_node = this.this
-    else:
-        table_node = this
+    table_node = this.this if isinstance(this, exp.Schema) else this
 
     if isinstance(table_node, exp.Table):
         db_node = table_node.args.get("db")
@@ -139,9 +149,7 @@ def _handle_table(expr: exp.Create, db_schema: DatabaseSchema, dialect: Dialect)
         return
     tschema, tname = result
     properties = expr.args.get("properties")
-    is_partition = any(
-        isinstance(p, exp.PartitionedOfProperty) for p in (properties.expressions if properties else [])
-    )
+    is_partition = any(isinstance(p, exp.PartitionedOfProperty) for p in (properties.expressions if properties else []))
     table = TableDef(schema=tschema, name=tname, is_partition=is_partition)
 
     this = expr.this
@@ -181,7 +189,9 @@ def _parse_column_def(col: exp.ColumnDef, dialect: Dialect) -> ColumnDef | None:
         return None
     data_type = col.kind.sql(dialect=dialect.sqlglot_name).lower()
     is_serial = col.kind.this in (
-        exp.DataType.Type.SERIAL, exp.DataType.Type.SMALLSERIAL, exp.DataType.Type.BIGSERIAL,
+        exp.DataType.Type.SERIAL,
+        exp.DataType.Type.SMALLSERIAL,
+        exp.DataType.Type.BIGSERIAL,
     )
     is_nullable = not is_serial
     default = None
@@ -206,7 +216,9 @@ def _parse_column_def(col: exp.ColumnDef, dialect: Dialect) -> ColumnDef | None:
         elif isinstance(ck, exp.ComputedColumnConstraint):
             is_generated = True
 
-    return ColumnDef(name=name, data_type=data_type, is_nullable=is_nullable, default=default, is_generated=is_generated)
+    return ColumnDef(
+        name=name, data_type=data_type, is_nullable=is_nullable, default=default, is_generated=is_generated
+    )
 
 
 def _parse_table_constraint(item: exp.Expression, dialect: Dialect) -> ConstraintDef | None:
@@ -289,10 +301,10 @@ def _handle_function(expr: exp.Create, raw: str, db_schema: DatabaseSchema, kind
 
 
 _FUNC_SIG = re.compile(
-    r'CREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE)\s+'
-    r'(?:\w+\.)?(\w+)\s*\(([^)]*(?:\([^)]*\)[^)]*)*)\)\s*'
-    r'(?:RETURNS\s+((?:TABLE\s*\([^)]+\)|SETOF\s+\S+|\S+)))?\s*'
-    r'LANGUAGE\s+(\w+)',
+    r"CREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE)\s+"
+    r"(?:\w+\.)?(\w+)\s*\(([^)]*(?:\([^)]*\)[^)]*)*)\)\s*"
+    r"(?:RETURNS\s+((?:TABLE\s*\([^)]+\)|SETOF\s+\S+|\S+)))?\s*"
+    r"LANGUAGE\s+(\w+)",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -302,15 +314,15 @@ def _parse_function_details(sql: str) -> tuple[str, str, str, str]:
 
     m = _FUNC_SIG.search(sql)
     if m:
-        args = re.sub(r'\s+', ' ', m.group(2) or "").strip().lower()
+        args = re.sub(r"\s+", " ", m.group(2) or "").strip().lower()
         return_type = (m.group(3) or "").strip().lower()
         language = (m.group(4) or "").strip().lower()
 
     dm = _DOLLAR_BODY.search(sql)
     if dm:
         raw_body = dm.group(2)
-        lines = [l.strip() for l in raw_body.splitlines()]
-        body = "\n".join(l.lower() for l in lines if l)
+        lines = [line.strip() for line in raw_body.splitlines()]
+        body = "\n".join(line.lower() for line in lines if line)
 
     return args, return_type, language, body
 
@@ -323,15 +335,15 @@ def _parse_function_details(sql: str) -> tuple[str, str, str, str]:
 # their own trailing semicolons, WITH ENCRYPTION/SCHEMABINDING options
 # between the signature and AS, etc).
 _FUNC_SIG_TSQL = re.compile(
-    r'CREATE\s+(?:OR\s+ALTER\s+)?(?:FUNCTION|PROCEDURE|PROC)\s+'
-    r'(?:\[?\w+\]?\.)?\[?\w+\]?\s*'
-    r'(\(([^)]*)\))?\s*'
-    r'(?:RETURNS\s+([^\s(]+(?:\s*\([^)]*\))?))?\s*'
-    r'AS\b',
+    r"CREATE\s+(?:OR\s+ALTER\s+)?(?:FUNCTION|PROCEDURE|PROC)\s+"
+    r"(?:\[?\w+\]?\.)?\[?\w+\]?\s*"
+    r"(\(([^)]*)\))?\s*"
+    r"(?:RETURNS\s+([^\s(]+(?:\s*\([^)]*\))?))?\s*"
+    r"AS\b",
     re.IGNORECASE | re.DOTALL,
 )
 
-_BEGIN_END_WRAPPER = re.compile(r'^\s*BEGIN\b(.*)\bEND\s*;?\s*$', re.IGNORECASE | re.DOTALL)
+_BEGIN_END_WRAPPER = re.compile(r"^\s*BEGIN\b(.*)\bEND\s*;?\s*$", re.IGNORECASE | re.DOTALL)
 
 
 def _parse_function_details_tsql(sql: str) -> tuple[str, str, str, str]:
@@ -339,14 +351,14 @@ def _parse_function_details_tsql(sql: str) -> tuple[str, str, str, str]:
 
     m = _FUNC_SIG_TSQL.search(sql)
     if m:
-        args = re.sub(r'\s+', ' ', m.group(2) or "").strip().lower()
+        args = re.sub(r"\s+", " ", m.group(2) or "").strip().lower()
         return_type = (m.group(3) or "").strip().lower()
-        raw_body = sql[m.end():].strip()
+        raw_body = sql[m.end() :].strip()
         wrapper = _BEGIN_END_WRAPPER.match(raw_body)
         if wrapper:
             raw_body = wrapper.group(1)
-        lines = [l.strip() for l in raw_body.splitlines()]
-        body = "\n".join(l.lower() for l in lines if l)
+        lines = [line.strip() for line in raw_body.splitlines()]
+        body = "\n".join(line.lower() for line in lines if line)
 
     return args, return_type, "sql", body
 
@@ -375,10 +387,11 @@ def _handle_type(expr: exp.Create, db_schema: DatabaseSchema, dialect: Dialect) 
         db_schema.enums[enum.qualified_name] = enum
     elif isinstance(expression, exp.Schema):
         # Composite type: fields are ColumnDef-like
-        fields = []
-        for col in expression.expressions:
-            if isinstance(col, exp.ColumnDef) and col.kind:
-                fields.append((col.name, col.kind.sql(dialect=dialect.sqlglot_name).lower()))
+        fields = [
+            (col.name, col.kind.sql(dialect=dialect.sqlglot_name).lower())
+            for col in expression.expressions
+            if isinstance(col, exp.ColumnDef) and col.kind
+        ]
         comp = CompositeTypeDef(schema=tschema, name=tname, fields=fields)
         db_schema.composites[comp.qualified_name] = comp
 

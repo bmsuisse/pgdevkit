@@ -20,11 +20,11 @@ import sqlglot
 from psycopg import errors as pg_errors
 from psycopg import sql as pg_sql
 
-from .areas import filter_by_area
-from .dialect import Dialect, resolve_dialect
-from .envtag import env_allowed
-from .schemas import filter_by_schema
-from .sql_text import strip_line_comments
+from pgdevkit.areas import filter_by_area
+from pgdevkit.dialect import Dialect, resolve_dialect
+from pgdevkit.envtag import env_allowed
+from pgdevkit.schemas import filter_by_schema
+from pgdevkit.sql_text import strip_line_comments
 
 _IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_]*"
 
@@ -65,8 +65,8 @@ def default_tracking_table(start: Path | None = None, dialect: str | Dialect = "
     """The project's configured tracking table: `[tool.pgdevkit].migrations_table` in the
     nearest pyproject.toml at or above `start` (default: cwd), or "public.schema_migrations"
     if neither is set. For MSSQL the key is `mssql_migrations_table` (default
-    "dbo.schema_migrations"), so a Postgres-style `migrations_table` never leaks into it. Lets a project fix its tracking table once instead of passing
-    --tracking-table on every `pgdb migrate` invocation."""
+    "dbo.schema_migrations"), so a Postgres-style `migrations_table` never leaks into it. Lets a project fix its
+    tracking table once instead of passing --tracking-table on every `pgdb migrate` invocation."""
     default = f"{resolve_dialect(dialect).default_schema}.schema_migrations"
     pyproject = _find_pyproject((start or Path.cwd()).resolve())
     if pyproject is None:
@@ -78,7 +78,8 @@ def default_tracking_table(start: Path | None = None, dialect: str | Dialect = "
 
 
 def _split_sql(sql: str) -> list[str]:
-    """Split SQL on semicolons, ignoring those inside comments (`--` and nested `/* */`), '...' strings, "..." identifiers, or $$...$$ blocks."""
+    """Split SQL on semicolons, ignoring those inside comments (`--` and nested `/* */`), '...' strings, "..."
+    identifiers, or $$...$$ blocks."""
     stmts: list[str] = []
     buf: list[str] = []
     i = 0
@@ -95,7 +96,7 @@ def _split_sql(sql: str) -> list[str]:
                 in_line_comment = False
             buf.append(c)
         elif block_depth:
-            two = sql[i:i + 2]
+            two = sql[i : i + 2]
             if two == "/*":
                 block_depth += 1
             elif two == "*/":
@@ -109,7 +110,7 @@ def _split_sql(sql: str) -> list[str]:
             continue
         elif dollar_tag is not None:
             buf.append(c)
-            if c == "$" and sql[i:i + len(dollar_tag)] == dollar_tag:
+            if c == "$" and sql[i : i + len(dollar_tag)] == dollar_tag:
                 buf.extend(list(dollar_tag[1:]))
                 i += len(dollar_tag)
                 dollar_tag = None
@@ -120,7 +121,7 @@ def _split_sql(sql: str) -> list[str]:
                 buf.append(sql[i + 1])
                 i += 2
                 continue
-            elif c == "'":
+            if c == "'":
                 in_string = False
             buf.append(c)
         elif in_identifier:
@@ -182,9 +183,7 @@ def _created_table_names(stmts: list[str]) -> list[str]:
             continue
         names.extend(
             m.group(1)
-            for m in re.finditer(
-                r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w."]+)', stripped, re.IGNORECASE
-            )
+            for m in re.finditer(r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w."]+)', stripped, re.IGNORECASE)
         )
     return names
 
@@ -242,8 +241,7 @@ def _target_exists(con: psycopg.Connection, target: tuple[str, ...]) -> bool:
         row = con.execute("select to_regnamespace(%s)", (target[1],)).fetchone()
     else:  # column
         row = con.execute(
-            "select 1 from pg_attribute where attrelid = to_regclass(%s) "
-            "and attname = %s and not attisdropped",
+            "select 1 from pg_attribute where attrelid = to_regclass(%s) and attname = %s and not attisdropped",
             (target[1], target[2]),
         ).fetchone()
     return bool(row and row[0])
@@ -258,7 +256,7 @@ def already_fully_applied(conninfo: str, path: Path, dialect: str | Dialect = "p
     False — this never guesses. For MSSQL the unit is a `GO`-separated batch and the
     recognized shapes are table, view, schema and ADD column."""
     if _is_mssql(dialect):
-        from . import migrate_mssql
+        from pgdevkit import migrate_mssql
 
         batches = migrate_mssql.split_batches(path.read_text(encoding="utf-8"))
         mssql_targets = [migrate_mssql.idempotent_target(b) for b in batches]
@@ -300,7 +298,7 @@ def applied_migrations(
 ) -> dict[str, tuple[datetime, str]]:
     """Filename -> (applied_at, applied_by) for every migration recorded in the tracking table."""
     if _is_mssql(dialect):
-        from . import migrate_mssql
+        from pgdevkit import migrate_mssql
 
         return migrate_mssql.applied_migrations(conninfo, tracking_table)
     table = _tracking_table_identifier(tracking_table)
@@ -338,13 +336,11 @@ def pending_migrations(
     return [p for p in files if p.name not in applied]
 
 
-def record_applied(
-    conninfo: str, tracking_table: str, filename: str, dialect: str | Dialect = "postgres"
-) -> bool:
+def record_applied(conninfo: str, tracking_table: str, filename: str, dialect: str | Dialect = "postgres") -> bool:
     """Best-effort insert into the tracking table. Returns False without raising if the
     tracking table doesn't exist yet — e.g. this migration is the one that creates it."""
     if _is_mssql(dialect):
-        from . import migrate_mssql
+        from pgdevkit import migrate_mssql
 
         return migrate_mssql.record_applied(conninfo, tracking_table, filename)
     table = _tracking_table_identifier(tracking_table)
@@ -367,7 +363,7 @@ def created_table_names(sql: str, dialect: str | Dialect = "postgres") -> list[s
     run a script directly (e.g. via `execute_sql_script`) instead of through a tracked
     migration file, and still want to know what tables -- if any -- it created."""
     if _is_mssql(dialect):
-        from . import migrate_mssql
+        from pgdevkit import migrate_mssql
 
         return migrate_mssql.created_table_names(migrate_mssql.split_batches(sql))
     return _created_table_names(_split_sql(sql))
@@ -377,7 +373,7 @@ def verify_created_tables(conninfo: str, stmts: list[str], dialect: str | Dialec
     """Table names from this migration's CREATE TABLE statements that do NOT exist in the
     database. Empty means everything landed. For MSSQL, `stmts` are `GO`-separated batches."""
     if _is_mssql(dialect):
-        from . import migrate_mssql
+        from pgdevkit import migrate_mssql
 
         return migrate_mssql.missing_tables(conninfo, migrate_mssql.created_table_names(stmts))
     tables = _created_table_names(stmts)
@@ -428,7 +424,7 @@ def execute_sql_script(conninfo: str, sql: str, dialect: str | Dialect = "postgr
     every time, like an idempotent `GRANT ... ON ALL TABLES IN SCHEMA` privilege sync.
     For MSSQL the script is split on `GO` lines instead and runs as one transaction."""
     if _is_mssql(dialect):
-        from . import migrate_mssql
+        from pgdevkit import migrate_mssql
 
         migrate_mssql.execute_batches(conninfo, migrate_mssql.split_batches(sql))
         return
@@ -454,7 +450,7 @@ def apply_migration(
     filename = path.name
     mssql = _is_mssql(dialect)
     if mssql:
-        from . import migrate_mssql
+        from pgdevkit import migrate_mssql
 
         stmts = migrate_mssql.split_batches(sql)
     else:
@@ -476,8 +472,7 @@ def apply_migration(
     missing = verify_created_tables(conninfo, stmts, dialect)
     if missing:
         raise MigrationVerificationError(
-            f"{filename}: table(s) not found after apply — migration may have rolled back: "
-            + ", ".join(missing)
+            f"{filename}: table(s) not found after apply — migration may have rolled back: " + ", ".join(missing)
         )
     created = migrate_mssql.created_table_names(stmts) if mssql else _created_table_names(stmts)
     return ApplyResult(filename, executed=True, verified_tables=created)

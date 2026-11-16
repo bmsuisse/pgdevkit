@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from ..dialect import Dialect, resolve_dialect
-from .base import Backend
-from .mssql import MssqlBackend
-from .postgres import PostgresBackend
+from pgdevkit.backends.base import Backend
+from pgdevkit.backends.mssql import MssqlBackend
+from pgdevkit.backends.postgres import PostgresBackend
+from pgdevkit.dialect import Dialect, resolve_dialect
 
 _REGISTRY: dict[str, Backend] = {
     "postgres": PostgresBackend(),

@@ -26,7 +26,7 @@ def _exec(dsn: str, sql: str) -> None:
 
 
 @requires_mssql
-def test_update_stats_mssql_live(tmp_path: Path):
+def test_update_stats_mssql_live(tmp_path: Path) -> None:
     project = _make_project(tmp_path, "mssqlstats", "main", engine="mssql")
     out = tmp_path / "out"
     out.mkdir()

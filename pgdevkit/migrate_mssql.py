@@ -23,7 +23,7 @@ from typing import Any
 
 import sqlglot
 
-from .testdb.query import split_tsql_batches
+from pgdevkit.testdb.query import split_tsql_batches
 
 _IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_]*"
 _NAME = r"(?:\[[^\]]+\]|[\w\"]+)(?:\.(?:\[[^\]]+\]|[\w\"]+))*"
@@ -46,7 +46,7 @@ def tracking_table_parts(tracking_table: str) -> tuple[str, str]:
 
 
 def _tracking_ident(tracking_table: str) -> str:
-    from .db.mssql_sql import qualified
+    from pgdevkit.db.mssql_sql import qualified
 
     return qualified(*tracking_table_parts(tracking_table))
 
@@ -129,7 +129,7 @@ def tracking_table_exists(con: Any, tracking_table: str) -> bool:
 
 
 def applied_migrations(conninfo: str, tracking_table: str) -> dict[str, tuple[datetime, str]]:
-    from .migrate import TrackingTableMissing
+    from pgdevkit.migrate import TrackingTableMissing
 
     con = connect(conninfo)
     try:
@@ -138,8 +138,7 @@ def applied_migrations(conninfo: str, tracking_table: str) -> dict[str, tuple[da
         cur = con.cursor()
         try:
             cur.execute(
-                f"select filename, applied_at, applied_by from {_tracking_ident(tracking_table)} "
-                "order by applied_at"
+                f"select filename, applied_at, applied_by from {_tracking_ident(tracking_table)} order by applied_at"
             )
             return {r[0]: (r[1], r[2]) for r in cur.fetchall()}
         finally:
@@ -159,8 +158,7 @@ def record_applied(conninfo: str, tracking_table: str, filename: str) -> bool:
         cur = con.cursor()
         try:
             cur.execute(
-                f"if not exists (select 1 from {ident} where filename = ?) "
-                f"insert into {ident} (filename) values (?)",
+                f"if not exists (select 1 from {ident} where filename = ?) insert into {ident} (filename) values (?)",
                 (filename, filename),
             )
         finally:
@@ -205,7 +203,7 @@ def created_table_names(batches: list[str]) -> list[str]:
 def _single_statement(batch: str) -> bool:
     try:
         return len([s for s in sqlglot.parse(batch, dialect="tsql") if s]) == 1
-    except Exception:  # noqa: BLE001
+    except Exception:
         return False
 
 

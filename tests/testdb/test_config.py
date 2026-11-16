@@ -7,7 +7,7 @@ import pytest
 from pgdevkit.testdb.config import load_config
 
 
-def test_defaults_when_no_pyproject(tmp_path: Path):
+def test_defaults_when_no_pyproject(tmp_path: Path) -> None:
     project = tmp_path / "myproj"
     project.mkdir()
     config = load_config(project)
@@ -18,7 +18,7 @@ def test_defaults_when_no_pyproject(tmp_path: Path):
     assert config.root == project
 
 
-def test_reads_tool_pgdevkit_section(tmp_path: Path):
+def test_reads_tool_pgdevkit_section(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
         """
 [tool.pgdevkit]
@@ -36,18 +36,14 @@ extensions = ["vector"]
     assert config.extensions == ("vector",)
 
 
-def test_env_prefix_defaults_from_name(tmp_path: Path):
-    (tmp_path / "pyproject.toml").write_text(
-        '[tool.pgdevkit]\nname = "ccmt"\n', encoding="utf-8"
-    )
+def test_env_prefix_defaults_from_name(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[tool.pgdevkit]\nname = "ccmt"\n', encoding="utf-8")
     config = load_config(tmp_path)
     assert config.env_prefix == "CCMT_"
 
 
-def test_searches_upward_for_pyproject(tmp_path: Path):
-    (tmp_path / "pyproject.toml").write_text(
-        '[tool.pgdevkit]\nname = "root_project"\n', encoding="utf-8"
-    )
+def test_searches_upward_for_pyproject(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[tool.pgdevkit]\nname = "root_project"\n', encoding="utf-8")
     subdir = tmp_path / "src" / "nested"
     subdir.mkdir(parents=True)
     config = load_config(subdir)
@@ -55,7 +51,7 @@ def test_searches_upward_for_pyproject(tmp_path: Path):
     assert config.root == tmp_path
 
 
-def test_explicit_empty_name_falls_back_to_root_name(tmp_path: Path):
+def test_explicit_empty_name_falls_back_to_root_name(tmp_path: Path) -> None:
     project = tmp_path / "myproj"
     project.mkdir()
     (project / "pyproject.toml").write_text('[tool.pgdevkit]\nname = ""\n', encoding="utf-8")
@@ -63,22 +59,20 @@ def test_explicit_empty_name_falls_back_to_root_name(tmp_path: Path):
     assert config.name == "myproj"
 
 
-def test_extensions_must_be_a_list(tmp_path: Path):
-    (tmp_path / "pyproject.toml").write_text(
-        '[tool.pgdevkit]\nname = "x"\nextensions = "vector"\n', encoding="utf-8"
-    )
+def test_extensions_must_be_a_list(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[tool.pgdevkit]\nname = "x"\nextensions = "vector"\n', encoding="utf-8")
     with pytest.raises(TypeError, match="extensions"):
         load_config(tmp_path)
 
 
-def test_extra_db_suffixes_defaults_empty(tmp_path: Path):
+def test_extra_db_suffixes_defaults_empty(tmp_path: Path) -> None:
     project = tmp_path / "myproj"
     project.mkdir()
     config = load_config(project)
     assert config.extra_db_suffixes == ()
 
 
-def test_reads_extra_db_suffixes(tmp_path: Path):
+def test_reads_extra_db_suffixes(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
         '[tool.pgdevkit]\nname = "ccmt"\nextra_db_suffixes = ["_onetrade"]\n', encoding="utf-8"
     )
@@ -86,7 +80,7 @@ def test_reads_extra_db_suffixes(tmp_path: Path):
     assert config.extra_db_suffixes == ("_onetrade",)
 
 
-def test_extra_db_suffixes_must_be_a_list(tmp_path: Path):
+def test_extra_db_suffixes_must_be_a_list(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
         '[tool.pgdevkit]\nname = "x"\nextra_db_suffixes = "_onetrade"\n', encoding="utf-8"
     )

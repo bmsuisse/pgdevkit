@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Never
 
+import pytest
 from typer.testing import CliRunner
 
 import pgdevkit.connection as connection
@@ -10,7 +12,7 @@ from pgdevkit.cli import app
 runner = CliRunner()
 
 
-def test_compare_lakebase_host_without_databricks_flags_fails_fast(tmp_path: Path):
+def test_compare_lakebase_host_without_databricks_flags_fails_fast(tmp_path: Path) -> None:
     (tmp_path / "empty").mkdir()
     result = runner.invoke(
         app,
@@ -27,19 +29,21 @@ def test_compare_lakebase_host_without_databricks_flags_fails_fast(tmp_path: Pat
     assert "--databricks-workspace-host" in result.output
 
 
-def test_compare_lakebase_host_with_flags_reaches_introspection(tmp_path: Path, monkeypatch):
+def test_compare_lakebase_host_with_flags_reaches_introspection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     (tmp_path / "empty").mkdir()
     monkeypatch.setattr(connection, "get_azure_postgres_password", lambda: "unused")
 
     calls = []
 
-    def fake_get_lakebase_password(workspace_host, instance_name):
+    def fake_get_lakebase_password(workspace_host: str, instance_name: str) -> str:
         calls.append((workspace_host, instance_name))
         return "LAKEBASE_TOKEN"
 
     monkeypatch.setattr("pgdevkit.lakebase.get_lakebase_password", fake_get_lakebase_password)
 
-    def fake_introspect(self, conninfo):
+    def fake_introspect(self: object, conninfo: str) -> Never:
         assert "LAKEBASE_TOKEN" in conninfo
         raise RuntimeError("stop after conninfo built — introspection itself isn't under test here")
 

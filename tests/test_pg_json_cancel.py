@@ -7,6 +7,7 @@ import inspect
 import time
 import uuid
 from collections.abc import AsyncIterator
+from typing import LiteralString
 
 import anyio
 import pytest
@@ -62,7 +63,7 @@ async def test_disconnect_before_the_first_byte_cancels_the_query(
         ("http.response.start", 499),
         ("http.response.body", None),
     ]
-    assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), timeout=3)
+    assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), max_wait=3)
     assert time.monotonic() - started < 5, "the 30s query must not run to completion"
     async with pool.connection() as conn:  # the pool replaced the connection we closed
         assert await (await conn.execute("select 1")).fetchone() == (1,)
@@ -79,7 +80,7 @@ async def test_disconnect_while_streaming_cancels_the_query(
     await asyncio.wait_for(task, timeout=5)
 
     assert client.sent[-1]["more_body"] is True, "no terminating chunk: the response was cut short"
-    assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), timeout=3)
+    assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), max_wait=3)
 
 
 async def test_cancelling_the_request_task_cancels_the_query(
@@ -93,7 +94,7 @@ async def test_cancelling_the_request_task_cancels_the_query(
     with pytest.raises(asyncio.CancelledError):  # an outer cancellation is never swallowed
         await task
 
-    assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), timeout=3)
+    assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), max_wait=3)
 
 
 async def test_send_failing_mid_stream_cancels_the_query(
@@ -104,7 +105,7 @@ async def test_send_failing_mid_stream_cancels_the_query(
     with pytest.raises(ClientDisconnect):
         await client.call(PostgresJsonResponse(SLOW_STREAM, pool=pool, batch_size=5))
 
-    assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), timeout=3)
+    assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), max_wait=3)
 
 
 async def test_disconnect_leaves_a_caller_owned_connection_usable_or_closed(postgres_dsn: str, app_name: str) -> None:
@@ -117,7 +118,7 @@ async def test_disconnect_leaves_a_caller_owned_connection_usable_or_closed(post
         client.disconnect.set()
         await asyncio.wait_for(task, timeout=5)
 
-        assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), timeout=3)
+        assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), max_wait=3)
         assert conn.closed or conn.info.transaction_status == TransactionStatus.IDLE
 
 
@@ -139,7 +140,7 @@ async def test_scope_cancellation_cancels_the_query_and_closes_the_connection(
             assert await wait_until(lambda: query_running(postgres_dsn, app_name))
             tg.cancel_scope.cancel()
 
-        assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), timeout=3)
+        assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), max_wait=3)
         if source_kind == "caller-owned":
             assert own_conn.closed
 
@@ -155,12 +156,12 @@ async def test_a_second_cancellation_during_cleanup_does_not_skip_it(postgres_ds
             await client.call(PostgresJsonResponse(SLOW_STREAM, con=conn, batch_size=5))
 
         assert conn.closed or conn.info.transaction_status == TransactionStatus.IDLE
-        assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), timeout=3)
+        assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), max_wait=3)
 
 
 @pytest.mark.parametrize("query", ["select 1 / 0 as boom", "select 1 as one"])
 async def test_a_receive_that_swallows_the_watchers_cancellation_does_not_break_it(
-    pool: AsyncConnectionPool, query: str
+    pool: AsyncConnectionPool, query: LiteralString
 ) -> None:
     """Issue #59 (Granian, BaseHTTPMiddleware in front): that middleware's receive() waits in an anyio task group,
     which it cancels once the response has been sent. The watcher's own cancellation arrives with it and is swallowed

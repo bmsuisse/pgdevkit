@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
-from ..dialect import MSSQL, Dialect
-from ..models import DatabaseSchema
+from pgdevkit.dialect import MSSQL, Dialect
+from pgdevkit.models import DatabaseSchema
 
 
 class MssqlBackend:
@@ -13,7 +14,7 @@ class MssqlBackend:
         # Imported lazily so `import pgdevkit.backends` (and thus
         # `pgdevkit.cli`) doesn't require mssql-python/the mssql extra to
         # be installed unless a caller actually asks for the mssql backend.
-        from ..mssql_introspect import introspect_mssql_db
+        from pgdevkit.mssql_introspect import introspect_mssql_db
 
         return introspect_mssql_db(conninfo)
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pgdevkit.mssql_introspect import _extract_view_query
 
 
-def test_extract_view_query_strips_create_or_alter_view_prefix():
+def test_extract_view_query_strips_create_or_alter_view_prefix() -> None:
     # Regression test for a real bug caught in CI: sys.sql_modules.definition
     # is the verbatim CREATE VIEW statement text, unlike Postgres's
     # pg_get_viewdef() which returns only the query body -- storing it
@@ -13,6 +13,6 @@ def test_extract_view_query_strips_create_or_alter_view_prefix():
     assert _extract_view_query(definition) == "SELECT id, name FROM app.widget"
 
 
-def test_extract_view_query_falls_back_to_raw_text_on_unparseable_input():
+def test_extract_view_query_falls_back_to_raw_text_on_unparseable_input() -> None:
     garbage = "not a valid create view statement !!!"
     assert _extract_view_query(garbage) == garbage

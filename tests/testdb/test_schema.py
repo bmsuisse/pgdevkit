@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import psycopg
 import pytest
 from psycopg.conninfo import make_conninfo
+from psycopg.sql import SQL, Identifier
 
 from pgdevkit.testdb import constants
 from pgdevkit.testdb.container import ensure_container
@@ -24,18 +26,18 @@ def _db_dsn() -> str:
 
 
 @pytest.fixture
-def schema_test_db():
+def schema_test_db() -> Iterator[None]:
     ensure_container()
     with psycopg.connect(_admin_dsn(), autocommit=True) as con:
-        con.execute(f'DROP DATABASE IF EXISTS "{TEST_DB}"')
-        con.execute(f'CREATE DATABASE "{TEST_DB}"')
+        con.execute(SQL("DROP DATABASE IF EXISTS {}").format(Identifier(TEST_DB)))
+        con.execute(SQL("CREATE DATABASE {}").format(Identifier(TEST_DB)))
     yield
     with psycopg.connect(_admin_dsn(), autocommit=True) as con:
-        con.execute(f'DROP DATABASE IF EXISTS "{TEST_DB}"')
+        con.execute(SQL("DROP DATABASE IF EXISTS {}").format(Identifier(TEST_DB)))
 
 
 @requires_podman
-async def test_apply_schema_creates_tables_and_seeds_data(schema_test_db):
+async def test_apply_schema_creates_tables_and_seeds_data(schema_test_db: None) -> None:
     async with await psycopg.AsyncConnection.connect(_db_dsn(), autocommit=True) as con:
         await apply_schema(con, FIXTURES)
         async with con.cursor() as cur:
@@ -45,24 +47,26 @@ async def test_apply_schema_creates_tables_and_seeds_data(schema_test_db):
 
 
 @requires_podman
-async def test_apply_schema_is_idempotent(schema_test_db):
+async def test_apply_schema_is_idempotent(schema_test_db: None) -> None:
     async with await psycopg.AsyncConnection.connect(_db_dsn(), autocommit=True) as con:
         await apply_schema(con, FIXTURES)
         await apply_schema(con, FIXTURES)  # must not raise
         async with con.cursor() as cur:
             await cur.execute("SELECT count(*) FROM app.widget")
-            (count,) = await cur.fetchone()
+            fetched = await cur.fetchone()
+            assert fetched is not None
+            (count,) = fetched
     assert count == 1
 
 
 @requires_podman
-async def test_apply_schema_on_missing_directory_is_a_noop(schema_test_db):
+async def test_apply_schema_on_missing_directory_is_a_noop(schema_test_db: None) -> None:
     async with await psycopg.AsyncConnection.connect(_db_dsn(), autocommit=True) as con:
         await apply_schema(con, FIXTURES.parent / "does_not_exist")  # must not raise
 
 
 @requires_podman
-async def test_apply_schema_resolves_multi_level_fk_dependency(schema_test_db):
+async def test_apply_schema_resolves_multi_level_fk_dependency(schema_test_db: None) -> None:
     # widget_part_detail REFERENCES widget_part REFERENCES widget, and their
     # filenames already sort alphabetically in that same dependency order.
     # This is the layout that exposed a real bug: _iter_sql_files derived the
@@ -75,17 +79,21 @@ async def test_apply_schema_resolves_multi_level_fk_dependency(schema_test_db):
         await apply_schema(con, FIXTURES)  # must not raise
         async with con.cursor() as cur:
             await cur.execute("INSERT INTO app.widget_part (widget_id) VALUES (1) RETURNING id")
-            (part_id,) = await cur.fetchone()
+            fetched = await cur.fetchone()
+            assert fetched is not None
+            (part_id,) = fetched
             await cur.execute(
                 "INSERT INTO app.widget_part_detail (widget_part_id) VALUES (%s) RETURNING id",
                 (part_id,),
             )
-            (detail_id,) = await cur.fetchone()
+            fetched = await cur.fetchone()
+            assert fetched is not None
+            (detail_id,) = fetched
     assert detail_id == 1
 
 
 @requires_podman
-async def test_apply_schema_resolves_view_to_view_dependency(schema_test_db):
+async def test_apply_schema_resolves_view_to_view_dependency(schema_test_db: None) -> None:
     # a_wrapper_view selects from b_base_view, but the filenames sort in the
     # opposite order — this only passes if cross-view dependency tracking
     # (not just table FK tracking) delays a_wrapper_view until its dependency
@@ -99,7 +107,7 @@ async def test_apply_schema_resolves_view_to_view_dependency(schema_test_db):
 
 
 @requires_podman
-async def test_apply_schema_applies_permissions_after_a_delayed_table(schema_test_db):
+async def test_apply_schema_applies_permissions_after_a_delayed_table(schema_test_db: None) -> None:
     # permissions/grants.sql (a blanket "grant select on all tables in schema app")
     # has no SQL dependencies of its own -- app.event, whose own filename
     # ("event.sql") sorts alphabetically before its FK target's filename
@@ -115,18 +123,22 @@ async def test_apply_schema_applies_permissions_after_a_delayed_table(schema_tes
     # permissions/grants.sql creates this login role itself -- a fixed,
     # non-secret password, matching pgdevkit's own testdb container convention.
     reader_dsn = make_conninfo(
-        host=constants.HOST, port=str(constants.PORT), dbname=TEST_DB,
-        user="pgdevkit_test_reader", password="testpwd",
+        host=constants.HOST,
+        port=str(constants.PORT),
+        dbname=TEST_DB,
+        user="pgdevkit_test_reader",
+        password="testpwd",
     )
-    async with await psycopg.AsyncConnection.connect(reader_dsn, autocommit=True) as con:
-        async with con.cursor() as cur:
-            await cur.execute("SELECT count(*) FROM app.event")  # must not raise InsufficientPrivilege
-            (count,) = await cur.fetchone()
+    async with await psycopg.AsyncConnection.connect(reader_dsn, autocommit=True) as con, con.cursor() as cur:
+        await cur.execute("SELECT count(*) FROM app.event")  # must not raise InsufficientPrivilege
+        fetched = await cur.fetchone()
+        assert fetched is not None
+        (count,) = fetched
     assert count == 0
 
 
 @requires_podman
-async def test_apply_schema_seeds_composite_enum_and_jsonb_columns(schema_test_db):
+async def test_apply_schema_seeds_composite_enum_and_jsonb_columns(schema_test_db: None) -> None:
     # gadget.mood is an enum, gadget.size a composite type, gadget.tags
     # jsonb — plain json.dumps() would corrupt/error on the first two.
     # gadget.test_data.json also carries a "stale_removed_column" key that
@@ -136,7 +148,9 @@ async def test_apply_schema_seeds_composite_enum_and_jsonb_columns(schema_test_d
         await apply_schema(con, FIXTURES)
         async with con.cursor() as cur:
             await cur.execute("SELECT mood, size, tags FROM app.gadget WHERE id = 1")
-            mood, size, tags = await cur.fetchone()
+            fetched = await cur.fetchone()
+            assert fetched is not None
+            mood, size, tags = fetched
     # read back with a plain SELECT: seeding must not leave psycopg type registrations on the connection (#54)
     assert mood == "happy"
     assert size == "(10,20)"
@@ -144,29 +158,33 @@ async def test_apply_schema_seeds_composite_enum_and_jsonb_columns(schema_test_d
 
 
 @requires_podman
-async def test_apply_schema_skips_env_tagged_file_for_a_different_env(schema_test_db):
+async def test_apply_schema_skips_env_tagged_file_for_a_different_env(schema_test_db: None) -> None:
     # prod_only.prod.sql is tagged for "prod" -- with the default env
     # ("local_test"), it must not be applied.
     async with await psycopg.AsyncConnection.connect(_db_dsn(), autocommit=True) as con:
         await apply_schema(con, FIXTURES)
         async with con.cursor() as cur:
             await cur.execute("SELECT to_regclass('app.prod_only')")
-            (regclass,) = await cur.fetchone()
+            fetched = await cur.fetchone()
+            assert fetched is not None
+            (regclass,) = fetched
     assert regclass is None
 
 
 @requires_podman
-async def test_apply_schema_applies_env_tagged_file_for_the_matching_env(schema_test_db):
+async def test_apply_schema_applies_env_tagged_file_for_the_matching_env(schema_test_db: None) -> None:
     async with await psycopg.AsyncConnection.connect(_db_dsn(), autocommit=True) as con:
         await apply_schema(con, FIXTURES, env="prod")
         async with con.cursor() as cur:
             await cur.execute("SELECT to_regclass('app.prod_only')")
-            (regclass,) = await cur.fetchone()
+            fetched = await cur.fetchone()
+            assert fetched is not None
+            (regclass,) = fetched
     assert regclass is not None
 
 
 @requires_podman
-async def test_apply_schema_init_file_applies_regardless_of_env(schema_test_db):
+async def test_apply_schema_init_file_applies_regardless_of_env(schema_test_db: None) -> None:
     # widget.init.sql adds init_flag to app.widget -- "init" is a reserved
     # suffix, never an environment tag, so this must apply under any env.
     async with await psycopg.AsyncConnection.connect(_db_dsn(), autocommit=True) as con:
@@ -181,7 +199,7 @@ async def test_apply_schema_init_file_applies_regardless_of_env(schema_test_db):
 
 
 @requires_podman
-async def test_apply_schema_never_applies_migrations_dir(schema_test_db):
+async def test_apply_schema_never_applies_migrations_dir(schema_test_db: None) -> None:
     # migrations/ is for one-time manual application against real databases,
     # not for building a fresh schema — the base table file is the only
     # source of truth apply_schema uses. app/migrations/001_add_gadget_note.sql

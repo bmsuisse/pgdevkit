@@ -20,3 +20,9 @@ docs/superpowers/
 
 # Git worktrees
 /.worktrees/
+
+# Claude Code worktrees
+/.claude/worktrees/
+
+# CodeGraph index
+/.codegraph/

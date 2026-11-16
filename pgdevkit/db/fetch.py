@@ -5,7 +5,7 @@ import logging
 import math
 import re
 import uuid
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, suppress
 from string.templatelib import Template
 from typing import TYPE_CHECKING, Any, Literal, LiteralString, Protocol, cast, overload
@@ -44,7 +44,14 @@ class ConnectionSource(Protocol):
 # zero-argument callable returning an async connection context manager (e.g. a module-level pool's bound method).
 type PoolLike = ConnectionSource | Callable[[], AbstractAsyncContextManager[AsyncConnection]]
 
-_default_source: PoolLike | None = None
+
+class _Defaults:
+    """Process-wide defaults, set through `set_default_pool()`."""
+
+    source: PoolLike | None = None
+
+
+_defaults = _Defaults()
 
 
 def set_default_pool(pool: PoolLike | None) -> None:
@@ -54,8 +61,7 @@ def set_default_pool(pool: PoolLike | None) -> None:
     a pool that is resolved lazily or has another method name: `set_default_pool(lambda: get_pool().acquire())`
     (only here: the `pool=` keyword of the helpers takes a `ConnectionSource`). This is process-wide
     state meant for single-database apps: with several databases/tenants pass `pool=` explicitly."""
-    global _default_source
-    _default_source = pool
+    _defaults.source = pool
 
 
 def _connection_cm(source: PoolLike) -> AbstractAsyncContextManager[AsyncConnection]:
@@ -65,7 +71,7 @@ def _connection_cm(source: PoolLike) -> AbstractAsyncContextManager[AsyncConnect
 
 
 @asynccontextmanager
-async def _acquire(con: AsyncConnection | None, pool: ConnectionSource | None) -> AsyncIterator[AsyncConnection]:
+async def _acquire(con: AsyncConnection | None, pool: ConnectionSource | None) -> AsyncGenerator[AsyncConnection]:
     """Yield `con` untouched (the caller owns it: no commit/close/return-to-pool here), or a
     connection borrowed from `pool` / the default pool for the duration of the block."""
     if con is not None:
@@ -73,7 +79,7 @@ async def _acquire(con: AsyncConnection | None, pool: ConnectionSource | None) -
             raise TypeError("Pass either `con` or `pool`, not both.")
         yield con
         return
-    source: PoolLike | None = pool if pool is not None else _default_source
+    source: PoolLike | None = pool if pool is not None else _defaults.source
     if source is None:
         raise RuntimeError("No connection: pass `con=`/`pool=`, or register a pool with `set_default_pool()`.")
     async with _connection_cm(source) as borrowed:
@@ -151,7 +157,7 @@ SELECT current_setting('statement_timeout'), set_config('statement_timeout', (
 
 
 @asynccontextmanager
-async def _statement_timeout(c: AsyncConnection, seconds: float | None) -> AsyncIterator[None]:
+async def _statement_timeout(c: AsyncConnection, seconds: float | None) -> AsyncGenerator[None]:
     """Run the block under Postgres' `statement_timeout`, set with `set_config(..., is_local => true)`: it is
     scoped to the current transaction (so it can't leak into a pool, and it is safe behind PgBouncer's
     transaction pooling) and put back afterwards for a borrowed connection that stays in its transaction.

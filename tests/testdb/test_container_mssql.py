@@ -1,39 +1,44 @@
 from __future__ import annotations
 
+from typing import Any, cast
+
+import docker
+import pytest
+
 from pgdevkit.testdb.mssql import constants
 from pgdevkit.testdb.mssql.container import _create_container
 
 
 class _FakeContainers:
-    def __init__(self):
-        self.run_kwargs: dict | None = None
+    def __init__(self) -> None:
+        self.run_kwargs: dict[str, Any] = {}
 
-    def run(self, image, **kwargs):
+    def run(self, image: str, **kwargs: Any) -> None:
         self.run_kwargs = kwargs
 
 
 class _FakeClient:
-    def __init__(self):
+    def __init__(self) -> None:
         self.containers = _FakeContainers()
 
 
-def test_create_container_omits_resource_kwargs_by_default():
+def test_create_container_omits_resource_kwargs_by_default() -> None:
     client = _FakeClient()
 
-    _create_container(client)
+    _create_container(cast("docker.DockerClient", client))
 
     for key in ("tmpfs", "shm_size", "mem_limit", "nano_cpus"):
         assert key not in client.containers.run_kwargs
 
 
-def test_create_container_passes_through_resource_overrides(monkeypatch):
+def test_create_container_passes_through_resource_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(constants, "TMPFS", "/var/opt/mssql:size=512m")
     monkeypatch.setattr(constants, "SHM_SIZE", "256m")
     monkeypatch.setattr(constants, "MEM_LIMIT", "4g")
     monkeypatch.setattr(constants, "CPUS", "2")
     client = _FakeClient()
 
-    _create_container(client)
+    _create_container(cast("docker.DockerClient", client))
 
     assert client.containers.run_kwargs["tmpfs"] == {"/var/opt/mssql": "size=512m"}
     assert client.containers.run_kwargs["shm_size"] == "256m"
@@ -41,19 +46,19 @@ def test_create_container_passes_through_resource_overrides(monkeypatch):
     assert client.containers.run_kwargs["nano_cpus"] == 2_000_000_000
 
 
-def test_create_container_omits_user_by_default(monkeypatch):
+def test_create_container_omits_user_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(constants, "CONTAINER_USER", "")
     client = _FakeClient()
 
-    _create_container(client)
+    _create_container(cast("docker.DockerClient", client))
 
     assert "user" not in client.containers.run_kwargs
 
 
-def test_create_container_passes_container_user(monkeypatch):
+def test_create_container_passes_container_user(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(constants, "CONTAINER_USER", "0")
     client = _FakeClient()
 
-    _create_container(client)
+    _create_container(cast("docker.DockerClient", client))
 
     assert client.containers.run_kwargs["user"] == "0"

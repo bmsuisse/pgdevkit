@@ -44,7 +44,8 @@ name = "pgdevkit"
 
 [dependency-groups]
 dev = [
-    "ty>=0.0.59",
+    "ruff>=0.17.4",
+    "ty>=0.0.100",
 ]
 test = [
     "fastapi>=0.118.0",
@@ -57,7 +58,64 @@ test = [
     "pytest-env>=1.1.0",
 ]
 
+[tool.uv]
+# Dependency cooldown: releases younger than 5 days are not resolved
+exclude-newer = "5 days"
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 asyncio_mode = "auto"
 markers = ["mssql: requires a live MSSQL testdb container and the mssql extra (msodbcsql driver)"]
+
+[tool.ruff]
+line-length = 120
+indent-width = 4
+target-version = "py314"
+extend-exclude = ["*.md", ".worktrees", ".claude"]
+
+[tool.ruff.format]
+indent-style = "space"
+quote-style = "double"
+line-ending = "auto"
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "I",   # pycodestyle, pyflakes, isort
+    "UP",            # pyupgrade - X | None, modern syntax
+    "B",             # bugbear - mutable defaults etc.
+    "ANN",           # full type annotations
+    "SIM", "C4",     # simplifiable code, needless comprehensions/casts
+    "PERF", "FURB",  # needless loops, manual list/dict building
+    "ASYNC",         # blocking calls inside async def
+    "RUF",
+    "N",             # PEP 8 naming
+    "PTH",           # pathlib instead of os.path
+    "TID",           # absolute imports only, banned APIs
+    "RET", "PIE",    # consistent returns, misc simplifications
+    "A",             # no shadowing builtins
+    "T20",           # no print()
+    "LOG",           # logging API misuse
+    "DTZ",           # timezone-aware datetimes
+    "FLY",           # f-string instead of str.join on literals
+    "PLE", "PLW",    # pylint errors + warnings
+]
+ignore = [
+    "ANN401",  # `Any` is a warning via the ruff-warn-any prek hook, not an error
+    # DiffKind(str, Enum) is public API: StrEnum would change str()/format() of its members (see https://github.com/bmsuisse/pgdevkit/issues/71)
+    "UP042",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# `all=` is a published keyword of clean_testdb() (mirrored by the mssql backend and the `testdb clean` command
+# function); renaming it would break callers
+"pgdevkit/cli.py" = ["A002"]
+"pgdevkit/testdb/api.py" = ["A002"]
+"pgdevkit/testdb/mssql/api.py" = ["A002"]
+# TrackingTableMissing is a published exception class; renaming it would break `except` clauses of callers
+"pgdevkit/migrate.py" = ["N818"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ty.src]
+exclude = [".worktrees", ".claude"]

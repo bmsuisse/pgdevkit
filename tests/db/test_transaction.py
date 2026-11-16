@@ -24,13 +24,12 @@ async def pool(postgres_dsn: str) -> AsyncIterator[AsyncConnectionPool]:
 
 
 async def test_reads_work_and_writes_are_refused(pool: AsyncConnectionPool) -> None:
-    async with pool.connection() as con:
-        async with readonly_transaction(con) as ro:
-            assert ro is con
-            assert await fetch_scalar("SHOW transaction_read_only", con=con) == "on"
-            assert await fetch_all("SELECT 1 AS one", con=con) == [{"one": 1}]
-            with pytest.raises(ReadOnlySqlTransaction):
-                await con.execute(WRITE)
+    async with pool.connection() as con, readonly_transaction(con) as ro:
+        assert ro is con
+        assert await fetch_scalar("SHOW transaction_read_only", con=con) == "on"
+        assert await fetch_all("SELECT 1 AS one", con=con) == [{"one": 1}]
+        with pytest.raises(ReadOnlySqlTransaction):
+            await con.execute(WRITE)
 
 
 async def test_a_pooled_connection_is_not_left_read_only(pool: AsyncConnectionPool) -> None:

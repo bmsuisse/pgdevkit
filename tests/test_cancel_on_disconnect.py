@@ -13,6 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from psycopg_pool import AsyncConnectionPool
 from pydantic import BaseModel
+from starlette.types import Message, Receive
 
 from pgdevkit.db import fetch_all
 from pgdevkit.fastapi import CancelOnDisconnectRoute, cancel_on_disconnect
@@ -34,7 +35,7 @@ class HttpClient:
         self.chunks = [body] if isinstance(body, bytes) else list(body)
         self.chunks_read = 0
         self.disconnect = asyncio.Event()
-        self.sent: list[dict] = []
+        self.sent: list[Message] = []
         self.gone_at_start = False  # the client disconnected before the body arrived
         self.gone_after_body = False  # ... right after it
 
@@ -49,7 +50,7 @@ class HttpClient:
             await self.disconnect.wait()
         return {"type": "http.disconnect"}
 
-    async def send(self, message: dict) -> None:
+    async def send(self, message: Message) -> None:
         self.sent.append(message)
 
     async def call(self, app: FastAPI) -> None:
@@ -207,7 +208,7 @@ async def test_disconnect_cancels_the_handler_and_the_query(
     await asyncio.wait_for(task, timeout=5)
 
     assert events == ["cancelled"]
-    assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), timeout=3)
+    assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), max_wait=3)
     assert client.status == 499
 
 
@@ -254,7 +255,7 @@ async def test_cancelling_the_request_cancels_the_handler_and_the_query(
         await task
 
     assert events == ["cancelled"]
-    assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), timeout=3)
+    assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), max_wait=3)
 
 
 async def test_no_task_is_left_behind(app: FastAPI) -> None:
@@ -306,7 +307,7 @@ async def test_a_cancellation_during_the_handlers_cleanup_is_not_swallowed(app: 
     task = asyncio.create_task(client.call(app))
     await asyncio.sleep(0.2)
     client.disconnect.set()
-    assert await wait_until(lambda: events == ["cleaning up"], timeout=3)
+    assert await wait_until(lambda: events == ["cleaning up"], max_wait=3)
 
     task.cancel()  # e.g. server shutdown or a timeout, while the handler is still cleaning up
     with pytest.raises(asyncio.CancelledError):
@@ -335,8 +336,8 @@ async def test_a_watcher_whose_cancellation_is_swallowed_leaves_the_finished_sco
     cancellation. If it ever does, the watcher wakes up after the handler's cancel scope has been exited."""
 
     class Receiver(cancel_on_disconnect._Receiver):
-        def __init__(self, *args: object) -> None:
-            super().__init__(*args)
+        def __init__(self, receive: Receive) -> None:
+            super().__init__(receive)
             self.disconnected = _SwallowingEvent()
 
     monkeypatch.setattr(cancel_on_disconnect, "_Receiver", Receiver)

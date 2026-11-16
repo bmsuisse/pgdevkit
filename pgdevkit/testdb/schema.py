@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 import re
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
 
@@ -13,12 +15,12 @@ import sqlglot.expressions as exp
 from psycopg.rows import dict_row
 from psycopg.sql import SQL, Identifier, Placeholder
 
-from ..areas import area_allowed, parse_areas
-from ..db.complex_types import ComplexHelper
-from ..dialect import Dialect, POSTGRES, SYSTEM_SCHEMAS
-from ..envtag import env_allowed, strip_env_suffix
-from ..parser import IGNORED_DIR_NAMES
-from ..schemas import schema_allowed, sql_schemas
+from pgdevkit.areas import area_allowed, parse_areas
+from pgdevkit.db.complex_types import ComplexHelper
+from pgdevkit.dialect import POSTGRES, SYSTEM_SCHEMAS, Dialect
+from pgdevkit.envtag import env_allowed, strip_env_suffix
+from pgdevkit.parser import IGNORED_DIR_NAMES
+from pgdevkit.schemas import schema_allowed, sql_schemas
 
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlglot").setLevel(logging.ERROR)
@@ -101,7 +103,7 @@ def _get_sql_deps(sql: str, dialect: Dialect = POSTGRES) -> set[str]:
         # schema.table`) and keep going, instead of raising and losing every
         # other statement's dependency info in the same file.
         exprs = sqlglot.parse(sql, dialect=dialect.sqlglot_name, error_level=sqlglot.ErrorLevel.IGNORE)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return _get_sql_deps_regex_fallback(sql)
     deps: set[str] = set()
     for e in exprs:
@@ -131,7 +133,7 @@ def _iter_sql_files(
     exclude_areas: frozenset[str] | None = None,
     schemas: frozenset[str] | None = None,
     exclude_schemas: frozenset[str] | None = None,
-):
+) -> Iterator[tuple[Path, str]]:
     """Yield (Path, sql_content) pairs in dependency-safe execution order.
 
     Every `permissions`-type file (see `_TYPE_ORDER`) is held back
@@ -225,9 +227,9 @@ async def _insert_test_data(
     con: psycopg.AsyncConnection,
     complex_helper: ComplexHelper,
 ) -> None:
-    if not json_file.exists():
+    if not await asyncio.to_thread(json_file.exists):
         return
-    rows: list[dict[str, Any]] = json.loads(json_file.read_text(encoding="utf-8"))
+    rows: list[dict[str, Any]] = json.loads(await asyncio.to_thread(json_file.read_text, encoding="utf-8"))
     if not rows:
         return
 
@@ -344,7 +346,7 @@ async def apply_schema(
     ):
         try:
             await _apply(file, sql)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logger.warning("Error executing %s (will retry): %s", file, e)
             failures.append((file, sql))
 
@@ -359,7 +361,7 @@ async def apply_schema(
         for file, sql in failures:
             try:
                 await _apply(file, sql)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 still_failing.append((file, sql))
                 last_error = e
         if len(still_failing) == len(failures):

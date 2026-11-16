@@ -7,9 +7,10 @@ from pathlib import Path
 import mssql_python
 import pytest
 
-from pgdevkit.db.mssql_crud import mssql_delete_dict, mssql_insert, mssql_retrieve, mssql_update_dict, mssql_upsert_dict
 from pgdevkit.db.model import TableModel
+from pgdevkit.db.mssql_crud import mssql_delete_dict, mssql_insert, mssql_retrieve, mssql_update_dict, mssql_upsert_dict
 from pgdevkit.testdb.api import clean_testdb, ensure_testdb, status
+
 # _make_project (not the project_factory fixture) -- project_factory lives
 # in tests/testdb/conftest.py, whose fixtures pytest only injects into tests
 # under tests/testdb/ itself. This file sits outside that directory, so it
@@ -33,7 +34,7 @@ class Widget(TableModel):
 
 
 @requires_mssql
-def test_crud_round_trip(tmp_path: Path):
+def test_crud_round_trip(tmp_path: Path) -> None:
     # A plain (not `async def`) test function -- `ensure_testdb`/
     # `clean_testdb` are sync wrappers that call `asyncio.run()` internally,
     # which raises "cannot be called from a running event loop" if this test
@@ -75,7 +76,7 @@ def test_crud_round_trip(tmp_path: Path):
 
 
 @requires_mssql
-def test_json_column_round_trip(tmp_path: Path):
+def test_json_column_round_trip(tmp_path: Path) -> None:
     # app.widget.tags is NVARCHAR(MAX) (see fixtures/database_mssql) --
     # this is the main way the write-side JSON fix actually gets validated
     # against a real driver+server: without db/mssql_sql.json_encode_value,
@@ -88,9 +89,7 @@ def test_json_column_round_trip(tmp_path: Path):
         conn = mssql_python.connect(status(project)["dsn"], autocommit=True)
 
         async def _run() -> None:
-            inserted = await mssql_insert(
-                conn, ("app", "widget"), {"id": 5, "name": "tagged", "tags": ["red", "blue"]}
-            )
+            inserted = await mssql_insert(conn, ("app", "widget"), {"id": 5, "name": "tagged", "tags": ["red", "blue"]})
             assert json.loads(inserted["tags"]) == ["red", "blue"]
 
             upserted = await mssql_upsert_dict(

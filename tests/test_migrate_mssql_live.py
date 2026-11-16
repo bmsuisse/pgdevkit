@@ -21,7 +21,7 @@ CREATE TABLE dbo.schema_migrations (
 
 
 @requires_mssql
-def test_migrations_apply_and_track_against_live_mssql(tmp_path: Path):
+def test_migrations_apply_and_track_against_live_mssql(tmp_path: Path) -> None:
     project = _make_project(tmp_path, "mssqlmigrate", "main", engine="mssql")
     migrations = tmp_path / "migrations"
     migrations.mkdir()

@@ -29,7 +29,7 @@ def file_env(path: Path) -> str | None:
     if path.suffix != ".sql":
         return None
     stem = path.stem
-    base, dot, suffix = stem.rpartition(".")
+    _base, dot, suffix = stem.rpartition(".")
     if not dot or suffix in _RESERVED_SQL_SUFFIXES:
         return None
     return suffix

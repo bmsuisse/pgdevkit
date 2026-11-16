@@ -1,4 +1,4 @@
-from .api import (
+from pgdevkit.testdb.api import (
     clean_testdb,
     dsn_for,
     ensure_testdb,

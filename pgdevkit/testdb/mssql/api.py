@@ -3,19 +3,20 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import mssql_python
 
-from ...db.mssql_sql import ident, json_encode_value
-from ...dialect import MSSQL
-from ...envtag import strip_env_suffix
-from .. import query
-from ..config import ProjectConfig
-from ..schema import _iter_sql_files, _strip_layer_prefix
-from . import constants
-from .container import ensure_mssql_container
+from pgdevkit.db.mssql_sql import ident, json_encode_value
+from pgdevkit.dialect import MSSQL
+from pgdevkit.envtag import strip_env_suffix
+from pgdevkit.testdb import query
+from pgdevkit.testdb.config import ProjectConfig
+from pgdevkit.testdb.mssql import constants
+from pgdevkit.testdb.mssql.container import ensure_mssql_container
+from pgdevkit.testdb.schema import _iter_sql_files, _strip_layer_prefix
 
 
 def _admin_dsn() -> str:
@@ -74,9 +75,9 @@ async def _drop_database(db_name: str) -> None:
 
 
 async def _insert_test_data(json_file: Path, table: str, force_reset: bool, conn: Any) -> None:
-    if not json_file.exists():
+    if not await asyncio.to_thread(json_file.exists):
         return
-    rows: list[dict[str, Any]] = json.loads(json_file.read_text(encoding="utf-8"))
+    rows: list[dict[str, Any]] = json.loads(await asyncio.to_thread(json_file.read_text, encoding="utf-8"))
     if not rows:
         return
     schema, table_name = table.split(".")
@@ -126,8 +127,13 @@ async def _apply(
         if not database_dir.is_dir():
             return
         for file, sql in _iter_sql_files(
-            database_dir, MSSQL,
-            env=env, areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
+            database_dir,
+            MSSQL,
+            env=env,
+            areas=areas,
+            exclude_areas=exclude_areas,
+            schemas=schemas,
+            exclude_schemas=exclude_schemas,
         ):
             for batch in query.split_tsql_batches(sql):
 
@@ -178,8 +184,14 @@ def ensure_testdb(
         await _ensure_database(db_name)
         if apply_scripts:
             await _apply(
-                config, db_name, force_reset,
-                env=env, areas=areas, exclude_areas=exclude_areas, schemas=schemas, exclude_schemas=exclude_schemas,
+                config,
+                db_name,
+                force_reset,
+                env=env,
+                areas=areas,
+                exclude_areas=exclude_areas,
+                schemas=schemas,
+                exclude_schemas=exclude_schemas,
             )
         if apply is not None:
             await _run_apply_hook(db_name, apply)
@@ -189,7 +201,7 @@ def ensure_testdb(
 
 
 async def _dbs_with_prefix(prefix: str) -> list[str]:
-    from ..naming import escape_like_prefix
+    from pgdevkit.testdb.naming import escape_like_prefix
 
     escaped_prefix = escape_like_prefix(prefix)
 
@@ -212,7 +224,7 @@ async def _dbs_with_prefix(prefix: str) -> list[str]:
 
 
 async def _find_orphaned_dbs(config: ProjectConfig) -> list[str]:
-    from ..naming import expected_db_names, live_worktree_branches, slugify
+    from pgdevkit.testdb.naming import expected_db_names, live_worktree_branches, slugify
 
     prefix = f"{slugify(config.name)}_"
     actual = await _dbs_with_prefix(prefix)
@@ -225,7 +237,7 @@ def find_orphaned_dbs(config: ProjectConfig) -> list[str]:
 
 
 def clean_testdb(config: ProjectConfig, db_name: str, all: bool, orphaned: bool = False) -> None:
-    from ..naming import slugify
+    from pgdevkit.testdb.naming import slugify
 
     async def _run() -> None:
         if orphaned:
@@ -268,7 +280,8 @@ def snapshot_testdb(config: ProjectConfig, db_name: str, name: str) -> str:
     try:
         cur = conn.cursor()
         cur.execute(
-            "SELECT name, physical_name FROM sys.master_files WHERE database_id = DB_ID(?) AND type = 0 ORDER BY file_id",
+            "SELECT name, physical_name FROM sys.master_files WHERE database_id = DB_ID(?) AND type = 0 "
+            "ORDER BY file_id",
             [db_name],
         )
         files = [(row[0], row[1]) for row in cur.fetchall()]
@@ -333,7 +346,7 @@ def run_sql(config: ProjectConfig, db_name: str, sql: str) -> list[dict] | None:
                 cur.execute(batch)
                 if cur.description:
                     cols = [c[0] for c in cur.description]
-                    last_rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+                    last_rows = [dict(zip(cols, row, strict=False)) for row in cur.fetchall()]
                 else:
                     last_rows = None
             return last_rows
@@ -355,9 +368,13 @@ def shell_argv(config: ProjectConfig, db_name: str) -> tuple[str, list[str]]:
     required since sqlcmd v18+ defaults to encrypted+verified connections."""
     return "sqlcmd", [
         "sqlcmd",
-        "-S", f"{constants.HOST},{constants.PORT}",
-        "-U", constants.USER,
-        "-P", constants.PASSWORD,
-        "-d", db_name,
+        "-S",
+        f"{constants.HOST},{constants.PORT}",
+        "-U",
+        constants.USER,
+        "-P",
+        constants.PASSWORD,
+        "-d",
+        db_name,
         "-C",
     ]

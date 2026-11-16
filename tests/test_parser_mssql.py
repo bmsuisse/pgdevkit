@@ -9,7 +9,7 @@ def _write(tmp_path: Path, name: str, sql: str) -> None:
     (tmp_path / name).write_text(sql, encoding="utf-8")
 
 
-def test_parses_tsql_table_with_identity_and_types(tmp_path: Path):
+def test_parses_tsql_table_with_identity_and_types(tmp_path: Path) -> None:
     _write(
         tmp_path,
         "widget.sql",
@@ -30,19 +30,19 @@ def test_parses_tsql_table_with_identity_and_types(tmp_path: Path):
     assert cols["price"].is_nullable
 
 
-def test_unqualified_table_falls_back_to_dbo_schema(tmp_path: Path):
+def test_unqualified_table_falls_back_to_dbo_schema(tmp_path: Path) -> None:
     _write(tmp_path, "widget.sql", "CREATE TABLE widget (id INT PRIMARY KEY);")
     schema = parse_directory(tmp_path, dialect="mssql")
     assert "dbo.widget" in schema.tables
 
 
-def test_unqualified_table_falls_back_to_public_schema_for_postgres(tmp_path: Path):
+def test_unqualified_table_falls_back_to_public_schema_for_postgres(tmp_path: Path) -> None:
     _write(tmp_path, "widget.sql", "CREATE TABLE widget (id int PRIMARY KEY);")
     schema = parse_directory(tmp_path)  # default dialect
     assert "public.widget" in schema.tables
 
 
-def test_parses_tsql_view(tmp_path: Path):
+def test_parses_tsql_view(tmp_path: Path) -> None:
     _write(
         tmp_path,
         "widget_view.sql",
@@ -52,7 +52,7 @@ def test_parses_tsql_view(tmp_path: Path):
     assert "dbo.widget_view" in schema.views
 
 
-def test_parses_tsql_function_with_returns_and_body(tmp_path: Path):
+def test_parses_tsql_function_with_returns_and_body(tmp_path: Path) -> None:
     _write(
         tmp_path,
         "get_price.sql",
@@ -73,7 +73,7 @@ def test_parses_tsql_function_with_returns_and_body(tmp_path: Path):
     assert "return 9.99" in func.body
 
 
-def test_parse_function_details_tsql_extracts_args_and_body_directly():
+def test_parse_function_details_tsql_extracts_args_and_body_directly() -> None:
     sql = "CREATE FUNCTION dbo.f (@a INT, @b INT) RETURNS INT AS BEGIN RETURN @a + @b; END;"
     args, return_type, language, body = _parse_function_details_tsql(sql)
     assert args == "@a int, @b int"
@@ -82,7 +82,7 @@ def test_parse_function_details_tsql_extracts_args_and_body_directly():
     assert "return @a + @b" in body
 
 
-def test_parses_native_json_column_type(tmp_path: Path):
+def test_parses_native_json_column_type(tmp_path: Path) -> None:
     # SQL Server's native `json` type (current Azure SQL/SQL Server 2025+ --
     # distinct from the older NVARCHAR(MAX)-plus-OPENJSON() convention).
     # sqlglot's tsql dialect already recognizes it as exp.DataType.Type.JSON;
@@ -97,7 +97,7 @@ def test_parses_native_json_column_type(tmp_path: Path):
     assert cols["payload"].is_nullable
 
 
-def test_mssql_enum_style_type_is_ignored_not_erroring(tmp_path: Path):
+def test_mssql_enum_style_type_is_ignored_not_erroring(tmp_path: Path) -> None:
     # A Postgres-style `CREATE TYPE ... AS ENUM` has no T-SQL equivalent --
     # parsing it under dialect="mssql" must not raise, and (since sqlglot's
     # tsql dialect won't produce the ENUM/Schema AST shapes _handle_type

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Protocol
+from collections.abc import Callable
+from typing import Any, Protocol
 
-from ..dialect import Dialect
-from ..models import DatabaseSchema
+from pgdevkit.dialect import Dialect
+from pgdevkit.models import DatabaseSchema
 
 
 class Backend(Protocol):

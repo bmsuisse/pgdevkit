@@ -23,7 +23,7 @@ from starlette.exceptions import HTTPException
 from starlette.requests import ClientDisconnect
 from starlette.types import Message, Receive, Scope, Send
 
-from ..db.fetch import (
+from pgdevkit.db.fetch import (
     ConnectionSource,
     QueryParams,
     SqlQuery,
@@ -67,9 +67,9 @@ class PostgresJsonResponse(StreamingResponse):
 
     Errors before the first byte become a JSON ``{"error": ...}`` response (status 500, or the status of a raised
     ``HTTPException``); FastAPI's own handlers use ``{"detail": ...}``, so a subclass can set ``error_key = "detail"``
-    to keep an existing frontend's error handling working. After that the status line is gone: the error is logged and re-raised, and the response
-    ends without its closing ``]``, so clients can't mistake it for a complete array. Subclass and set
-    ``expose_errors = True`` (e.g. in dev/test) to include ``str(error)`` in the 500 response.
+    to keep an existing frontend's error handling working. After that the status line is gone: the error is logged and
+    re-raised, and the response ends without its closing ``]``, so clients can't mistake it for a complete array.
+    Subclass and set ``expose_errors = True`` (e.g. in dev/test) to include ``str(error)`` in the 500 response.
 
     Postgres sends rows in 8 kB buffers, so a slow query with small rows delivers its first bytes late. A
     ``timestamptz`` is written as ``...+00:00`` (``row_to_json``), where FastAPI/Pydantic emit ``...Z``.
@@ -232,12 +232,9 @@ def _as_json_rows(query: Any) -> Composed | Template:
     if isinstance(query, Template):
         # psycopg expands a Template nested with `:q` in place, its own values staying bound parameters
         return t"select row_to_json(s)::text from (\n{query:q}\n) s"
-    if isinstance(query, Composable):
-        inner = query
-    else:
-        # bdt-lint: ignore sql-unverified-call -- callers pass a trusted literal (type-checked only); stacked statements
-        # are rejected by the extended protocol that cursor.stream() uses
-        inner = SQL(query.strip().rstrip(";"))
+    # bdt-lint: ignore sql-unverified-call -- callers pass a trusted literal (type-checked only); stacked statements
+    # are rejected by the extended protocol that cursor.stream() uses
+    inner = query if isinstance(query, Composable) else SQL(query.strip().rstrip(";"))
     # newline before the closing paren: the query may end in a line comment
     return SQL("select row_to_json(s)::text from (\n{}\n) s").format(inner)
 

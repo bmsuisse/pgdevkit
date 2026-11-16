@@ -6,11 +6,9 @@ import mssql_python
 import sqlglot
 import sqlglot.expressions as exp
 
-from .db.mssql_sql import ident
-from .models import (
-    ColumnDef, ConstraintDef, DatabaseSchema, FunctionDef, IndexDef, TableDef, ViewDef,
-)
-from .parser import _parse_function_details_tsql
+from pgdevkit.db.mssql_sql import ident
+from pgdevkit.models import ColumnDef, ConstraintDef, DatabaseSchema, FunctionDef, IndexDef, TableDef, ViewDef
+from pgdevkit.parser import _parse_function_details_tsql
 
 # Schemas that are SQL Server system/fixed-role schemas, not user schemas --
 # the equivalent of introspect.py's "pg_catalog"/"information_schema"/"pg_%"
@@ -27,7 +25,7 @@ def _q(conn: Any, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
     try:
         cur.execute(sql, params)
         cols = [c[0] for c in cur.description]
-        return [dict(zip(cols, row)) for row in cur.fetchall()]
+        return [dict(zip(cols, row, strict=False)) for row in cur.fetchall()]
     finally:
         cur.close()
 
@@ -84,11 +82,14 @@ def _format_type(type_name: str, max_length: int, precision: int, scale: int) ->
 
 
 def _load_tables(conn: Any, db: DatabaseSchema) -> None:
-    tables = _q(conn, """
+    tables = _q(
+        conn,
+        """
         SELECT s.name AS [schema], t.name AS name, t.object_id AS object_id
         FROM sys.tables t
         JOIN sys.schemas s ON s.schema_id = t.schema_id
-    """)
+    """,
+    )
 
     for row in tables:
         tschema, tname, object_id = row["schema"], row["name"], row["object_id"]
@@ -101,7 +102,9 @@ def _load_tables(conn: Any, db: DatabaseSchema) -> None:
         # nothing to set here besides False.
         table = TableDef(schema=tschema, name=tname, is_partition=False)
 
-        for c in _q(conn, """
+        for c in _q(
+            conn,
+            """
             SELECT c.name AS name,
                    ty.name AS base_type,
                    c.max_length AS max_length,
@@ -119,14 +122,18 @@ def _load_tables(conn: Any, db: DatabaseSchema) -> None:
                 ON cc.object_id = c.object_id AND cc.column_id = c.column_id
             WHERE c.object_id = ?
             ORDER BY c.column_id
-        """, (object_id,)):
-            table.columns.append(ColumnDef(
-                name=c["name"],
-                data_type=_format_type(c["base_type"], c["max_length"], c["precision"], c["scale"]),
-                is_nullable=bool(c["is_nullable"]),
-                default=c["col_default"],
-                is_generated=bool(c["is_identity"]) or c["is_computed_def"] is not None,
-            ))
+        """,
+            (object_id,),
+        ):
+            table.columns.append(
+                ColumnDef(
+                    name=c["name"],
+                    data_type=_format_type(c["base_type"], c["max_length"], c["precision"], c["scale"]),
+                    is_nullable=bool(c["is_nullable"]),
+                    default=c["col_default"],
+                    is_generated=bool(c["is_identity"]) or c["is_computed_def"] is not None,
+                )
+            )
 
         table.constraints.extend(_load_key_constraints(conn, object_id))
         table.constraints.extend(_load_foreign_keys(conn, object_id))
@@ -137,19 +144,27 @@ def _load_tables(conn: Any, db: DatabaseSchema) -> None:
 
 def _load_key_constraints(conn: Any, object_id: int) -> list[ConstraintDef]:
     constraints = []
-    for r in _q(conn, """
+    for r in _q(
+        conn,
+        """
         SELECT kc.name AS name, kc.type AS type, i.index_id AS index_id
         FROM sys.key_constraints kc
         JOIN sys.indexes i ON i.object_id = kc.parent_object_id AND i.index_id = kc.unique_index_id
         WHERE kc.parent_object_id = ?
-    """, (object_id,)):
-        cols = _q(conn, """
+    """,
+        (object_id,),
+    ):
+        cols = _q(
+            conn,
+            """
             SELECT c.name AS name
             FROM sys.index_columns ic
             JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
             WHERE ic.object_id = ? AND ic.index_id = ?
             ORDER BY ic.key_ordinal
-        """, (object_id, r["index_id"]))
+        """,
+            (object_id, r["index_id"]),
+        )
         col_list = ", ".join(c["name"] for c in cols)
         kind = "PRIMARY KEY" if r["type"] == "PK" else "UNIQUE"
         constraints.append(ConstraintDef(name=r["name"], kind=kind, definition=f"{kind.lower()} ({col_list})"))
@@ -159,7 +174,9 @@ def _load_key_constraints(conn: Any, object_id: int) -> list[ConstraintDef]:
 def _load_foreign_keys(conn: Any, object_id: int) -> list[ConstraintDef]:
     constraints = []
     for r in _q(conn, "SELECT name, object_id FROM sys.foreign_keys WHERE parent_object_id = ?", (object_id,)):
-        cols = _q(conn, """
+        cols = _q(
+            conn,
+            """
             SELECT pc.name AS col, rc.name AS ref_col, rt.name AS ref_table, rs.name AS ref_schema
             FROM sys.foreign_key_columns fkc
             JOIN sys.columns pc ON pc.object_id = fkc.parent_object_id AND pc.column_id = fkc.parent_column_id
@@ -168,7 +185,9 @@ def _load_foreign_keys(conn: Any, object_id: int) -> list[ConstraintDef]:
             JOIN sys.schemas rs ON rs.schema_id = rt.schema_id
             WHERE fkc.constraint_object_id = ?
             ORDER BY fkc.constraint_column_id
-        """, (r["object_id"],))
+        """,
+            (r["object_id"],),
+        )
         if not cols:
             continue
         col_list = ", ".join(c["col"] for c in cols)
@@ -187,12 +206,15 @@ def _load_check_constraints(conn: Any, object_id: int) -> list[ConstraintDef]:
 
 
 def _load_views(conn: Any, db: DatabaseSchema) -> None:
-    for r in _q(conn, """
+    for r in _q(
+        conn,
+        """
         SELECT s.name AS [schema], v.name AS name, m.definition AS definition
         FROM sys.views v
         JOIN sys.schemas s ON s.schema_id = v.schema_id
         JOIN sys.sql_modules m ON m.object_id = v.object_id
-    """):
+    """,
+    ):
         if _is_system_schema(r["schema"]):
             continue
         definition = _extract_view_query(r["definition"] or "").lower()
@@ -208,7 +230,7 @@ def _extract_view_query(definition: str) -> str:
     script-side definition (also query-only)."""
     try:
         parsed = sqlglot.parse_one(definition, dialect="tsql")
-    except Exception:  # noqa: BLE001
+    except Exception:
         return definition
     if isinstance(parsed, exp.Create) and parsed.expression is not None:
         return parsed.expression.sql(dialect="tsql")
@@ -219,14 +241,17 @@ _FUNCTION_KINDS = {"FN": "function", "IF": "function", "TF": "function", "P": "p
 
 
 def _load_functions(conn: Any, db: DatabaseSchema) -> None:
-    for r in _q(conn, """
+    for r in _q(
+        conn,
+        """
         SELECT s.name AS [schema], o.name AS name,
                o.type AS type_code, m.definition AS definition
         FROM sys.objects o
         JOIN sys.schemas s ON s.schema_id = o.schema_id
         JOIN sys.sql_modules m ON m.object_id = o.object_id
         WHERE o.type IN ('FN', 'IF', 'TF', 'P')
-    """):
+    """,
+    ):
         if _is_system_schema(r["schema"]):
             continue
         # Same verbatim-statement-text situation as views (see
@@ -238,16 +263,21 @@ def _load_functions(conn: Any, db: DatabaseSchema) -> None:
         args, return_type, language, body = _parse_function_details_tsql(r["definition"] or "")
 
         func = FunctionDef(
-            schema=r["schema"], name=r["name"],
-            args=args, return_type=return_type,
-            language=language, body=body,
+            schema=r["schema"],
+            name=r["name"],
+            args=args,
+            return_type=return_type,
+            language=language,
+            body=body,
             kind=_FUNCTION_KINDS[r["type_code"]],
         )
         db.functions[func.qualified_name] = func
 
 
 def _load_indexes(conn: Any, db: DatabaseSchema) -> None:
-    for r in _q(conn, """
+    for r in _q(
+        conn,
+        """
         SELECT s.name AS [schema], t.name AS table_name, i.name AS index_name,
                i.index_id AS index_id, i.is_unique AS is_unique, t.object_id AS object_id,
                i.filter_definition AS filter_definition
@@ -255,16 +285,21 @@ def _load_indexes(conn: Any, db: DatabaseSchema) -> None:
         JOIN sys.tables t ON t.object_id = i.object_id
         JOIN sys.schemas s ON s.schema_id = t.schema_id
         WHERE i.is_primary_key = 0 AND i.name IS NOT NULL
-    """):
+    """,
+    ):
         if _is_system_schema(r["schema"]):
             continue
-        cols = _q(conn, """
+        cols = _q(
+            conn,
+            """
             SELECT c.name AS name
             FROM sys.index_columns ic
             JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
             WHERE ic.object_id = ? AND ic.index_id = ? AND ic.is_included_column = 0
             ORDER BY ic.key_ordinal
-        """, (r["object_id"], r["index_id"]))
+        """,
+            (r["object_id"], r["index_id"]),
+        )
         unique = "UNIQUE " if r["is_unique"] else ""
         where_clause = f" WHERE {r['filter_definition']}" if r["filter_definition"] else ""
         # Bracket-quoted: object names (NAV-style "Company$Cust. Ledger Entry")

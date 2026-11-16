@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import pytest
 
@@ -14,13 +14,11 @@ def _has_container_runtime() -> bool:
     try:
         _client()
         return True
-    except Exception:  # noqa: BLE001
+    except Exception:
         return False
 
 
-requires_podman = pytest.mark.skipif(
-    not _has_container_runtime(), reason="no Docker-compatible API reachable"
-)
+requires_podman = pytest.mark.skipif(not _has_container_runtime(), reason="no Docker-compatible API reachable")
 
 
 def _has_mssql_support() -> bool:

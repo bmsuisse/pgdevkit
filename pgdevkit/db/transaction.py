@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from psycopg.connection_async import AsyncConnection
 
 
 @asynccontextmanager
-async def readonly_transaction(con: AsyncConnection) -> AsyncIterator[AsyncConnection]:
+async def readonly_transaction(con: AsyncConnection) -> AsyncGenerator[AsyncConnection]:
     """Run a block in a read-only transaction on `con`: Postgres refuses writes with `ReadOnlySqlTransaction`.
 
     ```python

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import warnings
 import weakref
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from psycopg import AsyncConnection
 from psycopg import adapters as _psycopg_adapters
@@ -218,7 +219,8 @@ class ComplexHelper:
               from information_schema.columns c
                  left join enum_types e on e.enum_schema=c.udt_schema
                      and (e.enum_name=c.udt_name or (c.data_type='ARRAY' and c.udt_name='_'||e.enum_name))
-              where table_schema=%(schema)s and table_name = %(tbl)s and (is_generated <> 'ALWAYS' or %(include_generated)s)
+              where table_schema=%(schema)s and table_name = %(tbl)s
+                and (is_generated <> 'ALWAYS' or %(include_generated)s)
               order by c.ordinal_position"""
         async with self.con.cursor(row_factory=dict_row) as cur:
             await cur.execute(
@@ -268,11 +270,9 @@ class ComplexHelper:
         return info
 
     async def _get_complex_type(self, name: str, is_enum: bool, con: AsyncConnection) -> CompositeInfo | EnumInfo:
-        if name.endswith("[]"):
-            name = name[:-2]
+        name = name.removesuffix("[]")
         schema, type_name = name.split(".") if "." in name else ("public", name)
-        if type_name.startswith("_"):  # the array type in PostgreSQL starts with an underscore
-            type_name = type_name[1:]
+        type_name = type_name.removeprefix("_")  # the array type in PostgreSQL starts with an underscore
         if (schema, type_name) not in self.complex_types:
             ci = await (EnumInfo if is_enum else CompositeInfo).fetch(con, Identifier(schema, type_name))
             assert ci is not None, f"{'Enum' if is_enum else 'Complex'} type {name} not found in database"

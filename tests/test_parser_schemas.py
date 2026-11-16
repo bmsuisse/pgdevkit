@@ -2,38 +2,40 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 import pgdevkit.parser as parser_mod
 from pgdevkit.parser import parse_directory
 
 
-def _write(dir: Path, name: str, content: str) -> Path:
-    p = dir / name
+def _write(directory: Path, name: str, content: str) -> Path:
+    p = directory / name
     p.write_text(content, encoding="utf-8")
     return p
 
 
 class TestParseDirectorySchemaFiltering:
-    def test_no_filters_parses_everything(self, tmp_path: Path):
+    def test_no_filters_parses_everything(self, tmp_path: Path) -> None:
         _write(tmp_path, "billing.sql", "CREATE TABLE billing.a (id int);\n")
         _write(tmp_path, "reporting.sql", "CREATE TABLE reporting.b (id int);\n")
         schema = parse_directory(tmp_path)
         assert set(schema.tables) == {"billing.a", "reporting.b"}
 
-    def test_schemas_filter_keeps_matching_and_undetectable(self, tmp_path: Path):
+    def test_schemas_filter_keeps_matching_and_undetectable(self, tmp_path: Path) -> None:
         _write(tmp_path, "billing.sql", "CREATE TABLE billing.a (id int);\n")
         _write(tmp_path, "reporting.sql", "CREATE TABLE reporting.b (id int);\n")
 
         schema = parse_directory(tmp_path, schemas=frozenset({"billing"}))
         assert set(schema.tables) == {"billing.a"}
 
-    def test_exclude_schemas_drops_matching(self, tmp_path: Path):
+    def test_exclude_schemas_drops_matching(self, tmp_path: Path) -> None:
         _write(tmp_path, "billing.sql", "CREATE TABLE billing.a (id int);\n")
         _write(tmp_path, "reporting.sql", "CREATE TABLE reporting.b (id int);\n")
 
         schema = parse_directory(tmp_path, exclude_schemas=frozenset({"billing"}))
         assert set(schema.tables) == {"reporting.b"}
 
-    def test_area_and_schema_filters_combine(self, tmp_path: Path):
+    def test_area_and_schema_filters_combine(self, tmp_path: Path) -> None:
         # Passes both filters.
         _write(tmp_path, "keep.sql", "-- area: billing\nCREATE TABLE reporting.a (id int);\n")
         # Wrong area.
@@ -51,7 +53,7 @@ class TestParseDirectoryLaziness:
     anyway -- so each check must run only when the axis it belongs to is
     actually being filtered on, not unconditionally alongside the real parse."""
 
-    def test_no_filters_never_detects_areas_or_schemas(self, tmp_path: Path, monkeypatch):
+    def test_no_filters_never_detects_areas_or_schemas(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _write(tmp_path, "a.sql", "CREATE TABLE billing.a (id int);\n")
         calls: dict[str, int] = {"areas": 0, "schemas": 0}
         monkeypatch.setattr(
@@ -67,11 +69,11 @@ class TestParseDirectoryLaziness:
 
         assert calls == {"areas": 0, "schemas": 0}
 
-    def test_area_filter_alone_never_detects_schemas(self, tmp_path: Path, monkeypatch):
+    def test_area_filter_alone_never_detects_schemas(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _write(tmp_path, "a.sql", "-- area: billing\nCREATE TABLE billing.a (id int);\n")
         calls = 0
 
-        def counting_sql_schemas(content, dialect):
+        def counting_sql_schemas(content: str, dialect: object) -> frozenset[str]:
             nonlocal calls
             calls += 1
             return frozenset()
@@ -82,11 +84,11 @@ class TestParseDirectoryLaziness:
 
         assert calls == 0
 
-    def test_schema_filter_alone_never_detects_areas(self, tmp_path: Path, monkeypatch):
+    def test_schema_filter_alone_never_detects_areas(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _write(tmp_path, "a.sql", "CREATE TABLE billing.a (id int);\n")
         calls = 0
 
-        def counting_parse_areas(content):
+        def counting_parse_areas(content: str) -> frozenset[str]:
             nonlocal calls
             calls += 1
             return frozenset()

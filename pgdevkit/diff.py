@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import re
 from dataclasses import dataclass
 from enum import Enum
@@ -6,8 +7,8 @@ from enum import Enum
 import sqlglot
 import sqlglot.expressions as exp
 
-from .dialect import Dialect, POSTGRES, resolve_dialect
-from .models import DatabaseSchema, FunctionDef, IndexDef, TableDef
+from pgdevkit.dialect import POSTGRES, Dialect, resolve_dialect
+from pgdevkit.models import DatabaseSchema, FunctionDef, IndexDef, TableDef
 
 
 class DiffKind(str, Enum):
@@ -60,9 +61,9 @@ def compute_diff(
             if s != d:
                 diffs.append(DiffEntry(DiffKind.MISMATCH, "view", name, "definition differs"))
     if report_extra_db:
-        for name in db.views:
-            if name not in scripts.views:
-                diffs.append(DiffEntry(DiffKind.MISSING_IN_SCRIPTS, "view", name))
+        diffs.extend(
+            DiffEntry(DiffKind.MISSING_IN_SCRIPTS, "view", name) for name in db.views if name not in scripts.views
+        )
 
     for name, obj in scripts.functions.items():
         if name not in db.functions:
@@ -70,9 +71,11 @@ def compute_diff(
         else:
             _diff_function(name, obj, db.functions[name], diffs, resolved)
     if report_extra_db:
-        for name in db.functions:
-            if name not in scripts.functions:
-                diffs.append(DiffEntry(DiffKind.MISSING_IN_SCRIPTS, "function", name))
+        diffs.extend(
+            DiffEntry(DiffKind.MISSING_IN_SCRIPTS, "function", name)
+            for name in db.functions
+            if name not in scripts.functions
+        )
 
     for name, obj in scripts.enums.items():
         if name not in db.enums:
@@ -80,9 +83,9 @@ def compute_diff(
         elif obj.values != db.enums[name].values:
             diffs.append(DiffEntry(DiffKind.MISMATCH, "enum", name, f"values: {obj.values} vs {db.enums[name].values}"))
     if report_extra_db:
-        for name in db.enums:
-            if name not in scripts.enums:
-                diffs.append(DiffEntry(DiffKind.MISSING_IN_SCRIPTS, "enum", name))
+        diffs.extend(
+            DiffEntry(DiffKind.MISSING_IN_SCRIPTS, "enum", name) for name in db.enums if name not in scripts.enums
+        )
 
     for name, obj in scripts.composites.items():
         if name not in db.composites:
@@ -90,9 +93,11 @@ def compute_diff(
         elif obj.fields != db.composites[name].fields:
             diffs.append(DiffEntry(DiffKind.MISMATCH, "composite_type", name, "fields differ"))
     if report_extra_db:
-        for name in db.composites:
-            if name not in scripts.composites:
-                diffs.append(DiffEntry(DiffKind.MISSING_IN_SCRIPTS, "composite_type", name))
+        diffs.extend(
+            DiffEntry(DiffKind.MISSING_IN_SCRIPTS, "composite_type", name)
+            for name in db.composites
+            if name not in scripts.composites
+        )
 
     for name, obj in scripts.indexes.items():
         if name not in db.indexes:
@@ -102,21 +107,18 @@ def compute_diff(
             _diff_index(name, obj, db.indexes[name], diffs, resolved)
     if report_extra_db:
         for name, obj in db.indexes.items():
-            if name not in scripts.indexes:
-                if f"{obj.schema}.{obj.table}" not in tables_missing_in_scripts:
-                    diffs.append(DiffEntry(DiffKind.MISSING_IN_SCRIPTS, "index", name))
+            if name not in scripts.indexes and f"{obj.schema}.{obj.table}" not in tables_missing_in_scripts:
+                diffs.append(DiffEntry(DiffKind.MISSING_IN_SCRIPTS, "index", name))
 
     return diffs
 
 
 def _diff_set(obj_type: str, scripts_set: set, db_set: set, diffs: list[DiffEntry], report_extra: bool) -> None:
-    for item in scripts_set:
-        if item not in db_set:
-            diffs.append(DiffEntry(DiffKind.MISSING_IN_DB, obj_type, item))
+    diffs.extend(DiffEntry(DiffKind.MISSING_IN_DB, obj_type, item) for item in scripts_set if item not in db_set)
     if report_extra:
-        for item in db_set:
-            if item not in scripts_set:
-                diffs.append(DiffEntry(DiffKind.MISSING_IN_SCRIPTS, obj_type, item))
+        diffs.extend(
+            DiffEntry(DiffKind.MISSING_IN_SCRIPTS, obj_type, item) for item in db_set if item not in scripts_set
+        )
 
 
 def _diff_table(name: str, s: TableDef, d: TableDef, diffs: list[DiffEntry], dialect: Dialect) -> None:
@@ -137,9 +139,9 @@ def _diff_table(name: str, s: TableDef, d: TableDef, diffs: list[DiffEntry], dia
                 issues.append(f"nullable: {sc.is_nullable} vs {dc.is_nullable}")
             if issues:
                 diffs.append(DiffEntry(DiffKind.MISMATCH, "column", f"{name}.{cname}", "; ".join(issues)))
-    for cname in dcols:
-        if cname not in scols:
-            diffs.append(DiffEntry(DiffKind.MISSING_IN_SCRIPTS, "column", f"{name}.{cname}"))
+    diffs.extend(
+        DiffEntry(DiffKind.MISSING_IN_SCRIPTS, "column", f"{name}.{cname}") for cname in dcols if cname not in scols
+    )
 
 
 def _diff_function(name: str, s: FunctionDef, d: FunctionDef, diffs: list[DiffEntry], dialect: Dialect) -> None:
@@ -190,9 +192,10 @@ def _parse_index_def(definition: str, dialect: Dialect = POSTGRES) -> dict | Non
     using_node = params.args.get("using") if params else None
     using = using_node.name.lower() if using_node else "btree"
 
-    columns = []
-    for col in (params.args.get("columns") if params else None) or []:
-        columns.append(_norm_sql(_unquote(col).sql(dialect=dialect.sqlglot_name)))
+    columns = [
+        _norm_sql(_unquote(col).sql(dialect=dialect.sqlglot_name))
+        for col in (params.args.get("columns") if params else None) or []
+    ]
 
     where_node = params.args.get("where") if params else None
     where_ast = _unwrap_paren(_unquote(where_node.this)) if where_node else None
@@ -217,7 +220,7 @@ def _unquote(node: exp.Expression) -> exp.Expression:
     return node
 
 
-def _unwrap_paren(node):
+def _unwrap_paren(node: exp.Expression) -> exp.Expression:
     # transform() doesn't descend into a node it replaced, so a Paren nested
     # inside another one ("([b]>(1))", how SQL Server stores a filter) needs
     # another pass.
@@ -236,8 +239,8 @@ def _norm_sql(s: str) -> str:
 
 
 def _norm_body(s: str) -> str:
-    lines = [l.strip() for l in s.splitlines()]
-    return "\n".join(l.lower() for l in lines if l)
+    lines = [line.strip() for line in s.splitlines()]
+    return "\n".join(line.lower() for line in lines if line)
 
 
 def _norm_type(t: str, dialect: Dialect = POSTGRES) -> str:

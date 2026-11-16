@@ -1,9 +1,9 @@
 """PostgresJsonResponse: output shape, connections and error handling, through a real FastAPI app and real Postgres."""
 
+import json
 from collections.abc import AsyncIterator, Iterator
 from contextlib import AbstractAsyncContextManager
-
-import json
+from typing import Annotated
 
 import httpx
 import psycopg
@@ -49,7 +49,7 @@ def default_pool(pool: AsyncConnectionPool) -> Iterator[AsyncConnectionPool]:
 
 @pytest.fixture
 def no_default_pool() -> Iterator[None]:
-    previous = fetch._default_source  # process-wide state: put back whatever was registered
+    previous = fetch._defaults.source  # process-wide state: put back whatever was registered
     set_default_pool(None)
     yield
     set_default_pool(previous)
@@ -60,7 +60,7 @@ async def client(pool: AsyncConnectionPool) -> AsyncIterator[httpx.AsyncClient]:
     app = FastAPI()
 
     @app.get("/series")
-    async def series(n: int, batch: int = 1000):
+    async def series(n: int, batch: int = 1000) -> PostgresJsonResponse:
         return PostgresJsonResponse(
             "select i as id, 'name ' || i as name from generate_series(1, %(n)s) i order by i;",
             {"n": n},
@@ -69,15 +69,15 @@ async def client(pool: AsyncConnectionPool) -> AsyncIterator[httpx.AsyncClient]:
         )
 
     @app.get("/composable")
-    async def composable():
+    async def composable() -> PostgresJsonResponse:
         return PostgresJsonResponse(SQL("select {} as v").format(Literal(5)), pool=pool)
 
     @app.get("/line-comment")
-    async def line_comment():
+    async def line_comment() -> PostgresJsonResponse:
         return PostgresJsonResponse("select 1 as a -- trailing comment", pool=pool)
 
     @app.get("/own-json")
-    async def own_json():
+    async def own_json() -> PostgresJsonResponse:
         return PostgresJsonResponse(
             "select json_build_object('a', i)::text from generate_series(1, 2) i",
             pool=pool,
@@ -85,7 +85,7 @@ async def client(pool: AsyncConnectionPool) -> AsyncIterator[httpx.AsyncClient]:
         )
 
     @app.get("/headers")
-    async def headers():
+    async def headers() -> PostgresJsonResponse:
         return PostgresJsonResponse(
             "select 1 as a", pool=pool, headers={"Cache-Control": "max-age=60"}, status_code=203
         )
@@ -95,48 +95,50 @@ async def client(pool: AsyncConnectionPool) -> AsyncIterator[httpx.AsyncClient]:
             yield conn
 
     @app.get("/caller-owned")
-    async def caller_owned(conn: AsyncConnection = Depends(own_connection)):
+    async def caller_owned(conn: Annotated[AsyncConnection, Depends(own_connection)]) -> PostgresJsonResponse:
         return PostgresJsonResponse("select pg_backend_pid() as pid", con=conn)
 
     @app.get("/pid")
-    async def pid():
+    async def pid() -> PostgresJsonResponse:
         return PostgresJsonResponse("select pg_backend_pid() as pid", pool=pool)
 
     @app.get("/t-string")
-    async def t_string(n: int, evil: str = "x"):
+    async def t_string(n: int, evil: str = "x") -> PostgresJsonResponse:
         column = "id"
         return PostgresJsonResponse(
             t"select i as {column:i}, {evil} as note from generate_series(1, {n}) i order by i", pool=pool
         )
 
     @app.get("/t-string-json")
-    async def t_string_json():
+    async def t_string_json() -> PostgresJsonResponse:
         return PostgresJsonResponse(
-            t"select json_build_object('a', i)::text from generate_series(1, {2}) i", pool=pool, query_produces_json=True
+            t"select json_build_object('a', i)::text from generate_series(1, {2}) i",
+            pool=pool,
+            query_produces_json=True,
         )
 
     @app.get("/default-pool")
-    async def default_pool_route():
+    async def default_pool_route() -> PostgresJsonResponse:
         return PostgresJsonResponse("select 1 as a")
 
     @app.get("/no-pool")
-    async def no_pool_route():
+    async def no_pool_route() -> VerboseResponse:
         return VerboseResponse("select 1 as a")
 
     @app.get("/stacked")
-    async def stacked():
+    async def stacked() -> VerboseResponse:
         return VerboseResponse("select 1 as a) s; select 2 as b from (select 1", pool=pool)
 
     @app.get("/syntax-error-detail")
-    async def syntax_error_detail():
+    async def syntax_error_detail() -> DetailResponse:
         return DetailResponse("selec 1", pool=pool)
 
     @app.get("/forbidden-detail")
-    async def forbidden_detail():
+    async def forbidden_detail() -> DetailResponse:
         return DetailResponse("select 1", pool=ForbiddenPool())
 
     @app.get("/sqlglot-like")
-    async def sqlglot_like(prefix: str):
+    async def sqlglot_like(prefix: str) -> PostgresJsonResponse:
         query = (
             select("name")
             .from_("(select 'a%' as name union all select 'ab' union all select 'b') s")
@@ -146,19 +148,19 @@ async def client(pool: AsyncConnectionPool) -> AsyncIterator[httpx.AsyncClient]:
         return PostgresJsonResponse(query, {"prefix": prefix}, pool=pool)
 
     @app.get("/syntax-error")
-    async def syntax_error():
+    async def syntax_error() -> PostgresJsonResponse:
         return PostgresJsonResponse("selec 1", pool=pool)
 
     @app.get("/syntax-error-verbose")
-    async def syntax_error_verbose():
+    async def syntax_error_verbose() -> VerboseResponse:
         return VerboseResponse("selec 1", pool=pool)
 
     @app.get("/forbidden")
-    async def forbidden_route():
+    async def forbidden_route() -> PostgresJsonResponse:
         return PostgresJsonResponse("select 1", pool=ForbiddenPool())
 
     @app.get("/fails-midway")
-    async def fails_midway():
+    async def fails_midway() -> PostgresJsonResponse:
         return PostgresJsonResponse(
             "select i, repeat('x', 100) as pad, 1 / (case when i = 1500 then 0 else 1 end) as boom "
             "from generate_series(1, 2000) i",  # no ORDER BY: it would make Postgres compute every row up front

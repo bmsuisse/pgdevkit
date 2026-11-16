@@ -8,6 +8,8 @@ from typer.testing import CliRunner
 
 from pgdevkit import migrate, migrate_mssql
 from pgdevkit.cli import app
+from pgdevkit.dialect import MSSQL
+from pgdevkit.models import DatabaseSchema
 
 runner = CliRunner()
 
@@ -84,12 +86,12 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeConnection:
     return con
 
 
-def test_created_table_names_handles_brackets_and_skips_temp_tables():
+def test_created_table_names_handles_brackets_and_skips_temp_tables() -> None:
     batches = ["CREATE TABLE [app].[widgets] (id int)", "CREATE TABLE #tmp (id int)", "CREATE TABLE dbo.b (id int)"]
     assert migrate_mssql.created_table_names(batches) == ["[app].[widgets]", "dbo.b"]
 
 
-def test_created_table_names_ignores_comments():
+def test_created_table_names_ignores_comments() -> None:
     assert migrate_mssql.created_table_names(["-- CREATE TABLE x (id int)\nSELECT 1"]) == []
 
 
@@ -110,16 +112,16 @@ def test_created_table_names_ignores_comments():
         ("INSERT INTO app.widgets (id) VALUES (1)", None),
     ],
 )
-def test_idempotent_target(batch: str, expected: tuple | None):
+def test_idempotent_target(batch: str, expected: tuple | None) -> None:
     assert migrate_mssql.idempotent_target(batch) == expected
 
 
-def test_default_tracking_table_for_mssql_is_dbo(tmp_path: Path):
+def test_default_tracking_table_for_mssql_is_dbo(tmp_path: Path) -> None:
     assert migrate.default_tracking_table(tmp_path, dialect="mssql") == "dbo.schema_migrations"
     assert migrate.default_tracking_table(tmp_path) == "public.schema_migrations"
 
 
-def test_apply_migration_splits_on_go_runs_one_transaction_and_records(fake: FakeConnection, tmp_path: Path):
+def test_apply_migration_splits_on_go_runs_one_transaction_and_records(fake: FakeConnection, tmp_path: Path) -> None:
     fake.objects = {"app.widgets", "[dbo].[schema_migrations]"}
     path = tmp_path / "001_widgets.sql"
     path.write_text(
@@ -139,7 +141,7 @@ def test_apply_migration_splits_on_go_runs_one_transaction_and_records(fake: Fak
     assert "not exists" in insert  # idempotent record
 
 
-def test_apply_migration_rolls_back_on_failure_and_does_not_record(fake: FakeConnection, tmp_path: Path):
+def test_apply_migration_rolls_back_on_failure_and_does_not_record(fake: FakeConnection, tmp_path: Path) -> None:
     fake.fail_on = "BAD"
     path = tmp_path / "001_bad.sql"
     path.write_text("SELECT 1\nGO\nBAD STATEMENT\n", encoding="utf-8")
@@ -151,14 +153,14 @@ def test_apply_migration_rolls_back_on_failure_and_does_not_record(fake: FakeCon
     assert not any("insert into" in s for s in fake.sql())
 
 
-def test_apply_migration_raises_when_created_table_missing(fake: FakeConnection, tmp_path: Path):
+def test_apply_migration_raises_when_created_table_missing(fake: FakeConnection, tmp_path: Path) -> None:
     path = tmp_path / "001_widgets.sql"
     path.write_text("CREATE TABLE app.widgets (id int)\n", encoding="utf-8")
-    with pytest.raises(migrate.MigrationVerificationError, match="app.widgets"):
+    with pytest.raises(migrate.MigrationVerificationError, match=r"app\.widgets"):
         migrate.apply_migration("conn", path, "dbo.schema_migrations", dialect="mssql")
 
 
-def test_apply_migration_tolerates_missing_tracking_table(fake: FakeConnection, tmp_path: Path):
+def test_apply_migration_tolerates_missing_tracking_table(fake: FakeConnection, tmp_path: Path) -> None:
     path = tmp_path / "001_tracking.sql"
     path.write_text("CREATE TABLE dbo.schema_migrations (filename nvarchar(450))\n", encoding="utf-8")
     fake.objects = {"dbo.schema_migrations"}  # exists for verification, not as [dbo].[schema_migrations]
@@ -167,20 +169,18 @@ def test_apply_migration_tolerates_missing_tracking_table(fake: FakeConnection, 
     assert not any("insert into" in s for s in fake.sql())
 
 
-def test_applied_migrations_raises_tracking_table_missing(fake: FakeConnection):
+def test_applied_migrations_raises_tracking_table_missing(fake: FakeConnection) -> None:
     with pytest.raises(migrate.TrackingTableMissing):
         migrate.applied_migrations("conn", "dbo.schema_migrations", "mssql")
 
 
-def test_applied_migrations_reads_rows(fake: FakeConnection):
+def test_applied_migrations_reads_rows(fake: FakeConnection) -> None:
     fake.objects = {"[dbo].[schema_migrations]"}
     fake.applied_rows = [("001_a.sql", "2026-01-01", "sa")]
-    assert migrate.applied_migrations("conn", "dbo.schema_migrations", "mssql") == {
-        "001_a.sql": ("2026-01-01", "sa")
-    }
+    assert migrate.applied_migrations("conn", "dbo.schema_migrations", "mssql") == {"001_a.sql": ("2026-01-01", "sa")}
 
 
-def test_already_fully_applied(fake: FakeConnection, tmp_path: Path):
+def test_already_fully_applied(fake: FakeConnection, tmp_path: Path) -> None:
     path = tmp_path / "001.sql"
     path.write_text("CREATE SCHEMA app\nGO\nCREATE TABLE app.t (id int)\nGO\n", encoding="utf-8")
     assert not migrate.already_fully_applied("conn", path, "mssql")
@@ -188,24 +188,24 @@ def test_already_fully_applied(fake: FakeConnection, tmp_path: Path):
     assert migrate.already_fully_applied("conn", path, "mssql")
 
 
-def test_already_fully_applied_false_for_unrecognized_batch(fake: FakeConnection, tmp_path: Path):
+def test_already_fully_applied_false_for_unrecognized_batch(fake: FakeConnection, tmp_path: Path) -> None:
     path = tmp_path / "001.sql"
     path.write_text("CREATE TABLE app.t (id int)\nGO\nINSERT INTO app.t VALUES (1)\n", encoding="utf-8")
     fake.objects = {"app.t"}
     assert not migrate.already_fully_applied("conn", path, "mssql")
 
 
-def test_tracking_table_must_be_schema_dot_table(fake: FakeConnection):
+def test_tracking_table_must_be_schema_dot_table(fake: FakeConnection) -> None:
     with pytest.raises(ValueError):
         migrate.applied_migrations("conn", "x]; drop table y;--", "mssql")
 
 
-def test_missing_privileges_is_postgres_only():
+def test_missing_privileges_is_postgres_only() -> None:
     with pytest.raises(NotImplementedError):
         migrate.missing_privileges("conn", "role", ["a.b"], dialect="mssql")
 
 
-def test_cli_check_and_apply_with_mssql_dialect(fake: FakeConnection, tmp_path: Path):
+def test_cli_check_and_apply_with_mssql_dialect(fake: FakeConnection, tmp_path: Path) -> None:
     (tmp_path / "001_a.sql").write_text("CREATE SCHEMA app\n", encoding="utf-8")
     fake.objects = {"[dbo].[schema_migrations]"}
     fake.applied_rows = []
@@ -220,7 +220,7 @@ def test_cli_check_and_apply_with_mssql_dialect(fake: FakeConnection, tmp_path: 
     assert any("insert into [dbo].[schema_migrations]" in s for s in fake.sql())
 
 
-def test_build_mssql_conninfo():
+def test_build_mssql_conninfo() -> None:
     from pgdevkit.connection import build_mssql_conninfo
 
     assert build_mssql_conninfo("Server=x;Database=d") == "Server=x;Database=d"
@@ -232,7 +232,7 @@ def test_build_mssql_conninfo():
         build_mssql_conninfo("Server=x;authentication = ActiveDirectoryMSI", "a@b.c")
 
 
-def test_cli_entra_user_with_mssql_adds_authentication(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+def test_cli_entra_user_with_mssql_adds_authentication(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     seen: list[str] = []
     con = FakeConnection(objects={"[dbo].[schema_migrations]"})
     monkeypatch.setattr(migrate_mssql, "connect", lambda conninfo: (seen.append(conninfo), con)[1])
@@ -243,18 +243,27 @@ def test_cli_entra_user_with_mssql_adds_authentication(monkeypatch: pytest.Monke
     assert seen == ["Server=x;Authentication=ActiveDirectoryDefault"]
 
 
-def test_cli_rejects_conflicting_authentication_and_unknown_dialect(tmp_path: Path):
+def test_cli_rejects_conflicting_authentication_and_unknown_dialect(tmp_path: Path) -> None:
     result = runner.invoke(
         app,
-        ["migrate", "check", str(tmp_path), "--url", "Server=x;Authentication=ActiveDirectoryMSI",
-         "--dialect", "mssql", "--entra-user", "a@b.c"],
+        [
+            "migrate",
+            "check",
+            str(tmp_path),
+            "--url",
+            "Server=x;Authentication=ActiveDirectoryMSI",
+            "--dialect",
+            "mssql",
+            "--entra-user",
+            "a@b.c",
+        ],
     )
     assert result.exit_code == 2
     result = runner.invoke(app, ["migrate", "check", str(tmp_path), "--url", "x", "--dialect", "oracle"])
     assert result.exit_code == 2
 
 
-def test_late_statement_error_surfaced_by_draining_result_sets_rolls_back(fake: FakeConnection, tmp_path: Path):
+def test_late_statement_error_surfaced_by_draining_result_sets_rolls_back(fake: FakeConnection, tmp_path: Path) -> None:
     fake.fail_on_nextset = True
     path = tmp_path / "001_multi.sql"
     path.write_text("UPDATE t SET a = 1; SELECT 1/0;\n", encoding="utf-8")
@@ -264,22 +273,24 @@ def test_late_statement_error_surfaced_by_draining_result_sets_rolls_back(fake: 
     assert not any("insert into" in s for s in fake.sql())
 
 
-def test_strip_comments_handles_block_nested_line_and_literals():
-    sql = "/* CREATE TABLE a (id int) /* nested */ still comment */ CREATE TABLE b (id int) -- CREATE TABLE c\n" \
-          "SELECT '/* not a comment */', '--nope', [we--ird]"
+def test_strip_comments_handles_block_nested_line_and_literals() -> None:
+    sql = (
+        "/* CREATE TABLE a (id int) /* nested */ still comment */ CREATE TABLE b (id int) -- CREATE TABLE c\n"
+        "SELECT '/* not a comment */', '--nope', [we--ird]"
+    )
     out = migrate_mssql.strip_comments(sql)
     assert "CREATE TABLE a" not in out and "CREATE TABLE c" not in out
     assert "CREATE TABLE b" in out
     assert "'/* not a comment */'" in out and "'--nope'" in out and "[we--ird]" in out
 
 
-def test_block_commented_create_table_is_not_a_verification_target():
+def test_block_commented_create_table_is_not_a_verification_target() -> None:
     batches = ["/* old: CREATE TABLE dbo.legacy (id int) */\nCREATE TABLE dbo.real (id int)"]
     assert migrate_mssql.created_table_names(batches) == ["dbo.real"]
     assert migrate_mssql.idempotent_target("/* CREATE TABLE x (id int) */ CREATE SCHEMA app") == ("schema", "app")
 
 
-def test_mssql_tracking_table_ignores_postgres_migrations_table_key(tmp_path: Path):
+def test_mssql_tracking_table_ignores_postgres_migrations_table_key(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
         "[tool.pgdevkit]\nmigrations_table = 'public.schema_migrations'\nmssql_migrations_table = 'ops.migrations'\n"
     )
@@ -290,13 +301,20 @@ def test_mssql_tracking_table_ignores_postgres_migrations_table_key(tmp_path: Pa
     assert migrate.default_tracking_table(tmp_path, dialect="mssql") == "dbo.schema_migrations"
 
 
-def test_confirmation_prompt_never_shows_mssql_credentials(fake: FakeConnection, tmp_path: Path):
+def test_confirmation_prompt_never_shows_mssql_credentials(fake: FakeConnection, tmp_path: Path) -> None:
     (tmp_path / "001_a.sql").write_text("CREATE SCHEMA app\n", encoding="utf-8")
     fake.objects = {"[dbo].[schema_migrations]"}
     result = runner.invoke(
         app,
-        ["migrate", "apply", str(tmp_path), "--dialect", "mssql",
-         "--url", "Server=h,1433;Database=d;UID=u;PWD=s3@cret"],
+        [
+            "migrate",
+            "apply",
+            str(tmp_path),
+            "--dialect",
+            "mssql",
+            "--url",
+            "Server=h,1433;Database=d;UID=u;PWD=s3@cret",
+        ],
         input="y\n",
     )
     assert result.exit_code == 0, result.output
@@ -304,13 +322,13 @@ def test_confirmation_prompt_never_shows_mssql_credentials(fake: FakeConnection,
     assert "s3@cret" not in result.output and "PWD" not in result.output
 
 
-def test_postgres_target_description_unchanged():
+def test_postgres_target_description_unchanged() -> None:
     from pgdevkit.cli import _describe_target
 
     assert _describe_target("postgresql://u:p@host:5432/db", "postgres") == "host:5432/db"
 
 
-def test_missing_mssql_extra_gives_install_hint(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+def test_missing_mssql_extra_gives_install_hint(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     def boom() -> None:
         raise ImportError("MSSQL support needs the mssql extra: pip install pgdevkit[mssql]")
 
@@ -320,16 +338,16 @@ def test_missing_mssql_extra_gives_install_hint(monkeypatch: pytest.MonkeyPatch,
     assert "pgdevkit[mssql]" in result.output
 
 
-def test_compare_entra_user_with_mssql_uses_authentication_keyword(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+def test_compare_entra_user_with_mssql_uses_authentication_keyword(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     seen: list[str] = []
 
     class StubBackend:
-        from pgdevkit.dialect import MSSQL as dialect
+        dialect = MSSQL
 
-        def introspect(self, conninfo: str):
+        def introspect(self, conninfo: str) -> DatabaseSchema:
             seen.append(conninfo)
-            from pgdevkit.models import DatabaseSchema
-
             return DatabaseSchema()
 
     monkeypatch.setattr("pgdevkit.cli.get_backend", lambda d: StubBackend())

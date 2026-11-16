@@ -19,7 +19,7 @@ from fastapi.routing import APIRoute
 from starlette.requests import ClientDisconnect
 from starlette.types import Message, Receive
 
-from .json_response import CLIENT_CLOSED_REQUEST
+from pgdevkit.fastapi.json_response import CLIENT_CLOSED_REQUEST
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +113,8 @@ class _Receiver:
         self.disconnected = asyncio.Event()
 
     async def read(self) -> None:
-        """Pump the server's messages into the queue until the client is gone (the queue's limit is the back-pressure)."""
+        """Pump the server's messages into the queue until the client is gone (the queue's limit is the
+        back-pressure)."""
         try:
             while True:
                 message = await self._receive()
@@ -122,7 +123,7 @@ class _Receiver:
                 await self._messages.put(message)
                 if message["type"] == "http.disconnect":
                     return
-        except Exception as exc:  # noqa: BLE001 - a broken server: the handler sees it, the client is not treated as gone
+        except Exception as exc:
             await self._messages.put(exc)
 
     async def receive(self) -> Message:

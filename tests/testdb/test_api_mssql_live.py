@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
+from pathlib import Path
 
 import mssql_python
 import pytest
-from pathlib import Path
 
-from pgdevkit.testdb.mssql import constants
 from pgdevkit.testdb.api import (
     clean_testdb,
     ensure_testdb,
@@ -15,6 +14,7 @@ from pgdevkit.testdb.api import (
     snapshot_testdb,
     status,
 )
+from pgdevkit.testdb.mssql import constants
 from tests.testdb.conftest import requires_mssql
 
 # Selects these (live, container-requiring) tests in the dedicated GitHub
@@ -35,7 +35,7 @@ def _query(dsn: str, sql: str) -> list[tuple]:
 
 
 @requires_mssql
-def test_ensure_testdb_applies_schema_and_seeds_data(project_factory: Callable[..., Path]):
+def test_ensure_testdb_applies_schema_and_seeds_data(project_factory: Callable[..., Path]) -> None:
     project = project_factory("mssqllive", "main", engine="mssql")
     try:
         env = ensure_testdb(project)
@@ -48,7 +48,7 @@ def test_ensure_testdb_applies_schema_and_seeds_data(project_factory: Callable[.
 
 
 @requires_mssql
-def test_ensure_testdb_is_idempotent(project_factory: Callable[..., Path]):
+def test_ensure_testdb_is_idempotent(project_factory: Callable[..., Path]) -> None:
     project = project_factory("mssqllive2", "main", engine="mssql")
     try:
         ensure_testdb(project)
@@ -61,7 +61,7 @@ def test_ensure_testdb_is_idempotent(project_factory: Callable[..., Path]):
 
 
 @requires_mssql
-def test_ensure_testdb_resolves_view_to_view_dependency(project_factory: Callable[..., Path]):
+def test_ensure_testdb_resolves_view_to_view_dependency(project_factory: Callable[..., Path]) -> None:
     # a_wrapper_view selects from b_base_view -- only passes if the
     # dependency-ordering logic in schema.py (shared with the Postgres path,
     # dialect-parametrized in this PR) also works for T-SQL scripts.
@@ -74,14 +74,17 @@ def test_ensure_testdb_resolves_view_to_view_dependency(project_factory: Callabl
         clean_testdb(project)
 
 
-def _generated_ddl(conn) -> None:
+def _generated_ddl(conn: mssql_python.Connection) -> None:
     cur = conn.cursor()
     cur.execute("IF SCHEMA_ID('gen') IS NULL EXEC('CREATE SCHEMA gen')")
-    cur.execute("IF OBJECT_ID('gen.[Company$Cust_ Ledg_ Entry é]') IS NULL CREATE TABLE gen.[Company$Cust_ Ledg_ Entry é] (id int PRIMARY KEY)")
+    cur.execute(
+        "IF OBJECT_ID('gen.[Company$Cust_ Ledg_ Entry é]') IS NULL "
+        "CREATE TABLE gen.[Company$Cust_ Ledg_ Entry é] (id int PRIMARY KEY)"
+    )
 
 
 @requires_mssql
-def test_apply_hook_runs_after_scripts(project_factory: Callable[..., Path]):
+def test_apply_hook_runs_after_scripts(project_factory: Callable[..., Path]) -> None:
     project = project_factory("mssqlhook1", "main", engine="mssql")
     try:
         ensure_testdb(project, apply=_generated_ddl)
@@ -95,7 +98,7 @@ def test_apply_hook_runs_after_scripts(project_factory: Callable[..., Path]):
 
 
 @requires_mssql
-def test_apply_hook_can_replace_scripts(project_factory: Callable[..., Path]):
+def test_apply_hook_can_replace_scripts(project_factory: Callable[..., Path]) -> None:
     project = project_factory("mssqlhook2", "main", engine="mssql")
     try:
         ensure_testdb(project, apply=_generated_ddl, apply_scripts=False)
@@ -108,7 +111,7 @@ def test_apply_hook_can_replace_scripts(project_factory: Callable[..., Path]):
 
 
 @requires_mssql
-def test_snapshot_restore_round_trip(project_factory: Callable[..., Path]):
+def test_snapshot_restore_round_trip(project_factory: Callable[..., Path]) -> None:
     project = project_factory("mssqlsnap1", "main", engine="mssql")
     try:
         ensure_testdb(project)
@@ -131,7 +134,7 @@ def test_snapshot_restore_round_trip(project_factory: Callable[..., Path]):
 
 
 @requires_mssql
-def test_restore_without_snapshot_raises(project_factory: Callable[..., Path]):
+def test_restore_without_snapshot_raises(project_factory: Callable[..., Path]) -> None:
     project = project_factory("mssqlsnap2", "main", engine="mssql")
     try:
         ensure_testdb(project)
@@ -142,7 +145,7 @@ def test_restore_without_snapshot_raises(project_factory: Callable[..., Path]):
 
 
 @requires_mssql
-def test_restore_refuses_when_other_snapshots_exist(project_factory: Callable[..., Path]):
+def test_restore_refuses_when_other_snapshots_exist(project_factory: Callable[..., Path]) -> None:
     project = project_factory("mssqlsnap3", "main", engine="mssql")
     try:
         ensure_testdb(project)
@@ -155,7 +158,7 @@ def test_restore_refuses_when_other_snapshots_exist(project_factory: Callable[..
 
 
 @requires_mssql
-def test_snapshot_is_not_an_orphan_and_goes_with_its_database(project_factory: Callable[..., Path]):
+def test_snapshot_is_not_an_orphan_and_goes_with_its_database(project_factory: Callable[..., Path]) -> None:
     project = project_factory("mssqlsnap4", "main", engine="mssql")
     try:
         ensure_testdb(project)
@@ -164,11 +167,13 @@ def test_snapshot_is_not_an_orphan_and_goes_with_its_database(project_factory: C
         assert _query(status(project)["dsn"], f"SELECT count(*) FROM sys.databases WHERE name = '{snapshot}'") == [(1,)]
     finally:
         clean_testdb(project)
-    assert _query(constants.conninfo("master"), f"SELECT count(*) FROM sys.databases WHERE name = '{snapshot}'") == [(0,)]
+    assert _query(constants.conninfo("master"), f"SELECT count(*) FROM sys.databases WHERE name = '{snapshot}'") == [
+        (0,)
+    ]
 
 
 @requires_mssql
-def test_force_reset_drops_snapshots(project_factory: Callable[..., Path]):
+def test_force_reset_drops_snapshots(project_factory: Callable[..., Path]) -> None:
     project = project_factory("mssqlsnap5", "main", engine="mssql")
     try:
         ensure_testdb(project)

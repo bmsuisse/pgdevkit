@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import AsyncIterator, Sequence
+from typing import cast
 
 import psycopg
 import pytest
-from psycopg.sql import SQL, Placeholder
+from psycopg.sql import SQL, Identifier, Placeholder
 from psycopg.sql import Literal as SqlLiteral
 from pydantic import ConfigDict
 
@@ -23,6 +24,7 @@ from pgdevkit.db import (
     pg_upsert_many,
     pg_upsert_many_dict,
 )
+from pgdevkit.db.crud import OrderBy
 from pgdevkit.testdb import constants
 from pgdevkit.testdb.container import ensure_container
 from tests.testdb.conftest import RUN_SUFFIX, requires_podman
@@ -78,11 +80,11 @@ class Gadget(PostgresTableModel):
 
 
 @pytest.fixture
-async def pool(monkeypatch: pytest.MonkeyPatch):
+async def pool(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[PgPool]:
     ensure_container()
     with psycopg.connect(_admin_dsn(), autocommit=True) as con:
-        con.execute(f'DROP DATABASE IF EXISTS "{TEST_DB}"')
-        con.execute(f'CREATE DATABASE "{TEST_DB}"')
+        con.execute(SQL("DROP DATABASE IF EXISTS {}").format(Identifier(TEST_DB)))
+        con.execute(SQL("CREATE DATABASE {}").format(Identifier(TEST_DB)))
     with psycopg.connect(constants.conninfo(TEST_DB), autocommit=True) as con:
         con.execute("CREATE TABLE widget (id serial PRIMARY KEY, name text NOT NULL)")
         con.execute("CREATE TYPE label_pair AS (en text, de text)")
@@ -101,11 +103,11 @@ async def pool(monkeypatch: pytest.MonkeyPatch):
     yield p
     await p.close()
     with psycopg.connect(_admin_dsn(), autocommit=True) as con:
-        con.execute(f'DROP DATABASE IF EXISTS "{TEST_DB}"')
+        con.execute(SQL("DROP DATABASE IF EXISTS {}").format(Identifier(TEST_DB)))
 
 
 @requires_podman
-async def test_insert_retrieve_update_upsert_delete_roundtrip(pool: PgPool):
+async def test_insert_retrieve_update_upsert_delete_roundtrip(pool: PgPool) -> None:
     async with pool.connection() as con:
         inserted = await pg_insert(con, ("public", "widget"), {"name": "sprocket"})
         assert inserted["name"] == "sprocket"
@@ -130,7 +132,7 @@ async def test_insert_retrieve_update_upsert_delete_roundtrip(pool: PgPool):
 
 
 @requires_podman
-async def test_upsert_and_upsert_many(pool: PgPool):
+async def test_upsert_and_upsert_many(pool: PgPool) -> None:
     async with pool.connection() as con:
         inserted = await pg_insert(con, ("public", "widget"), {"name": "sprocket"})
         widget = Widget(id=inserted["id"], name="sprocket")
@@ -147,7 +149,7 @@ async def test_upsert_and_upsert_many(pool: PgPool):
 
 
 @requires_podman
-async def test_upsert_many_dict_must_exist_updates_without_inserting(pool: PgPool):
+async def test_upsert_many_dict_must_exist_updates_without_inserting(pool: PgPool) -> None:
     async with pool.connection() as con:
         inserted = await pg_insert(con, ("public", "widget"), {"name": "sprocket"})
         existing_id = inserted["id"]
@@ -168,7 +170,7 @@ async def test_upsert_many_dict_must_exist_updates_without_inserting(pool: PgPoo
 
 
 @requires_podman
-async def test_insert_many_accepts_model_instances(pool: PgPool):
+async def test_insert_many_accepts_model_instances(pool: PgPool) -> None:
     async with pool.connection() as con:
         await pg_insert_many(
             con,
@@ -181,7 +183,7 @@ async def test_insert_many_accepts_model_instances(pool: PgPool):
 
 
 @requires_podman
-async def test_insert_retrieve_composite_column_with_normalizer(pool: PgPool):
+async def test_insert_retrieve_composite_column_with_normalizer(pool: PgPool) -> None:
     # label_pair mirrors a real project's locale-labels composite type: a
     # normalizer backfills a missing locale before the value is converted
     # into the psycopg composite type for INSERT. Both RETURNING and
@@ -203,7 +205,7 @@ async def test_insert_retrieve_composite_column_with_normalizer(pool: PgPool):
 
 
 @requires_podman
-async def test_update_dict_without_complex_helper_still_works_on_plain_columns(pool: PgPool):
+async def test_update_dict_without_complex_helper_still_works_on_plain_columns(pool: PgPool) -> None:
     # complex_helper is a new optional kwarg -- omitting it (the pre-existing call
     # shape) must behave exactly as before for tables with no composite/enum columns.
     async with pool.connection() as con:
@@ -218,7 +220,7 @@ async def test_update_dict_without_complex_helper_still_works_on_plain_columns(p
 
 
 @requires_podman
-async def test_update_dict_converts_enum_column_with_complex_helper(pool: PgPool):
+async def test_update_dict_converts_enum_column_with_complex_helper(pool: PgPool) -> None:
     # psycopg already binds a plain str to an enum-typed UPDATE target column
     # fine on its own (Postgres resolves it via the usual assignment cast), so
     # this isn't a failing-without/passing-with case the way composite columns
@@ -245,17 +247,21 @@ async def test_update_dict_converts_enum_column_with_complex_helper(pool: PgPool
 
 
 @requires_podman
-async def test_update_dict_composite_column_requires_complex_helper(pool: PgPool):
+async def test_update_dict_composite_column_requires_complex_helper(pool: PgPool) -> None:
     # Unlike enums, psycopg has no built-in way to adapt a plain Python dict
     # to a composite column type -- this is the real case pg_update_dict's
     # complex_helper support fixes.
     async with pool.connection() as con:
         helper = ComplexHelper(con)
-        inserted = await pg_insert(con, ("public", "gizmo"), {"label": {"en": "Hello", "de": "Hallo"}}, complex_helper=helper)
+        inserted = await pg_insert(
+            con, ("public", "gizmo"), {"label": {"en": "Hello", "de": "Hallo"}}, complex_helper=helper
+        )
         gizmo_id = inserted["id"]
 
         with pytest.raises(psycopg.ProgrammingError):
-            await pg_update_dict(con, ("public", "gizmo"), {"id": gizmo_id, "label": {"en": "Bye", "de": "Tschuess"}}, ["id"])
+            await pg_update_dict(
+                con, ("public", "gizmo"), {"id": gizmo_id, "label": {"en": "Bye", "de": "Tschuess"}}, ["id"]
+            )
 
         await pg_update_dict(
             con,
@@ -270,36 +276,58 @@ async def test_update_dict_composite_column_requires_complex_helper(pool: PgPool
 
 
 @requires_podman
-async def test_pg_retrieve_many_where_order_by_and_limit(pool: PgPool):
+async def test_pg_retrieve_many_where_order_by_and_limit(pool: PgPool) -> None:
     async with pool.connection() as con:
-        await pg_insert_many(con, ("public", "widget"), [{"name": n} for n in ("cog", "sprocket", "spring", "50% off", "gear")])
+        await pg_insert_many(
+            con, ("public", "widget"), [{"name": n} for n in ("cog", "sprocket", "spring", "50% off", "gear")]
+        )
 
-        def names(rows) -> list[str]:
+        def names(rows: Sequence[Widget]) -> list[str]:
             return [r.name for r in rows]
 
         # unchanged: equality filters only
         assert names(await pg_retrieve_many(con, Widget, {"name": "cog"})) == ["cog"]
 
         # order_by: a column, several, a direction, or a composable
-        assert names(await pg_retrieve_many(con, Widget, {}, order_by="name")) == ["50% off", "cog", "gear", "spring", "sprocket"]
-        assert names(await pg_retrieve_many(con, Widget, {}, order_by=[("name", "desc")], limit=2)) == ["sprocket", "spring"]
+        assert names(await pg_retrieve_many(con, Widget, {}, order_by="name")) == [
+            "50% off",
+            "cog",
+            "gear",
+            "spring",
+            "sprocket",
+        ]
+        assert names(await pg_retrieve_many(con, Widget, {}, order_by=[("name", "desc")], limit=2)) == [
+            "sprocket",
+            "spring",
+        ]
         assert names(await pg_retrieve_many(con, Widget, {}, order_by=["name"], limit=0)) == []
         by_length = SQL("length(name) DESC, name")
         assert names(await pg_retrieve_many(con, Widget, {}, order_by=by_length, limit=2)) == ["sprocket", "50% off"]
 
         # where as a t-string: values are bound, a literal % is no problem, filters are ANDed in
         pattern = "sp%"
-        assert names(await pg_retrieve_many(con, Widget, {}, where=t"name LIKE {pattern}", order_by="name")) == ["spring", "sprocket"]
-        assert names(await pg_retrieve_many(con, Widget, {"name": "spring"}, where=t"name LIKE {pattern}")) == ["spring"]
-        assert names(await pg_retrieve_many(con, Widget, {}, where=t"name LIKE '50%' OR name = {'cog'}", order_by="name")) == ["50% off", "cog"]
+        assert names(await pg_retrieve_many(con, Widget, {}, where=t"name LIKE {pattern}", order_by="name")) == [
+            "spring",
+            "sprocket",
+        ]
+        assert names(await pg_retrieve_many(con, Widget, {"name": "spring"}, where=t"name LIKE {pattern}")) == [
+            "spring"
+        ]
+        assert names(
+            await pg_retrieve_many(con, Widget, {}, where=t"name LIKE '50%' OR name = {'cog'}", order_by="name")
+        ) == ["50% off", "cog"]
         minimum = 0
         assert len(await pg_retrieve_many(con, Widget, {}, where=t"id > {minimum}", limit=3)) == 3
         assert await pg_retrieve_many(con, Widget, {}, where=t"false") == []
 
         # where as a composable (+ params), also together with filters
         like = SQL("name LIKE {p}").format(p=Placeholder("pattern"))
-        assert names(await pg_retrieve_many(con, Widget, {}, where=like, params={"pattern": "sp%"}, order_by="name")) == ["spring", "sprocket"]
-        assert names(await pg_retrieve_many(con, Widget, {"name": "cog"}, where=like, params={"pattern": "c%"})) == ["cog"]
+        assert names(
+            await pg_retrieve_many(con, Widget, {}, where=like, params={"pattern": "sp%"}, order_by="name")
+        ) == ["spring", "sprocket"]
+        assert names(await pg_retrieve_many(con, Widget, {"name": "cog"}, where=like, params={"pattern": "c%"})) == [
+            "cog"
+        ]
         literal = SQL("name LIKE {p}").format(p=SqlLiteral("50%"))  # no params at all: % is not parsed
         assert names(await pg_retrieve_many(con, Widget, {}, where=literal)) == ["50% off"]
 
@@ -309,14 +337,16 @@ async def test_pg_retrieve_many_where_order_by_and_limit(pool: PgPool):
             await pg_retrieve_many(con, Widget, {}, where=t"true", params={"x": 1})
         with pytest.raises(ValueError, match="use a list"):
             await pg_retrieve_many(con, Widget, {}, order_by=("name", "desc"))  # type: ignore[arg-type]
-        assert names(await pg_retrieve_many(con, Widget, {}, order_by=[("name", "DESC")], limit=1)) == ["sprocket"]
+        # the direction is case-insensitive at runtime, though typed lowercase-only
+        desc_upper = cast("OrderBy", [("name", "DESC")])
+        assert names(await pg_retrieve_many(con, Widget, {}, order_by=desc_upper, limit=1)) == ["sprocket"]
         # `params` without `where` is simply unused; a missing `where` placeholder is psycopg's error
         assert names(await pg_retrieve_many(con, Widget, {"name": "cog"}, params={"unused": 1})) == ["cog"]
         with pytest.raises(ValueError, match="direction"):
-            await pg_retrieve_many(con, Widget, {}, order_by=[("name", "sideways")])  # type: ignore[list-item]
+            await pg_retrieve_many(con, Widget, {}, order_by=[("name", "sideways")])  # ty: ignore[invalid-argument-type]
         for bad in (-1, True, "3", 1.5):
             with pytest.raises(ValueError, match="limit"):
-                await pg_retrieve_many(con, Widget, {}, limit=bad)  # type: ignore[arg-type]
+                await pg_retrieve_many(con, Widget, {}, limit=bad)  # ty: ignore[invalid-argument-type]
         # a column name is an identifier, never SQL
         with pytest.raises(psycopg.errors.UndefinedColumn):
             await pg_retrieve_many(con, Widget, {}, order_by="name; DROP TABLE widget")
@@ -324,9 +354,11 @@ async def test_pg_retrieve_many_where_order_by_and_limit(pool: PgPool):
 
 
 @requires_podman
-async def test_pg_retrieve_many_where_with_complex_helper(pool: PgPool):
+async def test_pg_retrieve_many_where_with_complex_helper(pool: PgPool) -> None:
     async with pool.connection() as con:
-        await pg_insert_many(con, ("public", "gadget"), [{"status": "active"}, {"status": "inactive"}, {"status": "active"}])
+        await pg_insert_many(
+            con, ("public", "gadget"), [{"status": "active"}, {"status": "inactive"}, {"status": "active"}]
+        )
         rows = await pg_retrieve_many(
             con, Gadget, {"status": "active"}, complex_helper=ComplexHelper(con), order_by=[("id", "desc")], limit=1
         )
@@ -337,7 +369,7 @@ async def test_pg_retrieve_many_where_with_complex_helper(pool: PgPool):
 
 
 @requires_podman
-async def test_pooled_connection_is_unchanged_after_pg_helpers_with_complex_helper(pool: PgPool):
+async def test_pooled_connection_is_unchanged_after_pg_helpers_with_complex_helper(pool: PgPool) -> None:
     # Fixes #54: type registration used to stick to the physical connection and so to the next pool user.
     single = PgPool(env_prefix=ENV_PREFIX, max_size=1, min_size=1)
     await single.open()
@@ -347,7 +379,7 @@ async def test_pooled_connection_is_unchanged_after_pg_helpers_with_complex_help
         async def plain_read() -> tuple[int, tuple]:
             async with single.connection() as con:
                 row = await (await con.execute(plain)).fetchone()
-                return con.pgconn.backend_pid, row  # type: ignore[return-value]
+                return con.pgconn.backend_pid, row  # ty: ignore[invalid-return-type]
 
         pid, before = await plain_read()
         assert before == ("active", "(a,b)")
@@ -357,7 +389,9 @@ async def test_pooled_connection_is_unchanged_after_pg_helpers_with_complex_help
             helper = ComplexHelper(con)
             await pg_insert(con, ("public", "gadget"), {"status": "active"}, complex_helper=helper)
             await pg_insert(con, ("public", "gizmo"), {"label": {"en": "Hi", "de": "Hallo"}}, complex_helper="auto")
-            await pg_upsert_many_dict(con, ("public", "gizmo"), [{"id": 1, "label": {"en": "a", "de": "b"}}], ["id"], complex_helper=helper)
+            await pg_upsert_many_dict(
+                con, ("public", "gizmo"), [{"id": 1, "label": {"en": "a", "de": "b"}}], ["id"], complex_helper=helper
+            )
             assert [g.status for g in await pg_retrieve_many(con, Gadget, {}, complex_helper=helper)] == ["active"]
             assert (await pg_retrieve(con, Gizmo, {"id": 1}, complex_helper="auto")) is not None
             # inside the same checkout, too

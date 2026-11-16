@@ -8,7 +8,7 @@ import psycopg
 import psycopg.sql
 from psycopg.rows import dict_row
 
-from .dialect import resolve_dialect
+from pgdevkit.dialect import resolve_dialect
 
 STATS_DIRNAME = "_stats"
 TABLES_FILE = "_tables.json"
@@ -80,7 +80,18 @@ ORDER BY c.column_id
 """
 
 # Types that can't be COUNT(DISTINCT)ed / measured with DATALENGTH.
-_MSSQL_UNMEASURABLE = {"text", "ntext", "image", "xml", "geography", "geometry", "hierarchyid", "sql_variant", "json", "vector"}
+_MSSQL_UNMEASURABLE = {
+    "text",
+    "ntext",
+    "image",
+    "xml",
+    "geography",
+    "geometry",
+    "hierarchyid",
+    "sql_variant",
+    "json",
+    "vector",
+}
 
 
 def _mssql_q(conn: Any, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
@@ -88,7 +99,7 @@ def _mssql_q(conn: Any, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
     try:
         cur.execute(sql, params)
         names = [c[0] for c in cur.description]
-        return [dict(zip(names, row)) for row in cur.fetchall()]
+        return [dict(zip(names, row, strict=False)) for row in cur.fetchall()]
     finally:
         cur.close()
 
@@ -108,7 +119,7 @@ def _collect_mssql_stats(
     # Lazy: the mssql extra isn't required for postgres-only use.
     import mssql_python
 
-    from .mssql_introspect import _format_type, _is_system_schema
+    from pgdevkit.mssql_introspect import _format_type, _is_system_schema
 
     tables: dict[str, dict[str, Any]] = {}
     columns: dict[str, dict[str, Any]] = {}

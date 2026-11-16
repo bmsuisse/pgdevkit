@@ -9,6 +9,7 @@ from pgdevkit.backends import get_backend
 from pgdevkit.diff import compute_diff
 from pgdevkit.parser import parse_directory
 from pgdevkit.testdb.api import clean_testdb, ensure_testdb, status
+
 # _make_project (not the project_factory fixture) -- project_factory lives
 # in tests/testdb/conftest.py, whose fixtures pytest only injects into tests
 # under tests/testdb/ itself. This file sits outside that directory, so it
@@ -25,7 +26,7 @@ pytestmark = pytest.mark.mssql
 
 
 @requires_mssql
-def test_introspection_matches_applied_scripts_with_no_diff(tmp_path: Path):
+def test_introspection_matches_applied_scripts_with_no_diff(tmp_path: Path) -> None:
     project = _make_project(tmp_path, "mssqlcompare", "main", engine="mssql")
     try:
         ensure_testdb(project)
@@ -75,7 +76,7 @@ CREATE INDEX [{name}$1] ON dbo.[{name}] ([Posting Date], [Flag]);
 
 
 @requires_mssql
-def test_nav_style_object_names_apply_introspect_and_compare_without_diffs(tmp_path: Path):
+def test_nav_style_object_names_apply_introspect_and_compare_without_diffs(tmp_path: Path) -> None:
     project = _make_project(tmp_path, "mssqlnav", "main", engine="mssql")
     _write_nav_style_database(project)
     try:
@@ -93,7 +94,7 @@ def test_nav_style_object_names_apply_introspect_and_compare_without_diffs(tmp_p
 
 
 @requires_mssql
-def test_nav_style_object_names_are_quoted_by_update_stats(tmp_path: Path):
+def test_nav_style_object_names_are_quoted_by_update_stats(tmp_path: Path) -> None:
     from typer.testing import CliRunner
 
     from pgdevkit.cli import app

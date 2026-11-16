@@ -1,19 +1,18 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping, Sequence
 from string.templatelib import Interpolation, Template
-from typing import Any, Callable, Literal, Mapping, Optional, Sequence, Type, TypeVar
+from typing import Any, Literal
 
 from psycopg import AsyncCursor
 from psycopg.connection_async import AsyncConnection
 from psycopg.rows import dict_row
-from psycopg.sql import Literal as SqlLiteral
 from psycopg.sql import SQL, Composable, Composed, Identifier, Placeholder
+from psycopg.sql import Literal as SqlLiteral
 from pydantic import BaseModel
 
-from .complex_types import ComplexHelper
-from .model import PostgresTableModel
-
-T = TypeVar("T", bound=PostgresTableModel)
+from pgdevkit.db.complex_types import ComplexHelper
+from pgdevkit.db.model import PostgresTableModel
 
 # `complex_helper=` of every function below: a `ComplexHelper` you configured (e.g. with `normalizers`), `"auto"` for
 # a default one on the connection (what it learns is cached per connection), or None for plain psycopg behaviour.
@@ -98,9 +97,9 @@ async def _convert_complex_values_many(
     return converted_rows
 
 
-async def pg_retrieve(
+async def pg_retrieve[T: PostgresTableModel](
     con: AsyncConnection,
-    data_type: Type[T],
+    data_type: type[T],
     pks: dict,
     *,
     complex_helper: ComplexHelperArg = None,
@@ -146,12 +145,12 @@ def _order_by_sql(order_by: OrderBy | None) -> Composable | None:
     return SQL(" ORDER BY {}").format(SQL(", ").join(parts)) if parts else None
 
 
-async def pg_retrieve_many(
+async def pg_retrieve_many[T: PostgresTableModel](
     con: AsyncConnection,
-    data_type: Type[T],
+    data_type: type[T],
     filters: dict,
     *,
-    from_dict: Optional[Callable[[Mapping], T]] = None,
+    from_dict: Callable[[Mapping], T] | None = None,
     complex_helper: ComplexHelperArg = None,
     where: Composable | Template | None = None,
     params: Mapping[str, Any] | None = None,
@@ -282,7 +281,7 @@ async def pg_update_dict(
         return await cur.fetchone()
 
 
-async def pg_update(
+async def pg_update[T: PostgresTableModel](
     con: AsyncConnection, data: T, data_type: type[T], *, complex_helper: ComplexHelperArg = None
 ) -> Any | None:
     """Update a typed model instance."""
@@ -309,7 +308,8 @@ async def pg_upsert_dict(
         fields = list(data)
         updates = [SQL("{col} = EXCLUDED.{col}").format(col=Identifier(k)) for k in fields]
         query = SQL(
-            "INSERT INTO {tbl} ({cols}) VALUES ({vals}) ON CONFLICT ({pks}) DO UPDATE SET {updates} RETURNING {returning}"
+            "INSERT INTO {tbl} ({cols}) VALUES ({vals}) ON CONFLICT ({pks}) DO UPDATE SET {updates} "
+            "RETURNING {returning}"
         ).format(
             tbl=Identifier(*table_name),
             cols=SQL(", ").join(Identifier(k) for k in fields),
@@ -324,7 +324,7 @@ async def pg_upsert_dict(
     return row
 
 
-async def pg_upsert(
+async def pg_upsert[T: PostgresTableModel](
     con: AsyncConnection, data: T, data_type: type[T], *, complex_helper: ComplexHelperArg = None
 ) -> dict:
     """Upsert a typed model instance."""
@@ -380,7 +380,7 @@ async def pg_upsert_many_dict(
         await cur.executemany(query, data)
 
 
-async def pg_upsert_many(
+async def pg_upsert_many[T: PostgresTableModel](
     con: AsyncConnection, data: Sequence[T], data_type: type[T], *, complex_helper: ComplexHelperArg = None
 ) -> None:
     await pg_upsert_many_dict(
@@ -426,7 +426,7 @@ async def pg_delete_dict(con: AsyncConnection, table_name: tuple[str, str], data
         return await cur.fetchone()
 
 
-async def pg_delete(con: AsyncConnection, data: T, data_type: type[T]) -> T | None:
+async def pg_delete[T: PostgresTableModel](con: AsyncConnection, data: T, data_type: type[T]) -> T | None:
     """Delete a typed model instance by its primary key(s)."""
     pk_dict = {pk: getattr(data, pk) for pk in data_type.get_primary_key()}
     row = await pg_delete_dict(con, data_type.get_table_name(), pk_dict)
