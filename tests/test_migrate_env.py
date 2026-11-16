@@ -5,8 +5,8 @@ from pathlib import Path
 from pgdevkit.migrate import list_migration_files
 
 
-def _write(dir: Path, name: str, content: str = "select 1;\n") -> Path:
-    p = dir / name
+def _write(directory: Path, name: str, content: str = "select 1;\n") -> Path:
+    p = directory / name
     p.write_text(content, encoding="utf-8")
     return p
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
+
 import pytest
 
 from pgdevkit.dialect import MSSQL, POSTGRES, resolve_dialect
@@ -40,5 +42,5 @@ def test_mssql_dialect_fields() -> None:
 
 
 def test_dialect_is_frozen() -> None:
-    with pytest.raises(Exception):
+    with pytest.raises(FrozenInstanceError):
         POSTGRES.name = "mssql"  # type: ignore[misc]

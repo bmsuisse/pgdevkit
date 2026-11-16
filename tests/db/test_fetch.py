@@ -153,8 +153,8 @@ async def _active_sleeps(pool: PgPool) -> int:
         return row[0]
 
 
-async def _wait_for_active_sleeps(pool: PgPool, expected: int, timeout: float = 10) -> None:
-    deadline = time.monotonic() + timeout
+async def _wait_for_active_sleeps(pool: PgPool, expected: int, max_wait: float = 10) -> None:
+    deadline = time.monotonic() + max_wait
     while await _active_sleeps(pool) != expected:
         assert time.monotonic() < deadline, f"expected {expected} active pg_sleep(30) queries"
         await asyncio.sleep(0.05)

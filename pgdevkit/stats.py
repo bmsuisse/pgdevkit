@@ -99,7 +99,7 @@ def _mssql_q(conn: Any, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
     try:
         cur.execute(sql, params)
         names = [c[0] for c in cur.description]
-        return [dict(zip(names, row)) for row in cur.fetchall()]
+        return [dict(zip(names, row, strict=False)) for row in cur.fetchall()]
     finally:
         cur.close()
 

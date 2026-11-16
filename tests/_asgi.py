@@ -48,8 +48,8 @@ async def active_queries(dsn: str, application_name: str) -> int:
         return len(await cur.fetchall())
 
 
-async def wait_until(condition: Callable[[], Awaitable[bool] | bool], *, timeout: float = 5.0) -> bool:
-    deadline = time.monotonic() + timeout
+async def wait_until(condition: Callable[[], Awaitable[bool] | bool], *, max_wait: float = 5.0) -> bool:
+    deadline = time.monotonic() + max_wait
     while time.monotonic() < deadline:
         result = condition()
         if (await result) if isinstance(result, Awaitable) else result:

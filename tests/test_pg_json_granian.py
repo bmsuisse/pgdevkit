@@ -19,6 +19,10 @@ from tests._asgi import active_queries, wait_until
 pytest.importorskip("granian")
 
 
+async def _read_text(path: Path) -> str:
+    return await asyncio.to_thread(path.read_text)
+
+
 @pytest.fixture(scope="module")
 def app_name() -> str:
     return f"pgjson-granian-{uuid.uuid4().hex[:8]}"
@@ -74,18 +78,18 @@ async def test_normal_response(server: str) -> None:
 async def test_finished_responses_leave_no_failed_watcher_behind(server: str, server_log: Path, path: str) -> None:
     """Issue #59: with BaseHTTPMiddleware in front, the disconnect watcher used to wake up after almost every response
     and fail with "Cannot change state of finished Timeout" (logged as "Task exception was never retrieved")."""
-    log_start = len(server_log.read_text())
+    log_start = len(await _read_text(server_log))
     async with httpx.AsyncClient() as client:
         for _ in range(20):
             assert (await client.get(f"{server}{path}")).status_code == (200 if path == "/ok" else 500)
     await asyncio.sleep(0.2)  # the server logs it when the failed task is collected
-    assert "never retrieved" not in server_log.read_text()[log_start:]
+    assert "never retrieved" not in (await _read_text(server_log))[log_start:]
 
 
 async def test_aborted_client_cancels_the_query(
     server: str, server_log: Path, postgres_dsn: str, app_name: str
 ) -> None:
-    log_start = len(server_log.read_text())
+    log_start = len(await _read_text(server_log))
 
     async def query_running() -> bool:
         return await active_queries(postgres_dsn, app_name) == 1
@@ -99,11 +103,13 @@ async def test_aborted_client_cancels_the_query(
                 await client.get(f"{server}/sleep")
 
     request = asyncio.create_task(client_gives_up())
-    assert await wait_until(query_running, timeout=5), "the query never started"
+    assert await wait_until(query_running, max_wait=5), "the query never started"
     await request
 
-    assert await wait_until(query_stopped, timeout=5), "the query kept running after the client left"
-    assert "Traceback" not in server_log.read_text()[log_start:]  # e.g. BaseHTTPMiddleware: "No response returned."
+    assert await wait_until(query_stopped, max_wait=5), "the query kept running after the client left"
+    assert (
+        "Traceback" not in (await _read_text(server_log))[log_start:]
+    )  # e.g. BaseHTTPMiddleware: "No response returned."
 
 
 async def test_error_after_the_first_byte_ends_the_response_without_a_valid_json_array(server: str) -> None:
@@ -135,15 +141,15 @@ async def test_cancel_on_disconnect_route_cancels_the_query_when_the_client_leav
     async def stopped() -> bool:
         return await active_queries(postgres_dsn, app_name) == 0
 
-    log_start = len(server_log.read_text())  # the log is shared with tests that fail on purpose
+    log_start = len(await _read_text(server_log))  # the log is shared with tests that fail on purpose
     request = asyncio.create_task(abort_after(server, "/cancellable-sleep", 2))
-    assert await wait_until(running, timeout=5), "the query never started"
+    assert await wait_until(running, max_wait=5), "the query never started"
     await request
 
-    assert await wait_until(stopped, timeout=5), "the query kept running after the client left"
+    assert await wait_until(stopped, max_wait=5), "the query kept running after the client left"
     async with httpx.AsyncClient() as client:  # server, pool and middleware are fine afterwards
         assert (await client.post(f"{server}/cancellable-ok")).json() == [{"one": 1}]
-    assert "Traceback" not in server_log.read_text()[log_start:]
+    assert "Traceback" not in (await _read_text(server_log))[log_start:]
 
 
 async def test_a_route_that_did_not_opt_in_runs_to_completion(server: str, postgres_dsn: str, app_name: str) -> None:
@@ -151,11 +157,11 @@ async def test_a_route_that_did_not_opt_in_runs_to_completion(server: str, postg
         return await active_queries(postgres_dsn, app_name) == 1
 
     request = asyncio.create_task(abort_after(server, "/plain-sleep", 1))
-    assert await wait_until(running, timeout=5)
+    assert await wait_until(running, max_wait=5)
     await request
     await asyncio.sleep(0.5)
     assert await active_queries(postgres_dsn, app_name) == 1, "a plain route must not be cancelled"
-    assert await wait_until(lambda: _idle(postgres_dsn, app_name), timeout=6)
+    assert await wait_until(lambda: _idle(postgres_dsn, app_name), max_wait=6)
 
 
 async def _idle(dsn: str, app_name: str) -> bool:

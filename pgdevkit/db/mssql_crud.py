@@ -99,11 +99,22 @@ async def _execute_returning(con: Any, sql: str, params: list) -> dict | None:
             cur.execute(sql, params)
             cols = [c[0] for c in cur.description]
             row = cur.fetchone()
-            return dict(zip(cols, row)) if row is not None else None
+            return dict(zip(cols, row, strict=False)) if row is not None else None
         finally:
             cur.close()
 
     return await asyncio.to_thread(_run)
+
+
+async def _execute(con: Any, sql: str, params: list) -> None:
+    def _run() -> None:
+        cur = con.cursor()
+        try:
+            cur.execute(sql, params)
+        finally:
+            cur.close()
+
+    await asyncio.to_thread(_run)
 
 
 async def _execute_many(con: Any, sql: str, param_rows: Sequence[Sequence]) -> None:
@@ -148,7 +159,7 @@ async def mssql_retrieve_many[T: TableModel](
         try:
             cur.execute(sql, params)
             cols = [c[0] for c in cur.description]
-            return [dict(zip(cols, row)) for row in cur.fetchall()]
+            return [dict(zip(cols, row, strict=False)) for row in cur.fetchall()]
         finally:
             cur.close()
 
@@ -259,15 +270,7 @@ async def mssql_upsert_many_dict(
         # already works.
         for row in data:
             sql, params = _build_upsert_merge(table_name, row, primary_keys)
-
-            def _run() -> None:
-                cur = con.cursor()
-                try:
-                    cur.execute(sql, params)
-                finally:
-                    cur.close()
-
-            await asyncio.to_thread(_run)
+            await _execute(con, sql, params)
 
 
 async def mssql_upsert_many[T: TableModel](

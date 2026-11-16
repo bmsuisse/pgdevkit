@@ -8,8 +8,8 @@ import pgdevkit.parser as parser_mod
 from pgdevkit.parser import parse_directory
 
 
-def _write(dir: Path, name: str, content: str) -> Path:
-    p = dir / name
+def _write(directory: Path, name: str, content: str) -> Path:
+    p = directory / name
     p.write_text(content, encoding="utf-8")
     return p
 

@@ -25,7 +25,7 @@ def _q(conn: Any, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
     try:
         cur.execute(sql, params)
         cols = [c[0] for c in cur.description]
-        return [dict(zip(cols, row)) for row in cur.fetchall()]
+        return [dict(zip(cols, row, strict=False)) for row in cur.fetchall()]
     finally:
         cur.close()
 

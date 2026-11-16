@@ -237,8 +237,8 @@ def _norm_sql(s: str) -> str:
 
 
 def _norm_body(s: str) -> str:
-    lines = [l.strip() for l in s.splitlines()]
-    return "\n".join(l.lower() for l in lines if l)
+    lines = [line.strip() for line in s.splitlines()]
+    return "\n".join(line.lower() for line in lines if line)
 
 
 def _norm_type(t: str, dialect: Dialect = POSTGRES) -> str:

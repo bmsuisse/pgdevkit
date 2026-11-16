@@ -112,7 +112,7 @@ async def test_open_uses_regular_pool_for_non_azure_host(monkeypatch: pytest.Mon
 def test_raw_pool_before_open_raises() -> None:
     pool = PgPool(env_prefix=ENV_PREFIX)
     with pytest.raises(RuntimeError, match="Call open"):
-        pool.raw_pool
+        _ = pool.raw_pool
 
 
 async def test_dsn_databricks_lakebase_entra(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -51,8 +51,8 @@ def get_azure_postgres_password(
     connection) don't re-probe the credential chain every time."""
     try:
         from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
-    except ImportError:
-        raise ImportError("Install azure-identity extra: pip install pgdevkit[azure]")
+    except ImportError as e:
+        raise ImportError("Install azure-identity extra: pip install pgdevkit[azure]") from e
     global _default_credential, _managed_identity_credential
     if managed_identity:
         if _managed_identity_credential is None:

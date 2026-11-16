@@ -105,6 +105,11 @@ ignore = [
     "UP042",
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# `all=` is a published keyword of clean_testdb() (mirrored by the mssql backend); renaming it would break callers
+"pgdevkit/testdb/api.py" = ["A002"]
+"pgdevkit/testdb/mssql/api.py" = ["A002"]
+
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"
 

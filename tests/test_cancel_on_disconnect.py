@@ -207,7 +207,7 @@ async def test_disconnect_cancels_the_handler_and_the_query(
     await asyncio.wait_for(task, timeout=5)
 
     assert events == ["cancelled"]
-    assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), timeout=3)
+    assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), max_wait=3)
     assert client.status == 499
 
 
@@ -254,7 +254,7 @@ async def test_cancelling_the_request_cancels_the_handler_and_the_query(
         await task
 
     assert events == ["cancelled"]
-    assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), timeout=3)
+    assert await wait_until(lambda: query_stopped(postgres_dsn, app_name), max_wait=3)
 
 
 async def test_no_task_is_left_behind(app: FastAPI) -> None:
@@ -306,7 +306,7 @@ async def test_a_cancellation_during_the_handlers_cleanup_is_not_swallowed(app: 
     task = asyncio.create_task(client.call(app))
     await asyncio.sleep(0.2)
     client.disconnect.set()
-    assert await wait_until(lambda: events == ["cleaning up"], timeout=3)
+    assert await wait_until(lambda: events == ["cleaning up"], max_wait=3)
 
     task.cancel()  # e.g. server shutdown or a timeout, while the handler is still cleaning up
     with pytest.raises(asyncio.CancelledError):

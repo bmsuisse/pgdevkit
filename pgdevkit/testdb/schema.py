@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -226,9 +227,9 @@ async def _insert_test_data(
     con: psycopg.AsyncConnection,
     complex_helper: ComplexHelper,
 ) -> None:
-    if not json_file.exists():
+    if not await asyncio.to_thread(json_file.exists):
         return
-    rows: list[dict[str, Any]] = json.loads(json_file.read_text(encoding="utf-8"))
+    rows: list[dict[str, Any]] = json.loads(await asyncio.to_thread(json_file.read_text, encoding="utf-8"))
     if not rows:
         return
 

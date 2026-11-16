@@ -348,8 +348,9 @@ async def test_pg_helpers_do_not_change_how_the_connection_reads_enums_and_compo
             await call()
             assert await _plain_read(con) == before, f"{what} changed how the connection reads enums/composites"
 
+        kw: dict[str, Any] = {}  # filled per helper below; read by the (immediately awaited) lambdas
         for helper_arg in ("auto", ComplexHelper(con), ComplexHelper(con, cache=False)):
-            kw = {"complex_helper": helper_arg}
+            kw["complex_helper"] = helper_arg
             await check("pg_retrieve", lambda: pg_retrieve(con, Gadget, {"id": 1}, **kw))
             await check("pg_retrieve_many", lambda: pg_retrieve_many(con, Gadget, {}, limit=1, **kw))
             await check(

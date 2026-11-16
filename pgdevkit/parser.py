@@ -324,8 +324,8 @@ def _parse_function_details(sql: str) -> tuple[str, str, str, str]:
     dm = _DOLLAR_BODY.search(sql)
     if dm:
         raw_body = dm.group(2)
-        lines = [l.strip() for l in raw_body.splitlines()]
-        body = "\n".join(l.lower() for l in lines if l)
+        lines = [line.strip() for line in raw_body.splitlines()]
+        body = "\n".join(line.lower() for line in lines if line)
 
     return args, return_type, language, body
 
@@ -360,8 +360,8 @@ def _parse_function_details_tsql(sql: str) -> tuple[str, str, str, str]:
         wrapper = _BEGIN_END_WRAPPER.match(raw_body)
         if wrapper:
             raw_body = wrapper.group(1)
-        lines = [l.strip() for l in raw_body.splitlines()]
-        body = "\n".join(l.lower() for l in lines if l)
+        lines = [line.strip() for line in raw_body.splitlines()]
+        body = "\n".join(line.lower() for line in lines if line)
 
     return args, return_type, "sql", body
 

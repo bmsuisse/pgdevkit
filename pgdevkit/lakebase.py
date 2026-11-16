@@ -22,8 +22,8 @@ _dns_cache: dict[tuple[str, str], str] = {}
 def _databricks_resource_token() -> str:
     try:
         from azure.identity import DefaultAzureCredential
-    except ImportError:
-        raise ImportError("Install azure-identity extra: pip install pgdevkit[azure]")
+    except ImportError as e:
+        raise ImportError("Install azure-identity extra: pip install pgdevkit[azure]") from e
     global _credential
     if _credential is None:
         _credential = DefaultAzureCredential()

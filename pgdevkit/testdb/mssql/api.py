@@ -75,9 +75,9 @@ async def _drop_database(db_name: str) -> None:
 
 
 async def _insert_test_data(json_file: Path, table: str, force_reset: bool, conn: Any) -> None:
-    if not json_file.exists():
+    if not await asyncio.to_thread(json_file.exists):
         return
-    rows: list[dict[str, Any]] = json.loads(json_file.read_text(encoding="utf-8"))
+    rows: list[dict[str, Any]] = json.loads(await asyncio.to_thread(json_file.read_text, encoding="utf-8"))
     if not rows:
         return
     schema, table_name = table.split(".")
@@ -346,7 +346,7 @@ def run_sql(config: ProjectConfig, db_name: str, sql: str) -> list[dict] | None:
                 cur.execute(batch)
                 if cur.description:
                     cols = [c[0] for c in cur.description]
-                    last_rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+                    last_rows = [dict(zip(cols, row, strict=False)) for row in cur.fetchall()]
                 else:
                     last_rows = None
             return last_rows

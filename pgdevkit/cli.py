@@ -133,7 +133,7 @@ def compare(
         backend = get_backend(dialect)
     except ValueError as e:
         err_console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(2)
+        raise typer.Exit(2) from e
 
     try:
         if backend.dialect.name == "mssql":
@@ -147,7 +147,7 @@ def compare(
             )
     except ValueError as e:
         err_console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(2)
+        raise typer.Exit(2) from e
 
     with console.status("Parsing SQL scripts..."):
         scripts_schema = parse_directory(
@@ -271,7 +271,7 @@ def update_stats(
         dialect = get_backend(dialect).dialect.name
     except ValueError as e:
         err_console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(2)
+        raise typer.Exit(2) from e
     conninfo = build_conninfo(url, entra_user)
     try:
         with console.status("Collecting stats..."):
@@ -280,7 +280,7 @@ def update_stats(
             )
     except KeyError as e:
         err_console.print(f"[red]Error:[/red] unknown table(s): {e.args[0]}")
-        raise typer.Exit(2)
+        raise typer.Exit(2) from e
     path = stats.write_stats(scripts_dir, tables, columns, prune=not table)
     console.print(f"Updated stats for {len(tables)} table(s) in {path.parent}")
 
@@ -296,7 +296,7 @@ def get_stats(
         result = stats.read_stats(scripts_dir, tables or [], columns=not no_columns)
     except (FileNotFoundError, KeyError) as e:
         err_console.print(f"[red]Error:[/red] {e.args[0]}")
-        raise typer.Exit(2)
+        raise typer.Exit(2) from e
     typer.echo(json.dumps(result, indent=2, sort_keys=True))
 
 
@@ -389,7 +389,7 @@ def testdb_shell() -> None:
 
 @testdb_app.command("clean")
 def testdb_clean(
-    all: bool = typer.Option(False, "--all", help="Drop every database belonging to this project"),
+    drop_all: bool = typer.Option(False, "--all", help="Drop every database belonging to this project"),
     orphaned: bool = typer.Option(
         False,
         "--orphaned",
@@ -398,10 +398,10 @@ def testdb_clean(
 ) -> None:
     """Drop this workspace's database (or every database of this project with --all,
     or only its orphaned ones with --orphaned)."""
-    if all and orphaned:
+    if drop_all and orphaned:
         err_console.print("[red]Error:[/red] pass at most one of --all, --orphaned")
         raise typer.Exit(2)
-    testdb.clean_testdb(all=all, orphaned=orphaned)
+    testdb.clean_testdb(all=drop_all, orphaned=orphaned)
     console.print("[green]Cleaned.[/green]")
 
 
@@ -438,18 +438,18 @@ def _migrate_target(
         resolved = get_backend(dialect).dialect
     except ValueError as e:
         err_console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(2)
+        raise typer.Exit(2) from e
     if resolved.name == "mssql":
         try:
             migrate_mssql.require_driver()
         except ImportError as e:
             err_console.print(f"[red]Error:[/red] {escape(str(e))}")
-            raise typer.Exit(2)
+            raise typer.Exit(2) from e
     try:
         conninfo = (build_mssql_conninfo if resolved.name == "mssql" else build_conninfo)(url, entra_user)
     except ValueError as e:
         err_console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(2)
+        raise typer.Exit(2) from e
     tracking_table = tracking_table or migrate.default_tracking_table(migrations_dir, dialect=resolved)
     return conninfo, resolved.name, tracking_table
 
