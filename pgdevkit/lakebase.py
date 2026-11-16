@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 _DATABRICKS_RESOURCE_SCOPE = "2ff814a6-3304-4ab8-85cb-cd0e6f879c1d/.default"
 _REFRESH_MARGIN_SECONDS = 300
 
-_credential: DefaultAzureCredential | None = None
+_credentials: dict[str, DefaultAzureCredential] = {}  # process-wide, created on first use
 _credential_cache: dict[tuple[str, str], tuple[str, float]] = {}
 _dns_cache: dict[tuple[str, str], str] = {}
 
@@ -24,10 +24,10 @@ def _databricks_resource_token() -> str:
         from azure.identity import DefaultAzureCredential
     except ImportError as e:
         raise ImportError("Install azure-identity extra: pip install pgdevkit[azure]") from e
-    global _credential
-    if _credential is None:
-        _credential = DefaultAzureCredential()
-    return _credential.get_token(_DATABRICKS_RESOURCE_SCOPE).token
+    credential = _credentials.get("default")
+    if credential is None:
+        credential = _credentials["default"] = DefaultAzureCredential()
+    return credential.get_token(_DATABRICKS_RESOURCE_SCOPE).token
 
 
 def _request_json(url: str, token: str, *, body: dict | None = None) -> dict:

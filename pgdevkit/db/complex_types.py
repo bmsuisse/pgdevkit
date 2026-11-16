@@ -272,8 +272,7 @@ class ComplexHelper:
     async def _get_complex_type(self, name: str, is_enum: bool, con: AsyncConnection) -> CompositeInfo | EnumInfo:
         name = name.removesuffix("[]")
         schema, type_name = name.split(".") if "." in name else ("public", name)
-        if type_name.startswith("_"):  # the array type in PostgreSQL starts with an underscore
-            type_name = type_name[1:]
+        type_name = type_name.removeprefix("_")  # the array type in PostgreSQL starts with an underscore
         if (schema, type_name) not in self.complex_types:
             ci = await (EnumInfo if is_enum else CompositeInfo).fetch(con, Identifier(schema, type_name))
             assert ci is not None, f"{'Enum' if is_enum else 'Complex'} type {name} not found in database"

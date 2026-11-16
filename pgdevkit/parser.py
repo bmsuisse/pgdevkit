@@ -134,10 +134,7 @@ def _handle_expr(expr: exp.Expression, raw: str, db_schema: DatabaseSchema, dial
 def _resolve_name(expr: exp.Create, dialect: Dialect) -> tuple[str, str] | None:
     """Return (schema, name) from a CREATE expression."""
     this = expr.this
-    if isinstance(this, exp.Schema):
-        table_node = this.this
-    else:
-        table_node = this
+    table_node = this.this if isinstance(this, exp.Schema) else this
 
     if isinstance(table_node, exp.Table):
         db_node = table_node.args.get("db")
@@ -390,10 +387,11 @@ def _handle_type(expr: exp.Create, db_schema: DatabaseSchema, dialect: Dialect) 
         db_schema.enums[enum.qualified_name] = enum
     elif isinstance(expression, exp.Schema):
         # Composite type: fields are ColumnDef-like
-        fields = []
-        for col in expression.expressions:
-            if isinstance(col, exp.ColumnDef) and col.kind:
-                fields.append((col.name, col.kind.sql(dialect=dialect.sqlglot_name).lower()))
+        fields = [
+            (col.name, col.kind.sql(dialect=dialect.sqlglot_name).lower())
+            for col in expression.expressions
+            if isinstance(col, exp.ColumnDef) and col.kind
+        ]
         comp = CompositeTypeDef(schema=tschema, name=tname, fields=fields)
         db_schema.composites[comp.qualified_name] = comp
 

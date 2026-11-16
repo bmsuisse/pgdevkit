@@ -114,6 +114,7 @@ def _run_cli(
         capture_output=True,
         text=True,
         env={**os.environ, **env} if env else None,
+        check=False,  # a failure is reported below, with the engine's stderr
     )
     if check and result.returncode != 0:
         raise RuntimeError(f"`{engine} {args[0]}` failed: {result.stderr.strip()}")
@@ -176,8 +177,8 @@ def _parse_tmpfs(spec: str) -> dict[str, str]:
     e.g. "/path:rw,size=64m;/other/path:ro,size=32m", matching `docker run
     --tmpfs /path:rw,size=64m --tmpfs /other/path:ro,size=32m`."""
     mounts: dict[str, str] = {}
-    for entry in spec.split(";"):
-        entry = entry.strip()
+    for raw_entry in spec.split(";"):
+        entry = raw_entry.strip()
         if not entry:
             continue
         path, _, options = entry.partition(":")

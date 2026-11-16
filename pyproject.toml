@@ -109,6 +109,8 @@ ignore = [
 # `all=` is a published keyword of clean_testdb() (mirrored by the mssql backend); renaming it would break callers
 "pgdevkit/testdb/api.py" = ["A002"]
 "pgdevkit/testdb/mssql/api.py" = ["A002"]
+# TrackingTableMissing is a published exception class; renaming it would break `except` clauses of callers
+"pgdevkit/migrate.py" = ["N818"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"

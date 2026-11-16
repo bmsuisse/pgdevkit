@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 
 from pgdevkit import migrate, migrate_mssql
 from pgdevkit.cli import app
+from pgdevkit.dialect import MSSQL
 from pgdevkit.models import DatabaseSchema
 
 runner = CliRunner()
@@ -155,7 +156,7 @@ def test_apply_migration_rolls_back_on_failure_and_does_not_record(fake: FakeCon
 def test_apply_migration_raises_when_created_table_missing(fake: FakeConnection, tmp_path: Path) -> None:
     path = tmp_path / "001_widgets.sql"
     path.write_text("CREATE TABLE app.widgets (id int)\n", encoding="utf-8")
-    with pytest.raises(migrate.MigrationVerificationError, match="app.widgets"):
+    with pytest.raises(migrate.MigrationVerificationError, match=r"app\.widgets"):
         migrate.apply_migration("conn", path, "dbo.schema_migrations", dialect="mssql")
 
 
@@ -343,7 +344,7 @@ def test_compare_entra_user_with_mssql_uses_authentication_keyword(
     seen: list[str] = []
 
     class StubBackend:
-        from pgdevkit.dialect import MSSQL as dialect
+        dialect = MSSQL
 
         def introspect(self, conninfo: str) -> DatabaseSchema:
             seen.append(conninfo)

@@ -99,9 +99,7 @@ def schema_allowed(
     """Whether a file that references `schemas` passes an `only`/`exclude` filter."""
     if exclude and schemas & exclude:
         return False
-    if only and schemas and not (schemas & only):
-        return False
-    return True
+    return not (only and schemas and not schemas & only)
 
 
 def filter_by_schema(

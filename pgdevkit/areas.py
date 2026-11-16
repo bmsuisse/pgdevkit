@@ -46,9 +46,7 @@ def area_allowed(
     """Whether a file that declares `areas` passes an `only`/`exclude` filter."""
     if exclude and areas & exclude:
         return False
-    if only and areas and not (areas & only):
-        return False
-    return True
+    return not (only and areas and not areas & only)
 
 
 def filter_by_area(

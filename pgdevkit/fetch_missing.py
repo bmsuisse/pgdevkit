@@ -186,8 +186,8 @@ def _table_ddl(conn: Any, schema: str, table: str) -> str:
     ddl += ",\n".join(f"    {c}" for c in col_defs)
     ddl += "\n);\n"
 
-    for _, indexdef in indexes:
-        indexdef = re.sub(r"^CREATE INDEX\b", "CREATE INDEX IF NOT EXISTS", indexdef)
+    for _, raw_indexdef in indexes:
+        indexdef = re.sub(r"^CREATE INDEX\b", "CREATE INDEX IF NOT EXISTS", raw_indexdef)
         indexdef = re.sub(r"^CREATE UNIQUE INDEX\b", "CREATE UNIQUE INDEX IF NOT EXISTS", indexdef)
         ddl += f"\n{indexdef};\n"
 

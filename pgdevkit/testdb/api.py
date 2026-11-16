@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
@@ -63,10 +64,8 @@ async def _ensure_database(db_name: str) -> None:
         result = await con.execute("SELECT 1 FROM pg_database WHERE datname = %(db)s", {"db": db_name})
         if await result.fetchone():
             return
-        try:
+        with contextlib.suppress(psycopg.errors.DuplicateDatabase):
             await con.execute(SQL("CREATE DATABASE {}").format(Identifier(db_name)))
-        except psycopg.errors.DuplicateDatabase:
-            pass
 
 
 async def _drop_database(db_name: str) -> None:

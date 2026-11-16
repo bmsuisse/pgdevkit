@@ -27,7 +27,7 @@ class TestCompare:
         scripts = parse_directory(FIXTURES)
         db = introspect_db(clean_db)
         diffs = compute_diff(scripts, db)
-        assert diffs == [], [d for d in diffs]
+        assert diffs == [], list(diffs)
 
     def test_missing_table_in_db(self, clean_db: str) -> None:
         _apply_fixtures(clean_db)

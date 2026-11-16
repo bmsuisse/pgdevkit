@@ -362,7 +362,7 @@ async def test_siblings_support_cancel_and_statement_timeout(pool: PgPool) -> No
 
 @requires_podman
 async def test_default_pool_may_be_a_plain_callable(pool: PgPool) -> None:
-    set_default_pool(lambda: pool.connection())
+    set_default_pool(pool.connection)
     assert await fetch_scalar("SELECT count(*) FROM widget") == 2
     assert await fetch_one("SELECT name FROM widget WHERE id = 1") == {"name": "sprocket"}
 

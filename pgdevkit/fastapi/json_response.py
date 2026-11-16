@@ -232,12 +232,9 @@ def _as_json_rows(query: Any) -> Composed | Template:
     if isinstance(query, Template):
         # psycopg expands a Template nested with `:q` in place, its own values staying bound parameters
         return t"select row_to_json(s)::text from (\n{query:q}\n) s"
-    if isinstance(query, Composable):
-        inner = query
-    else:
-        # bdt-lint: ignore sql-unverified-call -- callers pass a trusted literal (type-checked only); stacked statements
-        # are rejected by the extended protocol that cursor.stream() uses
-        inner = SQL(query.strip().rstrip(";"))
+    # bdt-lint: ignore sql-unverified-call -- callers pass a trusted literal (type-checked only); stacked statements
+    # are rejected by the extended protocol that cursor.stream() uses
+    inner = query if isinstance(query, Composable) else SQL(query.strip().rstrip(";"))
     # newline before the closing paren: the query may end in a line comment
     return SQL("select row_to_json(s)::text from (\n{}\n) s").format(inner)
 

@@ -49,7 +49,7 @@ def default_pool(pool: AsyncConnectionPool) -> Iterator[AsyncConnectionPool]:
 
 @pytest.fixture
 def no_default_pool() -> Iterator[None]:
-    previous = fetch._default_source  # process-wide state: put back whatever was registered
+    previous = fetch._defaults.source  # process-wide state: put back whatever was registered
     set_default_pool(None)
     yield
     set_default_pool(previous)

@@ -421,9 +421,7 @@ def _describe_target(url: str, dialect: str) -> str:
     """Where a migrate command points, without credentials: host/db for a Postgres URL,
     Server/Database only for an MSSQL connection string (never UID/PWD)."""
     if dialect == "mssql":
-        parts = dict(
-            (k.strip().lower(), v.strip()) for k, _, v in (p.partition("=") for p in url.split(";")) if k.strip()
-        )
+        parts = {k.strip().lower(): v.strip() for k, _, v in (p.partition("=") for p in url.split(";")) if k.strip()}
         server = parts.get("server") or parts.get("data source") or "?"
         database = parts.get("database") or parts.get("initial catalog")
         return f"{server}/{database}" if database else server
@@ -685,9 +683,11 @@ def migrate_apply(
     bar.close()
 
     processed = {name for name, _ in outcomes}
-    for path in targets:
-        if stop.is_set() and path.name not in processed:
-            outcomes.append((path.name, "not run (stopped after earlier failure)"))
+    outcomes.extend(
+        (path.name, "not run (stopped after earlier failure)")
+        for path in targets
+        if stop.is_set() and path.name not in processed
+    )
 
     table = Table(box=box.SIMPLE, show_header=True, header_style="bold")
     table.add_column("File")
