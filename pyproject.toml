@@ -44,7 +44,8 @@ name = "pgdevkit"
 
 [dependency-groups]
 dev = [
-    "ty>=0.0.59",
+    "ruff>=0.17.4",
+    "ty>=0.0.100",
 ]
 test = [
     "fastapi>=0.118.0",
