@@ -10,7 +10,7 @@ from pgdevkit.db.connection import PgPool
 ENV_PREFIX = "PGDEVKIT_CONNTEST_"
 
 
-async def test_dsn_static_password_when_entra_user_unset(monkeypatch):
+async def test_dsn_static_password_when_entra_user_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(f"{ENV_PREFIX}HOST", "localhost")
     monkeypatch.setenv(f"{ENV_PREFIX}PORT", "5432")
     monkeypatch.setenv(f"{ENV_PREFIX}DB", "mydb")
@@ -22,7 +22,7 @@ async def test_dsn_static_password_when_entra_user_unset(monkeypatch):
     assert dsn == "host=localhost port=5432 dbname=mydb user=myuser password=mypassword"
 
 
-async def test_dsn_azure_postgres_entra(monkeypatch):
+async def test_dsn_azure_postgres_entra(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(f"{ENV_PREFIX}HOST", "myserver.postgres.database.azure.com")
     monkeypatch.setenv(f"{ENV_PREFIX}PORT", "5432")
     monkeypatch.setenv(f"{ENV_PREFIX}DB", "mydb")
@@ -38,7 +38,7 @@ async def test_dsn_azure_postgres_entra(monkeypatch):
     )
 
 
-async def test_dsn_azure_postgres_entra_managed_identity(monkeypatch):
+async def test_dsn_azure_postgres_entra_managed_identity(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(f"{ENV_PREFIX}HOST", "myserver.postgres.database.azure.com")
     monkeypatch.setenv(f"{ENV_PREFIX}PORT", "5432")
     monkeypatch.setenv(f"{ENV_PREFIX}DB", "mydb")
@@ -55,7 +55,7 @@ async def test_dsn_azure_postgres_entra_managed_identity(monkeypatch):
     assert calls == [{"managed_identity": True, "exclude_interactive_browser_credential": True}]
 
 
-async def test_dsn_extra_params_appended(monkeypatch):
+async def test_dsn_extra_params_appended(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(f"{ENV_PREFIX}HOST", "localhost")
     monkeypatch.setenv(f"{ENV_PREFIX}PORT", "5432")
     monkeypatch.setenv(f"{ENV_PREFIX}DB", "mydb")
@@ -72,7 +72,7 @@ async def test_dsn_extra_params_appended(monkeypatch):
     )
 
 
-async def test_open_uses_null_pool_and_prepare_threshold_for_azure_host(monkeypatch):
+async def test_open_uses_null_pool_and_prepare_threshold_for_azure_host(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(f"{ENV_PREFIX}HOST", "myserver.postgres.database.azure.com")
     monkeypatch.setenv(f"{ENV_PREFIX}PORT", "5432")
     monkeypatch.setenv(f"{ENV_PREFIX}DB", "mydb")
@@ -90,7 +90,7 @@ async def test_open_uses_null_pool_and_prepare_threshold_for_azure_host(monkeypa
         await pool.close()
 
 
-async def test_open_uses_regular_pool_for_non_azure_host(monkeypatch):
+async def test_open_uses_regular_pool_for_non_azure_host(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(f"{ENV_PREFIX}HOST", "localhost")
     monkeypatch.setenv(f"{ENV_PREFIX}PORT", "5432")
     monkeypatch.setenv(f"{ENV_PREFIX}DB", "mydb")
@@ -109,13 +109,13 @@ async def test_open_uses_regular_pool_for_non_azure_host(monkeypatch):
         await pool.close()
 
 
-def test_raw_pool_before_open_raises():
+def test_raw_pool_before_open_raises() -> None:
     pool = PgPool(env_prefix=ENV_PREFIX)
     with pytest.raises(RuntimeError, match="Call open"):
         pool.raw_pool
 
 
-async def test_dsn_databricks_lakebase_entra(monkeypatch):
+async def test_dsn_databricks_lakebase_entra(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(f"{ENV_PREFIX}HOST", "instance-abc.database.azuredatabricks.net")
     monkeypatch.setenv(f"{ENV_PREFIX}PORT", "5432")
     monkeypatch.setenv(f"{ENV_PREFIX}DB", "databricks_postgres")
@@ -124,7 +124,7 @@ async def test_dsn_databricks_lakebase_entra(monkeypatch):
 
     calls = []
 
-    def fake_get_lakebase_password(workspace_host, instance_name):
+    def fake_get_lakebase_password(workspace_host: str, instance_name: str) -> str:
         calls.append((workspace_host, instance_name))
         return "LAKEBASE_TOKEN"
 
@@ -140,7 +140,7 @@ async def test_dsn_databricks_lakebase_entra(monkeypatch):
 
 
 @pytest.mark.parametrize("password", ["p ss", "back\\slash", "it's", "a=b", "two  spaces\\ and 'quote'", "", "ünï"])
-async def test_dsn_quotes_the_password(monkeypatch, password):
+async def test_dsn_quotes_the_password(monkeypatch: pytest.MonkeyPatch, password: str) -> None:
     monkeypatch.setenv(f"{ENV_PREFIX}HOST", "localhost")
     monkeypatch.setenv(f"{ENV_PREFIX}PORT", "5432")
     monkeypatch.setenv(f"{ENV_PREFIX}DB", "mydb")
@@ -151,7 +151,7 @@ async def test_dsn_quotes_the_password(monkeypatch, password):
     assert info == {"host": "localhost", "port": "5432", "dbname": "mydb", "user": "myuser", "password": password}
 
 
-async def test_dsn_quotes_extra_params_and_lets_them_override(monkeypatch):
+async def test_dsn_quotes_extra_params_and_lets_them_override(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(f"{ENV_PREFIX}HOST", "localhost")
     monkeypatch.setenv(f"{ENV_PREFIX}PORT", "5432")
     monkeypatch.setenv(f"{ENV_PREFIX}DB", "mydb")
@@ -164,7 +164,7 @@ async def test_dsn_quotes_extra_params_and_lets_them_override(monkeypatch):
     assert info["sslmode"] == "require"
 
 
-async def test_azure_token_is_quoted_too(monkeypatch):
+async def test_azure_token_is_quoted_too(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(f"{ENV_PREFIX}HOST", "myserver.postgres.database.azure.com")
     monkeypatch.setenv(f"{ENV_PREFIX}PORT", "5432")
     monkeypatch.setenv(f"{ENV_PREFIX}DB", "mydb")
@@ -173,7 +173,7 @@ async def test_azure_token_is_quoted_too(monkeypatch):
     assert info["password"] == "tok en\\"
 
 
-def _set_local_env(monkeypatch, dsn: str) -> None:
+def _set_local_env(monkeypatch: pytest.MonkeyPatch, dsn: str) -> None:
     info = conninfo_to_dict(dsn)
     for key, field in (
         ("HOST", "host"),
@@ -185,7 +185,7 @@ def _set_local_env(monkeypatch, dsn: str) -> None:
         monkeypatch.setenv(f"PGDEVKIT_CONNLIVE_{key}", info.get(field, ""))
 
 
-async def test_pool_options_are_passed_through(monkeypatch):
+async def test_pool_options_are_passed_through(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(f"{ENV_PREFIX}HOST", "localhost")
     monkeypatch.setenv(f"{ENV_PREFIX}PORT", "5432")
     monkeypatch.setenv(f"{ENV_PREFIX}DB", "mydb")
@@ -215,7 +215,9 @@ async def test_pool_options_are_passed_through(monkeypatch):
         await plain.close()
 
 
-async def test_configure_hook_and_timeout_work_on_a_live_pool(monkeypatch, postgres_dsn):
+async def test_configure_hook_and_timeout_work_on_a_live_pool(
+    monkeypatch: pytest.MonkeyPatch, postgres_dsn: str
+) -> None:
     _set_local_env(monkeypatch, postgres_dsn)
 
     async def configure(con: AsyncConnection) -> None:
@@ -235,7 +237,7 @@ async def test_configure_hook_and_timeout_work_on_a_live_pool(monkeypatch, postg
         await pool.close()
 
 
-async def test_pool_options_are_passed_to_a_null_pool_too(monkeypatch):
+async def test_pool_options_are_passed_to_a_null_pool_too(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(f"{ENV_PREFIX}HOST", "myserver.postgres.database.azure.com")
     monkeypatch.setenv(f"{ENV_PREFIX}PORT", "5432")
     monkeypatch.setenv(f"{ENV_PREFIX}DB", "mydb")

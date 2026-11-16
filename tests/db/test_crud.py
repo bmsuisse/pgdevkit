@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 
 import psycopg
 import pytest
@@ -78,7 +78,7 @@ class Gadget(PostgresTableModel):
 
 
 @pytest.fixture
-async def pool(monkeypatch: pytest.MonkeyPatch):
+async def pool(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[PgPool]:
     ensure_container()
     with psycopg.connect(_admin_dsn(), autocommit=True) as con:
         con.execute(f'DROP DATABASE IF EXISTS "{TEST_DB}"')
@@ -105,7 +105,7 @@ async def pool(monkeypatch: pytest.MonkeyPatch):
 
 
 @requires_podman
-async def test_insert_retrieve_update_upsert_delete_roundtrip(pool: PgPool):
+async def test_insert_retrieve_update_upsert_delete_roundtrip(pool: PgPool) -> None:
     async with pool.connection() as con:
         inserted = await pg_insert(con, ("public", "widget"), {"name": "sprocket"})
         assert inserted["name"] == "sprocket"
@@ -130,7 +130,7 @@ async def test_insert_retrieve_update_upsert_delete_roundtrip(pool: PgPool):
 
 
 @requires_podman
-async def test_upsert_and_upsert_many(pool: PgPool):
+async def test_upsert_and_upsert_many(pool: PgPool) -> None:
     async with pool.connection() as con:
         inserted = await pg_insert(con, ("public", "widget"), {"name": "sprocket"})
         widget = Widget(id=inserted["id"], name="sprocket")
@@ -147,7 +147,7 @@ async def test_upsert_and_upsert_many(pool: PgPool):
 
 
 @requires_podman
-async def test_upsert_many_dict_must_exist_updates_without_inserting(pool: PgPool):
+async def test_upsert_many_dict_must_exist_updates_without_inserting(pool: PgPool) -> None:
     async with pool.connection() as con:
         inserted = await pg_insert(con, ("public", "widget"), {"name": "sprocket"})
         existing_id = inserted["id"]
@@ -168,7 +168,7 @@ async def test_upsert_many_dict_must_exist_updates_without_inserting(pool: PgPoo
 
 
 @requires_podman
-async def test_insert_many_accepts_model_instances(pool: PgPool):
+async def test_insert_many_accepts_model_instances(pool: PgPool) -> None:
     async with pool.connection() as con:
         await pg_insert_many(
             con,
@@ -181,7 +181,7 @@ async def test_insert_many_accepts_model_instances(pool: PgPool):
 
 
 @requires_podman
-async def test_insert_retrieve_composite_column_with_normalizer(pool: PgPool):
+async def test_insert_retrieve_composite_column_with_normalizer(pool: PgPool) -> None:
     # label_pair mirrors a real project's locale-labels composite type: a
     # normalizer backfills a missing locale before the value is converted
     # into the psycopg composite type for INSERT. Both RETURNING and
@@ -203,7 +203,7 @@ async def test_insert_retrieve_composite_column_with_normalizer(pool: PgPool):
 
 
 @requires_podman
-async def test_update_dict_without_complex_helper_still_works_on_plain_columns(pool: PgPool):
+async def test_update_dict_without_complex_helper_still_works_on_plain_columns(pool: PgPool) -> None:
     # complex_helper is a new optional kwarg -- omitting it (the pre-existing call
     # shape) must behave exactly as before for tables with no composite/enum columns.
     async with pool.connection() as con:
@@ -218,7 +218,7 @@ async def test_update_dict_without_complex_helper_still_works_on_plain_columns(p
 
 
 @requires_podman
-async def test_update_dict_converts_enum_column_with_complex_helper(pool: PgPool):
+async def test_update_dict_converts_enum_column_with_complex_helper(pool: PgPool) -> None:
     # psycopg already binds a plain str to an enum-typed UPDATE target column
     # fine on its own (Postgres resolves it via the usual assignment cast), so
     # this isn't a failing-without/passing-with case the way composite columns
@@ -245,7 +245,7 @@ async def test_update_dict_converts_enum_column_with_complex_helper(pool: PgPool
 
 
 @requires_podman
-async def test_update_dict_composite_column_requires_complex_helper(pool: PgPool):
+async def test_update_dict_composite_column_requires_complex_helper(pool: PgPool) -> None:
     # Unlike enums, psycopg has no built-in way to adapt a plain Python dict
     # to a composite column type -- this is the real case pg_update_dict's
     # complex_helper support fixes.
@@ -274,13 +274,13 @@ async def test_update_dict_composite_column_requires_complex_helper(pool: PgPool
 
 
 @requires_podman
-async def test_pg_retrieve_many_where_order_by_and_limit(pool: PgPool):
+async def test_pg_retrieve_many_where_order_by_and_limit(pool: PgPool) -> None:
     async with pool.connection() as con:
         await pg_insert_many(
             con, ("public", "widget"), [{"name": n} for n in ("cog", "sprocket", "spring", "50% off", "gear")]
         )
 
-        def names(rows) -> list[str]:
+        def names(rows: Sequence[Widget]) -> list[str]:
             return [r.name for r in rows]
 
         # unchanged: equality filters only
@@ -350,7 +350,7 @@ async def test_pg_retrieve_many_where_order_by_and_limit(pool: PgPool):
 
 
 @requires_podman
-async def test_pg_retrieve_many_where_with_complex_helper(pool: PgPool):
+async def test_pg_retrieve_many_where_with_complex_helper(pool: PgPool) -> None:
     async with pool.connection() as con:
         await pg_insert_many(
             con, ("public", "gadget"), [{"status": "active"}, {"status": "inactive"}, {"status": "active"}]
@@ -365,7 +365,7 @@ async def test_pg_retrieve_many_where_with_complex_helper(pool: PgPool):
 
 
 @requires_podman
-async def test_pooled_connection_is_unchanged_after_pg_helpers_with_complex_helper(pool: PgPool):
+async def test_pooled_connection_is_unchanged_after_pg_helpers_with_complex_helper(pool: PgPool) -> None:
     # Fixes #54: type registration used to stick to the physical connection and so to the next pool user.
     single = PgPool(env_prefix=ENV_PREFIX, max_size=1, min_size=1)
     await single.open()

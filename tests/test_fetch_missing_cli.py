@@ -24,7 +24,7 @@ def _db_dsn() -> str:
 
 
 @requires_podman
-def test_fetch_missing_dry_run_then_write(tmp_path: Path):
+def test_fetch_missing_dry_run_then_write(tmp_path: Path) -> None:
     ensure_container()
     with psycopg.connect(_admin_dsn(), autocommit=True) as con:
         con.execute(f'DROP DATABASE IF EXISTS "{TEST_DB}"')

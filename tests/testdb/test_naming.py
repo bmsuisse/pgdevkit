@@ -4,44 +4,46 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from pgdevkit.testdb.config import ProjectConfig
 from pgdevkit.testdb.naming import current_branch, expected_db_names, live_worktree_branches, slugify, workspace_db_name
 
 
-def test_slugify_lowercases_and_replaces_invalid_chars():
+def test_slugify_lowercases_and_replaces_invalid_chars() -> None:
     assert slugify("MDMApp") == "mdmapp"
     assert slugify("feature/customer-contacts") == "feature_customer_contacts"
 
 
-def test_slugify_strips_leading_trailing_underscores():
+def test_slugify_strips_leading_trailing_underscores() -> None:
     assert slugify("--hello--") == "hello"
 
 
-def test_slugify_truncates_long_input_and_appends_hash():
+def test_slugify_truncates_long_input_and_appends_hash() -> None:
     long_name = "a" * 50
     result = slugify(long_name)
     assert len(result) == 30 + 1 + 8
     assert result.startswith("a" * 30 + "_")
 
 
-def test_slugify_is_deterministic():
+def test_slugify_is_deterministic() -> None:
     long_name = "worktree-procrastinate-job-events-extra-long-branch-name"
     assert slugify(long_name) == slugify(long_name)
 
 
-def test_workspace_db_name_differs_by_branch():
+def test_workspace_db_name_differs_by_branch() -> None:
     a = workspace_db_name("mdmapp", "main")
     b = workspace_db_name("mdmapp", "multi_lng")
     assert a != b
     assert a == "mdmapp_main"
 
 
-def test_workspace_db_name_stays_under_postgres_identifier_limit():
+def test_workspace_db_name_stays_under_postgres_identifier_limit() -> None:
     name = workspace_db_name("a" * 50, "b" * 50)
     assert len(name) <= 63
 
 
-def test_current_branch_reads_the_checked_out_branch(tmp_path: Path):
+def test_current_branch_reads_the_checked_out_branch(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=tmp_path, check=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
@@ -53,7 +55,7 @@ def test_current_branch_reads_the_checked_out_branch(tmp_path: Path):
     assert current_branch(tmp_path) == "my-feature"
 
 
-def test_current_branch_env_override_skips_git_entirely(tmp_path: Path, monkeypatch):
+def test_current_branch_env_override_skips_git_entirely(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Not a git repo at all -- the override must short-circuit before the
     # `git rev-parse` subprocess call, which would otherwise raise.
     monkeypatch.setenv("PGDEVKIT_TESTDB_BRANCH", "ci-job-42")
@@ -72,7 +74,7 @@ def _init_repo(repo: Path, initial_branch: str) -> None:
     subprocess.run(["git", "checkout", "-q", "-b", initial_branch], cwd=repo, check=True)
 
 
-def test_live_worktree_branches_lists_main_and_linked_worktrees(tmp_path: Path):
+def test_live_worktree_branches_lists_main_and_linked_worktrees(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo, "main")
     feature = tmp_path / "wt-feature"
@@ -81,7 +83,7 @@ def test_live_worktree_branches_lists_main_and_linked_worktrees(tmp_path: Path):
     assert set(live_worktree_branches(repo)) == {"main", "feature"}
 
 
-def test_live_worktree_branches_excludes_a_removed_worktree(tmp_path: Path):
+def test_live_worktree_branches_excludes_a_removed_worktree(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo, "main")
     gone = tmp_path / "wt-gone"
@@ -91,7 +93,7 @@ def test_live_worktree_branches_excludes_a_removed_worktree(tmp_path: Path):
     assert live_worktree_branches(repo) == ["main"]
 
 
-def test_live_worktree_branches_reports_detached_head_as_head(tmp_path: Path):
+def test_live_worktree_branches_reports_detached_head_as_head(tmp_path: Path) -> None:
     # A detached-HEAD worktree (e.g. a CI checkout, which defaults to one)
     # has no `branch ...` porcelain line -- it must still be reported as
     # "live", using the same "HEAD" value `current_branch()` (and so
@@ -106,7 +108,7 @@ def test_live_worktree_branches_reports_detached_head_as_head(tmp_path: Path):
     assert current_branch(detached) == "HEAD"
 
 
-def test_live_worktree_branches_excludes_a_manually_deleted_worktree_dir(tmp_path: Path):
+def test_live_worktree_branches_excludes_a_manually_deleted_worktree_dir(tmp_path: Path) -> None:
     # `rm -rf` on a worktree dir without `git worktree remove` leaves it
     # registered (and reported by `git worktree list`) but its path gone --
     # still not "live".
@@ -119,7 +121,7 @@ def test_live_worktree_branches_excludes_a_manually_deleted_worktree_dir(tmp_pat
     assert live_worktree_branches(repo) == ["main"]
 
 
-def test_live_worktree_branches_finds_worktrees_nested_inside_the_repo(tmp_path: Path):
+def test_live_worktree_branches_finds_worktrees_nested_inside_the_repo(tmp_path: Path) -> None:
     # Agent harnesses put worktrees under <repo>/.claude/worktrees/<id>; the
     # lookup must not care where a linked worktree lives, nor which of the
     # worktrees it is called from.
@@ -133,7 +135,7 @@ def test_live_worktree_branches_finds_worktrees_nested_inside_the_repo(tmp_path:
     assert current_branch(nested) == "worktree/agent-1"
 
 
-def test_live_worktree_branches_keeps_a_locked_worktree_whose_path_is_missing(tmp_path: Path):
+def test_live_worktree_branches_keeps_a_locked_worktree_whose_path_is_missing(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo, "main")
     locked = tmp_path / "wt-locked"
@@ -144,7 +146,7 @@ def test_live_worktree_branches_keeps_a_locked_worktree_whose_path_is_missing(tm
     assert set(live_worktree_branches(repo)) == {"main", "locked-branch"}
 
 
-def test_live_worktree_branches_keeps_a_locked_worktree_that_is_present(tmp_path: Path):
+def test_live_worktree_branches_keeps_a_locked_worktree_that_is_present(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo, "main")
     locked = tmp_path / "wt-locked"
@@ -154,11 +156,11 @@ def test_live_worktree_branches_keeps_a_locked_worktree_that_is_present(tmp_path
     assert set(live_worktree_branches(repo)) == {"main", "locked-branch"}
 
 
-def test_expected_db_names_covers_every_live_branch():
+def test_expected_db_names_covers_every_live_branch() -> None:
     config = ProjectConfig(name="proj")
     assert expected_db_names(config, ["main", "feature"]) == {"proj_main", "proj_feature"}
 
 
-def test_expected_db_names_includes_extra_db_suffixes():
+def test_expected_db_names_includes_extra_db_suffixes() -> None:
     config = ProjectConfig(name="proj", extra_db_suffixes=("_sibling",))
     assert expected_db_names(config, ["main"]) == {"proj_main", "proj_main_sibling"}

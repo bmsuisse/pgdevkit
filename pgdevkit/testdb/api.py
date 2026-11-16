@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import psycopg
@@ -37,7 +38,7 @@ def _resolve(project_root: Path | None) -> tuple[ProjectConfig, str]:
     return config, db_name
 
 
-def _mssql_api():
+def _mssql_api() -> ModuleType:
     # Imported lazily so importing pgdevkit.testdb (and thus pgdevkit.cli)
     # doesn't require the mssql extra unless a project actually opts into
     # `engine = "mssql"`.

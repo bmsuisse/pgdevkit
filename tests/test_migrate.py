@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from pgdevkit.migrate import (
     _created_table_names,
     _idempotent_target,
@@ -9,7 +11,7 @@ from pgdevkit.migrate import (
 from pgdevkit.sql_text import strip_line_comments
 
 
-def test_created_table_names_ignores_create_table_mentioned_in_a_comment():
+def test_created_table_names_ignores_create_table_mentioned_in_a_comment() -> None:
     sql = """
     -- with no CREATE TABLE checked in under database/ or _migration_scripts/. Adding
     -- it here (and as schema-as-code) so a fresh/reset test DB actually has it.
@@ -21,7 +23,7 @@ def test_created_table_names_ignores_create_table_mentioned_in_a_comment():
     assert _created_table_names(_split_sql(sql)) == ["app.widgets"]
 
 
-def test_created_table_names_finds_multiple_tables():
+def test_created_table_names_finds_multiple_tables() -> None:
     sql = """
     CREATE TABLE a.b (id int);
     CREATE TABLE IF NOT EXISTS c.d (id int);
@@ -29,7 +31,7 @@ def test_created_table_names_finds_multiple_tables():
     assert _created_table_names(_split_sql(sql)) == ["a.b", "c.d"]
 
 
-def test_created_table_names_ignores_non_create_table_statements():
+def test_created_table_names_ignores_non_create_table_statements() -> None:
     sql = """
     GRANT SELECT ON ALL TABLES IN SCHEMA app TO some_role;
     ALTER TABLE app.widgets ADD COLUMN name text;
@@ -37,7 +39,7 @@ def test_created_table_names_ignores_non_create_table_statements():
     assert _created_table_names(_split_sql(sql)) == []
 
 
-def test_created_table_names_falls_back_to_regex_for_unparseable_statements():
+def test_created_table_names_falls_back_to_regex_for_unparseable_statements() -> None:
     # sqlglot's postgres dialect can't parse DO $$ ... $$ blocks — the fallback
     # regex must still run against comment-stripped text, not raw text.
     sql = """
@@ -50,22 +52,22 @@ def test_created_table_names_falls_back_to_regex_for_unparseable_statements():
     assert _created_table_names(_split_sql(sql)) == ["app.dynamic_table"]
 
 
-def test_split_sql_ignores_semicolon_in_block_comment():
+def test_split_sql_ignores_semicolon_in_block_comment() -> None:
     sql = "create view v as select 1 /* wins; ordered by id */ as a;"
     assert _split_sql(sql) == ["create view v as select 1 /* wins; ordered by id */ as a"]
 
 
-def test_split_sql_ignores_semicolon_in_nested_block_comment():
+def test_split_sql_ignores_semicolon_in_nested_block_comment() -> None:
     sql = "select 1 /* outer; /* inner; */ still; comment */ as a; select 2;"
     assert _split_sql(sql) == ["select 1 /* outer; /* inner; */ still; comment */ as a", "select 2"]
 
 
-def test_split_sql_ignores_semicolon_in_multiline_block_comment():
+def test_split_sql_ignores_semicolon_in_multiline_block_comment() -> None:
     sql = "select 1 /* first;\n-- not a line comment; ' quote\nlast; */ as a;\nselect 2;"
     assert _split_sql(sql) == ["select 1 /* first;\n-- not a line comment; ' quote\nlast; */ as a", "select 2"]
 
 
-def test_split_sql_block_comment_opener_in_string_or_dollar_quote_or_line_comment_is_not_a_comment():
+def test_split_sql_block_comment_opener_in_string_or_dollar_quote_or_line_comment_is_not_a_comment() -> None:
     assert _split_sql("select '/*'; select 2;") == ["select '/*'", "select 2"]
     assert _split_sql("do $$ begin perform '/*'; end $$; select 2;") == ["do $$ begin perform '/*'; end $$", "select 2"]
     assert _split_sql('select "/*"; select 2;') == ['select "/*"', "select 2"]
@@ -73,60 +75,60 @@ def test_split_sql_block_comment_opener_in_string_or_dollar_quote_or_line_commen
     assert _split_sql("select 1 -- /* open\n; select 2;") == ["select 1 -- /* open", "select 2"]
 
 
-def test_strip_line_comments_preserves_string_literals_containing_dashes():
+def test_strip_line_comments_preserves_string_literals_containing_dashes() -> None:
     sql = "SELECT '--not-a-comment' AS x -- a real comment\nFROM t;"
     stripped = strip_line_comments(sql)
     assert "--not-a-comment" in stripped
     assert "a real comment" not in stripped
 
 
-def test_default_tracking_table_falls_back_when_no_pyproject_section(tmp_path):
+def test_default_tracking_table_falls_back_when_no_pyproject_section(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n")
     assert default_tracking_table(tmp_path) == "public.schema_migrations"
 
 
-def test_default_tracking_table_reads_pyproject_override(tmp_path):
+def test_default_tracking_table_reads_pyproject_override(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[tool.pgdevkit]\nmigrations_table = 'myschema.migrations'\n")
     assert default_tracking_table(tmp_path) == "myschema.migrations"
 
 
-def test_default_tracking_table_searches_parent_directories(tmp_path):
+def test_default_tracking_table_searches_parent_directories(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[tool.pgdevkit]\nmigrations_table = 'myschema.migrations'\n")
     nested = tmp_path / "database" / "_migration_scripts"
     nested.mkdir(parents=True)
     assert default_tracking_table(nested) == "myschema.migrations"
 
 
-def test_default_tracking_table_falls_back_with_no_pyproject_at_all(tmp_path):
+def test_default_tracking_table_falls_back_with_no_pyproject_at_all(tmp_path: Path) -> None:
     assert default_tracking_table(tmp_path / "nonexistent") == "public.schema_migrations"
 
 
-def test_idempotent_target_recognizes_create_table_if_not_exists():
+def test_idempotent_target_recognizes_create_table_if_not_exists() -> None:
     assert _idempotent_target("CREATE TABLE IF NOT EXISTS app.widgets (id int)") == ("relation", "app.widgets")
 
 
-def test_idempotent_target_recognizes_create_index():
+def test_idempotent_target_recognizes_create_index() -> None:
     assert _idempotent_target(
         "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS widgets_name_idx ON app.widgets (name)"
     ) == ("relation", "widgets_name_idx")
 
 
-def test_idempotent_target_recognizes_create_sequence():
+def test_idempotent_target_recognizes_create_sequence() -> None:
     assert _idempotent_target("CREATE SEQUENCE IF NOT EXISTS app.widgets_seq") == ("relation", "app.widgets_seq")
 
 
-def test_idempotent_target_recognizes_create_view():
+def test_idempotent_target_recognizes_create_view() -> None:
     assert _idempotent_target("CREATE VIEW IF NOT EXISTS app.widgets_v AS SELECT * FROM app.widgets") == (
         "relation",
         "app.widgets_v",
     )
 
 
-def test_idempotent_target_recognizes_create_schema():
+def test_idempotent_target_recognizes_create_schema() -> None:
     assert _idempotent_target("CREATE SCHEMA IF NOT EXISTS app") == ("schema", "app")
 
 
-def test_idempotent_target_recognizes_add_column():
+def test_idempotent_target_recognizes_add_column() -> None:
     assert _idempotent_target("ALTER TABLE app.widgets ADD COLUMN IF NOT EXISTS name text") == (
         "column",
         "app.widgets",
@@ -134,7 +136,7 @@ def test_idempotent_target_recognizes_add_column():
     )
 
 
-def test_idempotent_target_recognizes_add_column_without_if_not_exists_guard():
+def test_idempotent_target_recognizes_add_column_without_if_not_exists_guard() -> None:
     assert _idempotent_target("ALTER TABLE app.widgets ADD COLUMN name text") == (
         "column",
         "app.widgets",
@@ -142,12 +144,12 @@ def test_idempotent_target_recognizes_add_column_without_if_not_exists_guard():
     )
 
 
-def test_idempotent_target_ignores_create_or_replace():
+def test_idempotent_target_ignores_create_or_replace() -> None:
     # A view/function could be replaced with different content, so existence alone never
     # means "already applied" for these.
     assert _idempotent_target("CREATE OR REPLACE VIEW app.widgets_v AS SELECT 1") is None
 
 
-def test_idempotent_target_ignores_unrecognized_statements():
+def test_idempotent_target_ignores_unrecognized_statements() -> None:
     assert _idempotent_target("ALTER TABLE app.widgets DROP COLUMN name") is None
     assert _idempotent_target("INSERT INTO app.widgets (id) VALUES (1)") is None

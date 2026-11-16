@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import psycopg
 import pytest
 
@@ -9,7 +11,7 @@ ROLE = "pgdevkit_test_grants_role"
 
 
 @pytest.fixture
-def app_role(clean_db: str):
+def app_role(clean_db: str) -> Iterator[str]:
     """A throwaway, no-login role to check privileges against -- dropped afterwards since
     roles are cluster-wide, not scoped to the (per-test) database like clean_db's schemas."""
     with psycopg.connect(clean_db, autocommit=True) as con:
@@ -24,16 +26,16 @@ def app_role(clean_db: str):
         con.execute(f"DROP ROLE IF EXISTS {ROLE}")
 
 
-def test_created_table_names_finds_tables_in_a_raw_script():
+def test_created_table_names_finds_tables_in_a_raw_script() -> None:
     sql = "GRANT SELECT ON foo TO some_role; CREATE TABLE public.widgets (id int primary key);"
     assert created_table_names(sql) == ["public.widgets"]
 
 
-def test_created_table_names_empty_for_a_script_with_no_create_table():
+def test_created_table_names_empty_for_a_script_with_no_create_table() -> None:
     assert created_table_names("GRANT SELECT ON ALL TABLES IN SCHEMA public TO some_role;") == []
 
 
-def test_execute_sql_script_runs_multiple_statements_in_one_transaction(clean_db: str):
+def test_execute_sql_script_runs_multiple_statements_in_one_transaction(clean_db: str) -> None:
     execute_sql_script(
         clean_db,
         """
@@ -47,7 +49,7 @@ def test_execute_sql_script_runs_multiple_statements_in_one_transaction(clean_db
         assert row == (1,)
 
 
-def test_execute_sql_script_rolls_back_all_statements_on_any_failure(clean_db: str):
+def test_execute_sql_script_rolls_back_all_statements_on_any_failure(clean_db: str) -> None:
     with pytest.raises(psycopg.Error):
         execute_sql_script(
             clean_db,
@@ -58,24 +60,26 @@ def test_execute_sql_script_rolls_back_all_statements_on_any_failure(clean_db: s
         assert row is not None and row[0] is None
 
 
-def test_missing_privileges_reports_table_without_grant(clean_db: str, app_role: str):
+def test_missing_privileges_reports_table_without_grant(clean_db: str, app_role: str) -> None:
     with psycopg.connect(clean_db, autocommit=True) as con:
         con.execute("CREATE TABLE public.widgets (id int primary key)")
     assert missing_privileges(clean_db, app_role, ["public.widgets"]) == ["public.widgets"]
 
 
-def test_missing_privileges_empty_once_granted(clean_db: str, app_role: str):
+def test_missing_privileges_empty_once_granted(clean_db: str, app_role: str) -> None:
     with psycopg.connect(clean_db, autocommit=True) as con:
         con.execute("CREATE TABLE public.widgets (id int primary key)")
         con.execute(f"GRANT SELECT ON public.widgets TO {app_role}")
     assert missing_privileges(clean_db, app_role, ["public.widgets"]) == []
 
 
-def test_missing_privileges_empty_for_no_tables(clean_db: str, app_role: str):
+def test_missing_privileges_empty_for_no_tables(clean_db: str, app_role: str) -> None:
     assert missing_privileges(clean_db, app_role, []) == []
 
 
-def test_execute_sql_script_grant_on_all_tables_covers_tables_created_after_the_fact(clean_db: str, app_role: str):
+def test_execute_sql_script_grant_on_all_tables_covers_tables_created_after_the_fact(
+    clean_db: str, app_role: str
+) -> None:
     """The actual use case: a re-run of `GRANT ... ON ALL TABLES IN SCHEMA` after a new
     table appears picks it up automatically -- unlike ALTER DEFAULT PRIVILEGES, which only
     covers tables created later by the exact role that ran the ALTER DEFAULT PRIVILEGES

@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
 
@@ -131,7 +132,7 @@ def _iter_sql_files(
     exclude_areas: frozenset[str] | None = None,
     schemas: frozenset[str] | None = None,
     exclude_schemas: frozenset[str] | None = None,
-):
+) -> Iterator[tuple[Path, str]]:
     """Yield (Path, sql_content) pairs in dependency-safe execution order.
 
     Every `permissions`-type file (see `_TYPE_ORDER`) is held back

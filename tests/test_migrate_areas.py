@@ -12,12 +12,12 @@ def _write(dir: Path, name: str, content: str) -> Path:
 
 
 class TestListMigrationFilesAreaFiltering:
-    def test_no_filters_lists_everything(self, tmp_path: Path):
+    def test_no_filters_lists_everything(self, tmp_path: Path) -> None:
         a = _write(tmp_path, "001_a.sql", "-- area: billing\nselect 1;\n")
         b = _write(tmp_path, "002_b.sql", "select 1;\n")
         assert list_migration_files(tmp_path) == sorted([a, b])
 
-    def test_areas_filter_keeps_matching_and_untagged(self, tmp_path: Path):
+    def test_areas_filter_keeps_matching_and_untagged(self, tmp_path: Path) -> None:
         billing = _write(tmp_path, "001_billing.sql", "-- area: billing\nselect 1;\n")
         reporting = _write(tmp_path, "002_reporting.sql", "-- area: reporting\nselect 1;\n")
         common = _write(tmp_path, "003_common.sql", "select 1;\n")
@@ -26,7 +26,7 @@ class TestListMigrationFilesAreaFiltering:
         assert set(result) == {billing, common}
         assert reporting not in result
 
-    def test_exclude_areas_drops_matching_but_keeps_untagged(self, tmp_path: Path):
+    def test_exclude_areas_drops_matching_but_keeps_untagged(self, tmp_path: Path) -> None:
         billing = _write(tmp_path, "001_billing.sql", "-- area: billing\nselect 1;\n")
         common = _write(tmp_path, "002_common.sql", "select 1;\n")
 
@@ -34,7 +34,7 @@ class TestListMigrationFilesAreaFiltering:
         assert result == [common]
         assert billing not in result
 
-    def test_multiple_areas_on_one_file(self, tmp_path: Path):
+    def test_multiple_areas_on_one_file(self, tmp_path: Path) -> None:
         multi = _write(tmp_path, "001_multi.sql", "-- area: billing, reporting\nselect 1;\n")
 
         assert list_migration_files(tmp_path, areas=frozenset({"reporting"})) == [multi]

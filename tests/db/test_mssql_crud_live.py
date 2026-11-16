@@ -34,7 +34,7 @@ class Widget(TableModel):
 
 
 @requires_mssql
-def test_crud_round_trip(tmp_path: Path):
+def test_crud_round_trip(tmp_path: Path) -> None:
     # A plain (not `async def`) test function -- `ensure_testdb`/
     # `clean_testdb` are sync wrappers that call `asyncio.run()` internally,
     # which raises "cannot be called from a running event loop" if this test
@@ -76,7 +76,7 @@ def test_crud_round_trip(tmp_path: Path):
 
 
 @requires_mssql
-def test_json_column_round_trip(tmp_path: Path):
+def test_json_column_round_trip(tmp_path: Path) -> None:
     # app.widget.tags is NVARCHAR(MAX) (see fixtures/database_mssql) --
     # this is the main way the write-side JSON fix actually gets validated
     # against a real driver+server: without db/mssql_sql.json_encode_value,

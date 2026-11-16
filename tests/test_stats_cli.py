@@ -16,7 +16,7 @@ runner = CliRunner()
 TEST_DB = f"pgdevkit_stats_cli_selftest_{RUN_SUFFIX}"
 
 
-def test_get_stats_reads_json_without_db(tmp_path: Path):
+def test_get_stats_reads_json_without_db(tmp_path: Path) -> None:
     stats = tmp_path / "_stats"
     stats.mkdir()
     (stats / "_tables.json").write_text(json.dumps({"public.a": {"row_count": 3}, "public.b": {"row_count": 1}}))
@@ -33,7 +33,7 @@ def test_get_stats_reads_json_without_db(tmp_path: Path):
 
 
 @requires_podman
-def test_update_stats_then_get_stats(tmp_path: Path):
+def test_update_stats_then_get_stats(tmp_path: Path) -> None:
     ensure_container()
     admin = constants.conninfo("postgres")
     dsn = constants.conninfo(TEST_DB)

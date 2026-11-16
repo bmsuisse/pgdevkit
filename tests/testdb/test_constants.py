@@ -7,7 +7,7 @@ import pytest
 from pgdevkit.testdb import constants
 
 
-def test_defaults_when_env_vars_unset(monkeypatch):
+def test_defaults_when_env_vars_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("PGDEVKIT_TESTDB_HOST", raising=False)
     monkeypatch.delenv("PGDEVKIT_TESTDB_PORT", raising=False)
     monkeypatch.delenv("PGDEVKIT_TESTDB_USER", raising=False)
@@ -32,7 +32,7 @@ def test_defaults_when_env_vars_unset(monkeypatch):
         importlib.reload(constants)
 
 
-def test_env_vars_override_connection_defaults(monkeypatch):
+def test_env_vars_override_connection_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PGDEVKIT_TESTDB_HOST", "otherhost")
     monkeypatch.setenv("PGDEVKIT_TESTDB_PORT", "9999")
     monkeypatch.setenv("PGDEVKIT_TESTDB_USER", "otheruser")
@@ -51,7 +51,7 @@ def test_env_vars_override_connection_defaults(monkeypatch):
         importlib.reload(constants)
 
 
-def test_env_vars_override_docker_resource_defaults(monkeypatch):
+def test_env_vars_override_docker_resource_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PGDEVKIT_TESTDB_IMAGE", "otherimage:latest")
     monkeypatch.setenv("PGDEVKIT_TESTDB_TMPFS", "/var/lib/postgresql/data:size=512m")
     monkeypatch.setenv("PGDEVKIT_TESTDB_SHM_SIZE", "256m")
@@ -69,7 +69,7 @@ def test_env_vars_override_docker_resource_defaults(monkeypatch):
         importlib.reload(constants)
 
 
-def test_pg_settings_flags_become_dash_c_pairs():
+def test_pg_settings_flags_become_dash_c_pairs() -> None:
     assert constants.pg_settings_flags("shared_buffers=128MB max_connections=50") == [
         "-c",
         "shared_buffers=128MB",
@@ -78,10 +78,10 @@ def test_pg_settings_flags_become_dash_c_pairs():
     ]
 
 
-def test_pg_settings_flags_empty_spec_adds_nothing():
+def test_pg_settings_flags_empty_spec_adds_nothing() -> None:
     assert constants.pg_settings_flags("") == []
 
 
-def test_pg_settings_flags_rejects_entry_without_equals():
+def test_pg_settings_flags_rejects_entry_without_equals() -> None:
     with pytest.raises(ValueError, match="key=value"):
         constants.pg_settings_flags("shared_buffers")

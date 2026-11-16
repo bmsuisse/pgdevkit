@@ -27,7 +27,7 @@ def _admin_dsn() -> str:
 
 
 @requires_podman
-def test_ensure_testdb_isolates_by_branch(project_factory: Callable[[str, str], Path]):
+def test_ensure_testdb_isolates_by_branch(project_factory: Callable[[str, str], Path]) -> None:
     project_a = project_factory("apitest", "main")
     project_b = project_factory("apitest", "feature")
     try:
@@ -42,7 +42,7 @@ def test_ensure_testdb_isolates_by_branch(project_factory: Callable[[str, str], 
 
 
 @requires_podman
-def test_clean_all_removes_every_branch_database(project_factory: Callable[[str, str], Path]):
+def test_clean_all_removes_every_branch_database(project_factory: Callable[[str, str], Path]) -> None:
     project_a = project_factory("apitest2", "main")
     project_b = project_factory("apitest2", "feature")
     ensure_testdb(project_a)
@@ -60,7 +60,7 @@ def test_clean_all_removes_every_branch_database(project_factory: Callable[[str,
 @requires_podman
 def test_clean_all_does_not_match_prefix_colliding_project_name(
     project_factory: Callable[[str, str], Path],
-):
+) -> None:
     # "apitestx" and "apitestxs" collide under an unescaped LIKE pattern: the
     # pattern "apitestx_%" (built from the "apitestx_" prefix) would also
     # match "apitestxs_main" because "_" is a single-character SQL wildcard
@@ -87,7 +87,7 @@ def test_clean_all_does_not_match_prefix_colliding_project_name(
 
 
 @requires_podman
-def test_reset_testdb_only_touches_own_database(project_factory: Callable[[str, str], Path]):
+def test_reset_testdb_only_touches_own_database(project_factory: Callable[[str, str], Path]) -> None:
     project_a = project_factory("apitest3", "main")
     project_b = project_factory("apitest3", "other")
     try:
@@ -109,7 +109,7 @@ def test_reset_testdb_only_touches_own_database(project_factory: Callable[[str, 
 
 
 @requires_podman
-def test_dsn_for_matches_status(project_factory: Callable[[str, str], Path]):
+def test_dsn_for_matches_status(project_factory: Callable[[str, str], Path]) -> None:
     from pgdevkit.testdb.api import dsn_for
 
     project = project_factory("apitest4", "main")
@@ -120,7 +120,7 @@ def test_dsn_for_matches_status(project_factory: Callable[[str, str], Path]):
         clean_testdb(project)
 
 
-def test_clean_testdb_rejects_all_and_orphaned_together(project_factory: Callable[[str, str], Path]):
+def test_clean_testdb_rejects_all_and_orphaned_together(project_factory: Callable[[str, str], Path]) -> None:
     project = project_factory("apitest6", "main")
     with pytest.raises(ValueError, match="all=True, orphaned=True"):
         clean_testdb(project, all=True, orphaned=True)
@@ -129,7 +129,7 @@ def test_clean_testdb_rejects_all_and_orphaned_together(project_factory: Callabl
 @requires_podman
 def test_find_orphaned_dbs_excludes_live_worktrees(
     worktree_project_factory: Callable[..., tuple[Path, Callable[[str], Path]]],
-):
+) -> None:
     repo, add_worktree = worktree_project_factory("orphtest")
     feature = add_worktree("feature")
     ghost = add_worktree("ghost")
@@ -147,7 +147,7 @@ def test_find_orphaned_dbs_excludes_live_worktrees(
 @requires_podman
 def test_find_orphaned_dbs_treats_manually_deleted_worktree_as_orphaned(
     worktree_project_factory: Callable[..., tuple[Path, Callable[[str], Path]]],
-):
+) -> None:
     # A worktree dir removed with plain `rm -rf` (no `git worktree remove`)
     # still shows up in `git worktree list` as prunable -- it must still be
     # treated as not-live.
@@ -165,7 +165,7 @@ def test_find_orphaned_dbs_treats_manually_deleted_worktree_as_orphaned(
 @requires_podman
 def test_clean_orphaned_drops_only_orphaned_dbs(
     worktree_project_factory: Callable[..., tuple[Path, Callable[[str], Path]]],
-):
+) -> None:
     repo, add_worktree = worktree_project_factory("orphtest3")
     feature = add_worktree("feature")
     ghost = add_worktree("ghost")
@@ -189,7 +189,7 @@ def test_clean_orphaned_drops_only_orphaned_dbs(
 @requires_podman
 def test_find_orphaned_dbs_respects_extra_db_suffixes(
     worktree_project_factory: Callable[..., tuple[Path, Callable[[str], Path]]],
-):
+) -> None:
     repo, _ = worktree_project_factory("orphtest4")
     pyproject = repo / "pyproject.toml"
     pyproject.write_text(
@@ -211,14 +211,14 @@ def test_find_orphaned_dbs_respects_extra_db_suffixes(
 
 def test_workspace_db_names_is_just_the_main_db_with_no_extra_suffixes(
     project_factory: Callable[..., Path],
-):
+) -> None:
     project = project_factory("wdntest", "main")
     assert workspace_db_names(project) == {status(project)["database"]}
 
 
 def test_workspace_db_names_includes_configured_extra_db_suffixes(
     project_factory: Callable[..., Path],
-):
+) -> None:
     project = project_factory("wdntest2", "main")
     pyproject = project / "pyproject.toml"
     pyproject.write_text(
@@ -231,7 +231,7 @@ def test_workspace_db_names_includes_configured_extra_db_suffixes(
 
 def test_workspace_db_names_differs_from_a_sibling_worktrees_branch(
     worktree_project_factory: Callable[..., tuple[Path, Callable[[str], Path]]],
-):
+) -> None:
     repo, add_worktree = worktree_project_factory("wdntest3")
     feature = add_worktree("feature")
 

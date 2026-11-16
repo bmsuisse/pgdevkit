@@ -218,7 +218,7 @@ def _unquote(node: exp.Expression) -> exp.Expression:
     return node
 
 
-def _unwrap_paren(node):
+def _unwrap_paren(node: exp.Expression) -> exp.Expression:
     # transform() doesn't descend into a node it replaced, so a Paren nested
     # inside another one ("([b]>(1))", how SQL Server stores a filter) needs
     # another pass.

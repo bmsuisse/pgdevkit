@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from collections.abc import Iterator
 from pathlib import Path
 
 import sqlglot
@@ -56,7 +57,7 @@ _DO_COMPOSITE = re.compile(
 )
 
 
-def _iter_sql_files(scripts_dir: Path):
+def _iter_sql_files(scripts_dir: Path) -> Iterator[Path]:
     for root, dirs, files in os.walk(scripts_dir):
         dirs[:] = [d for d in dirs if d not in IGNORED_DIR_NAMES]
         for name in files:

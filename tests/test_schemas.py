@@ -7,45 +7,45 @@ from pgdevkit.schemas import file_schemas, filter_by_schema, schema_allowed, sql
 
 
 class TestSqlSchemas:
-    def test_unqualified_create_table_uses_default_schema(self):
+    def test_unqualified_create_table_uses_default_schema(self) -> None:
         assert sql_schemas("CREATE TABLE t (id int);\n") == frozenset({"public"})
 
-    def test_qualified_create_table(self):
+    def test_qualified_create_table(self) -> None:
         assert sql_schemas("CREATE TABLE billing.invoice (id int);\n") == frozenset({"billing"})
 
-    def test_multiple_schemas_referenced(self):
+    def test_multiple_schemas_referenced(self) -> None:
         sql = "CREATE TABLE billing.invoice (id int, customer_id int references reporting.customer(id));\n"
         assert sql_schemas(sql) == frozenset({"billing", "reporting"})
 
-    def test_create_schema_statement(self):
+    def test_create_schema_statement(self) -> None:
         assert sql_schemas("CREATE SCHEMA billing;\n") == frozenset({"billing"})
 
-    def test_alter_table(self):
+    def test_alter_table(self) -> None:
         assert sql_schemas("ALTER TABLE billing.invoice ADD COLUMN paid boolean;\n") == frozenset({"billing"})
 
-    def test_drop_table(self):
+    def test_drop_table(self) -> None:
         assert sql_schemas("DROP TABLE billing.invoice;\n") == frozenset({"billing"})
 
-    def test_data_migration_statements(self):
+    def test_data_migration_statements(self) -> None:
         assert sql_schemas("INSERT INTO billing.invoice (id) VALUES (1);\n") == frozenset({"billing"})
         assert sql_schemas("UPDATE billing.invoice SET paid = true;\n") == frozenset({"billing"})
         assert sql_schemas("DELETE FROM billing.invoice WHERE id = 1;\n") == frozenset({"billing"})
 
-    def test_system_schema_references_excluded(self):
+    def test_system_schema_references_excluded(self) -> None:
         sql = "SELECT 1 FROM pg_catalog.pg_class WHERE relname = 'invoice'"
         assert sql_schemas(sql) == frozenset()
 
-    def test_information_schema_reference_excluded(self):
+    def test_information_schema_reference_excluded(self) -> None:
         sql = "SELECT 1 FROM information_schema.columns WHERE table_name = 'invoice'"
         assert sql_schemas(sql) == frozenset()
 
-    def test_no_table_reference_is_undetectable(self):
+    def test_no_table_reference_is_undetectable(self) -> None:
         assert sql_schemas("SELECT 1;\n") == frozenset()
 
-    def test_mssql_default_schema(self):
+    def test_mssql_default_schema(self) -> None:
         assert sql_schemas("CREATE TABLE t (id int);\n", MSSQL) == frozenset({"dbo"})
 
-    def test_mssql_sys_schema_excluded(self):
+    def test_mssql_sys_schema_excluded(self) -> None:
         # The idempotency-guard SELECT against sys.schemas must not itself
         # count as a schema reference; the dynamic `EXEC('CREATE SCHEMA
         # app')` this guards is still a real (if indirect) declaration of
@@ -54,7 +54,7 @@ class TestSqlSchemas:
         sql = "IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'app') BEGIN EXEC('CREATE SCHEMA app'); END"
         assert sql_schemas(sql, MSSQL) == frozenset({"app"})
 
-    def test_create_schema_alongside_another_real_table_reference(self):
+    def test_create_schema_alongside_another_real_table_reference(self) -> None:
         # Regression test: a bare `CREATE SCHEMA x` parses to a Table node
         # with an empty name (its schema name lives in `db`, not `this`) --
         # the guard against sqlglot's EXEC(...) literal misparse (which has
@@ -62,13 +62,13 @@ class TestSqlSchemas:
         sql = "CREATE SCHEMA analytics;\nSELECT 1 FROM public.tenants;\n"
         assert sql_schemas(sql) == frozenset({"analytics", "public"})
 
-    def test_unparseable_content_falls_back_to_regex(self):
+    def test_unparseable_content_falls_back_to_regex(self) -> None:
         # Deliberately malformed SQL that still contains a schema-qualified
         # reference sqlglot can't make sense of as a whole statement.
         sql = "!!! not sql billing.invoice !!!"
         assert sql_schemas(sql) == frozenset({"billing"})
 
-    def test_quoted_identifier_with_punctuation_still_detected(self):
+    def test_quoted_identifier_with_punctuation_still_detected(self) -> None:
         # Regression test: the EXEC(...)-misparse guard used to require the
         # whole table name to be `\w+`, which also rejected a legitimate
         # quoted identifier containing a hyphen -- silently dropping the
@@ -76,7 +76,7 @@ class TestSqlSchemas:
         sql = 'CREATE TABLE billing."my-table" (id int);'
         assert sql_schemas(sql) == frozenset({"billing"})
 
-    def test_schema_mentioned_only_in_a_comment_is_not_detected(self):
+    def test_schema_mentioned_only_in_a_comment_is_not_detected(self) -> None:
         # Regression test: sqlglot finds no real reference here, so this
         # falls back to the regex scan -- which must not match "billing.
         # invoice" inside the comment as if it were a real reference. The
@@ -88,46 +88,46 @@ class TestSqlSchemas:
 
 
 class TestFileSchemas:
-    def test_reads_from_disk(self, tmp_path: Path):
+    def test_reads_from_disk(self, tmp_path: Path) -> None:
         f = tmp_path / "001_thing.sql"
         f.write_text("CREATE TABLE billing.invoice (id int);\n", encoding="utf-8")
         assert file_schemas(f) == frozenset({"billing"})
 
 
 class TestSchemaAllowed:
-    def test_no_filters_always_allowed(self):
+    def test_no_filters_always_allowed(self) -> None:
         assert schema_allowed(frozenset({"billing"})) is True
         assert schema_allowed(frozenset()) is True
 
-    def test_only_filter_undetectable_always_passes(self):
+    def test_only_filter_undetectable_always_passes(self) -> None:
         assert schema_allowed(frozenset(), only=frozenset({"billing"})) is True
 
-    def test_only_filter_matching_schema_passes(self):
+    def test_only_filter_matching_schema_passes(self) -> None:
         assert schema_allowed(frozenset({"billing"}), only=frozenset({"billing"})) is True
 
-    def test_only_filter_non_matching_schema_fails(self):
+    def test_only_filter_non_matching_schema_fails(self) -> None:
         assert schema_allowed(frozenset({"reporting"}), only=frozenset({"billing"})) is False
 
-    def test_exclude_filter_undetectable_never_dropped(self):
+    def test_exclude_filter_undetectable_never_dropped(self) -> None:
         assert schema_allowed(frozenset(), exclude=frozenset({"billing"})) is True
 
-    def test_exclude_filter_matching_schema_dropped(self):
+    def test_exclude_filter_matching_schema_dropped(self) -> None:
         assert schema_allowed(frozenset({"billing"}), exclude=frozenset({"billing"})) is False
 
-    def test_exclude_filter_non_matching_schema_passes(self):
+    def test_exclude_filter_non_matching_schema_passes(self) -> None:
         assert schema_allowed(frozenset({"reporting"}), exclude=frozenset({"billing"})) is True
 
-    def test_only_and_exclude_combined_exclude_wins(self):
+    def test_only_and_exclude_combined_exclude_wins(self) -> None:
         schemas = frozenset({"billing"})
         assert schema_allowed(schemas, only=frozenset({"billing"}), exclude=frozenset({"billing"})) is False
 
 
 class TestFilterBySchema:
-    def test_no_filters_returns_paths_unchanged(self, tmp_path: Path):
+    def test_no_filters_returns_paths_unchanged(self, tmp_path: Path) -> None:
         paths = [tmp_path / "a.sql", tmp_path / "b.sql"]
         assert filter_by_schema(paths) == paths
 
-    def test_only_keeps_matching_and_undetectable(self, tmp_path: Path):
+    def test_only_keeps_matching_and_undetectable(self, tmp_path: Path) -> None:
         billing = tmp_path / "billing.sql"
         billing.write_text("CREATE TABLE billing.invoice (id int);\n", encoding="utf-8")
         reporting = tmp_path / "reporting.sql"
@@ -138,7 +138,7 @@ class TestFilterBySchema:
         result = filter_by_schema([billing, reporting, undetectable], only=frozenset({"billing"}))
         assert set(result) == {billing, undetectable}
 
-    def test_exclude_drops_matching_but_keeps_undetectable(self, tmp_path: Path):
+    def test_exclude_drops_matching_but_keeps_undetectable(self, tmp_path: Path) -> None:
         billing = tmp_path / "billing.sql"
         billing.write_text("CREATE TABLE billing.invoice (id int);\n", encoding="utf-8")
         undetectable = tmp_path / "common.sql"
@@ -147,7 +147,7 @@ class TestFilterBySchema:
         result = filter_by_schema([billing, undetectable], exclude=frozenset({"billing"}))
         assert result == [undetectable]
 
-    def test_dialect_affects_default_schema(self, tmp_path: Path):
+    def test_dialect_affects_default_schema(self, tmp_path: Path) -> None:
         f = tmp_path / "thing.sql"
         f.write_text("CREATE TABLE t (id int);\n", encoding="utf-8")
 

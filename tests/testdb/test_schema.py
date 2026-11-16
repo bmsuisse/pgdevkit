@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import psycopg
@@ -24,7 +25,7 @@ def _db_dsn() -> str:
 
 
 @pytest.fixture
-def schema_test_db():
+def schema_test_db() -> Iterator[None]:
     ensure_container()
     with psycopg.connect(_admin_dsn(), autocommit=True) as con:
         con.execute(f'DROP DATABASE IF EXISTS "{TEST_DB}"')
@@ -35,7 +36,7 @@ def schema_test_db():
 
 
 @requires_podman
-async def test_apply_schema_creates_tables_and_seeds_data(schema_test_db):
+async def test_apply_schema_creates_tables_and_seeds_data(schema_test_db: None) -> None:
     async with await psycopg.AsyncConnection.connect(_db_dsn(), autocommit=True) as con:
         await apply_schema(con, FIXTURES)
         async with con.cursor() as cur:
@@ -45,7 +46,7 @@ async def test_apply_schema_creates_tables_and_seeds_data(schema_test_db):
 
 
 @requires_podman
-async def test_apply_schema_is_idempotent(schema_test_db):
+async def test_apply_schema_is_idempotent(schema_test_db: None) -> None:
     async with await psycopg.AsyncConnection.connect(_db_dsn(), autocommit=True) as con:
         await apply_schema(con, FIXTURES)
         await apply_schema(con, FIXTURES)  # must not raise
@@ -56,13 +57,13 @@ async def test_apply_schema_is_idempotent(schema_test_db):
 
 
 @requires_podman
-async def test_apply_schema_on_missing_directory_is_a_noop(schema_test_db):
+async def test_apply_schema_on_missing_directory_is_a_noop(schema_test_db: None) -> None:
     async with await psycopg.AsyncConnection.connect(_db_dsn(), autocommit=True) as con:
         await apply_schema(con, FIXTURES.parent / "does_not_exist")  # must not raise
 
 
 @requires_podman
-async def test_apply_schema_resolves_multi_level_fk_dependency(schema_test_db):
+async def test_apply_schema_resolves_multi_level_fk_dependency(schema_test_db: None) -> None:
     # widget_part_detail REFERENCES widget_part REFERENCES widget, and their
     # filenames already sort alphabetically in that same dependency order.
     # This is the layout that exposed a real bug: _iter_sql_files derived the
@@ -85,7 +86,7 @@ async def test_apply_schema_resolves_multi_level_fk_dependency(schema_test_db):
 
 
 @requires_podman
-async def test_apply_schema_resolves_view_to_view_dependency(schema_test_db):
+async def test_apply_schema_resolves_view_to_view_dependency(schema_test_db: None) -> None:
     # a_wrapper_view selects from b_base_view, but the filenames sort in the
     # opposite order — this only passes if cross-view dependency tracking
     # (not just table FK tracking) delays a_wrapper_view until its dependency
@@ -99,7 +100,7 @@ async def test_apply_schema_resolves_view_to_view_dependency(schema_test_db):
 
 
 @requires_podman
-async def test_apply_schema_applies_permissions_after_a_delayed_table(schema_test_db):
+async def test_apply_schema_applies_permissions_after_a_delayed_table(schema_test_db: None) -> None:
     # permissions/grants.sql (a blanket "grant select on all tables in schema app")
     # has no SQL dependencies of its own -- app.event, whose own filename
     # ("event.sql") sorts alphabetically before its FK target's filename
@@ -128,7 +129,7 @@ async def test_apply_schema_applies_permissions_after_a_delayed_table(schema_tes
 
 
 @requires_podman
-async def test_apply_schema_seeds_composite_enum_and_jsonb_columns(schema_test_db):
+async def test_apply_schema_seeds_composite_enum_and_jsonb_columns(schema_test_db: None) -> None:
     # gadget.mood is an enum, gadget.size a composite type, gadget.tags
     # jsonb — plain json.dumps() would corrupt/error on the first two.
     # gadget.test_data.json also carries a "stale_removed_column" key that
@@ -146,7 +147,7 @@ async def test_apply_schema_seeds_composite_enum_and_jsonb_columns(schema_test_d
 
 
 @requires_podman
-async def test_apply_schema_skips_env_tagged_file_for_a_different_env(schema_test_db):
+async def test_apply_schema_skips_env_tagged_file_for_a_different_env(schema_test_db: None) -> None:
     # prod_only.prod.sql is tagged for "prod" -- with the default env
     # ("local_test"), it must not be applied.
     async with await psycopg.AsyncConnection.connect(_db_dsn(), autocommit=True) as con:
@@ -158,7 +159,7 @@ async def test_apply_schema_skips_env_tagged_file_for_a_different_env(schema_tes
 
 
 @requires_podman
-async def test_apply_schema_applies_env_tagged_file_for_the_matching_env(schema_test_db):
+async def test_apply_schema_applies_env_tagged_file_for_the_matching_env(schema_test_db: None) -> None:
     async with await psycopg.AsyncConnection.connect(_db_dsn(), autocommit=True) as con:
         await apply_schema(con, FIXTURES, env="prod")
         async with con.cursor() as cur:
@@ -168,7 +169,7 @@ async def test_apply_schema_applies_env_tagged_file_for_the_matching_env(schema_
 
 
 @requires_podman
-async def test_apply_schema_init_file_applies_regardless_of_env(schema_test_db):
+async def test_apply_schema_init_file_applies_regardless_of_env(schema_test_db: None) -> None:
     # widget.init.sql adds init_flag to app.widget -- "init" is a reserved
     # suffix, never an environment tag, so this must apply under any env.
     async with await psycopg.AsyncConnection.connect(_db_dsn(), autocommit=True) as con:
@@ -183,7 +184,7 @@ async def test_apply_schema_init_file_applies_regardless_of_env(schema_test_db):
 
 
 @requires_podman
-async def test_apply_schema_never_applies_migrations_dir(schema_test_db):
+async def test_apply_schema_never_applies_migrations_dir(schema_test_db: None) -> None:
     # migrations/ is for one-time manual application against real databases,
     # not for building a fresh schema — the base table file is the only
     # source of truth apply_schema uses. app/migrations/001_add_gadget_note.sql

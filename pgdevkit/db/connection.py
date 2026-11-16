@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager
 from typing import Any, Literal
 
 from psycopg import AsyncConnection
@@ -141,7 +142,7 @@ class PgPool:
         if self._pool is not None:
             await self._pool.close()
 
-    def connection(self):
+    def connection(self) -> AbstractAsyncContextManager[AsyncConnection[Any]]:
         """Return an async connection context manager from the pool."""
         if self._pool is None:
             raise RuntimeError("Call open() first (e.g. in app startup).")

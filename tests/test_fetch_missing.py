@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import psycopg
@@ -21,19 +22,19 @@ def _db_dsn() -> str:
     return constants.conninfo(TEST_DB)
 
 
-def test_layer_folder_for_matches_stripped_sort_prefix(tmp_path: Path):
+def test_layer_folder_for_matches_stripped_sort_prefix(tmp_path: Path) -> None:
     (tmp_path / "1_reference_data").mkdir()
     (tmp_path / "2_app").mkdir()
     assert layer_folder_for(tmp_path, "reference_data") == tmp_path / "1_reference_data"
     assert layer_folder_for(tmp_path, "app") == tmp_path / "2_app"
 
 
-def test_layer_folder_for_falls_back_to_schema_name(tmp_path: Path):
+def test_layer_folder_for_falls_back_to_schema_name(tmp_path: Path) -> None:
     assert layer_folder_for(tmp_path, "unmatched") == tmp_path / "unmatched"
 
 
 @pytest.fixture
-def fetchmissing_db(tmp_path: Path):
+def fetchmissing_db(tmp_path: Path) -> Iterator[Path]:
     ensure_container()
     with psycopg.connect(_admin_dsn(), autocommit=True) as con:
         con.execute(f'DROP DATABASE IF EXISTS "{TEST_DB}"')
@@ -59,7 +60,7 @@ def fetchmissing_db(tmp_path: Path):
 
 
 @requires_podman
-def test_find_missing_objects_reports_untracked_table_view_and_functions(fetchmissing_db: Path):
+def test_find_missing_objects_reports_untracked_table_view_and_functions(fetchmissing_db: Path) -> None:
     missing = find_missing_objects(fetchmissing_db, _db_dsn())
     by_name = {m.qualified_name: m.object_type for m in missing}
 
@@ -71,7 +72,7 @@ def test_find_missing_objects_reports_untracked_table_view_and_functions(fetchmi
 
 
 @requires_podman
-def test_reconstruct_ddl_round_trips_for_each_object_type(fetchmissing_db: Path):
+def test_reconstruct_ddl_round_trips_for_each_object_type(fetchmissing_db: Path) -> None:
     missing = find_missing_objects(fetchmissing_db, _db_dsn())
     by_name = {m.qualified_name: m for m in missing}
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 import pgdevkit.testdb.schema as schema_mod
 from pgdevkit.testdb.schema import _iter_sql_files
 
@@ -13,17 +15,17 @@ def _write(base: Path, rel: str, content: str) -> Path:
     return p
 
 
-def _names(base: Path, **kwargs) -> set[Path]:
+def _names(base: Path, **kwargs: object) -> set[Path]:
     return {f.relative_to(base) for f, _ in _iter_sql_files(base, **kwargs)}
 
 
 class TestIterSqlFilesAreaFiltering:
-    def test_no_filters_yields_everything(self, tmp_path: Path):
+    def test_no_filters_yields_everything(self, tmp_path: Path) -> None:
         _write(tmp_path, "billing/tables/x.sql", "-- area: billing\nCREATE TABLE billing.x (id int);\n")
         _write(tmp_path, "reporting/tables/y.sql", "-- area: reporting\nCREATE TABLE reporting.y (id int);\n")
         assert _names(tmp_path) == {Path("billing/tables/x.sql"), Path("reporting/tables/y.sql")}
 
-    def test_areas_filter_keeps_matching_and_untagged(self, tmp_path: Path):
+    def test_areas_filter_keeps_matching_and_untagged(self, tmp_path: Path) -> None:
         _write(tmp_path, "billing/tables/x.sql", "-- area: billing\nCREATE TABLE billing.x (id int);\n")
         _write(tmp_path, "reporting/tables/y.sql", "-- area: reporting\nCREATE TABLE reporting.y (id int);\n")
         _write(tmp_path, "common/tables/z.sql", "CREATE TABLE common.z (id int);\n")
@@ -31,7 +33,7 @@ class TestIterSqlFilesAreaFiltering:
         result = _names(tmp_path, areas=frozenset({"billing"}))
         assert result == {Path("billing/tables/x.sql"), Path("common/tables/z.sql")}
 
-    def test_exclude_areas_drops_matching_but_keeps_untagged(self, tmp_path: Path):
+    def test_exclude_areas_drops_matching_but_keeps_untagged(self, tmp_path: Path) -> None:
         _write(tmp_path, "billing/tables/x.sql", "-- area: billing\nCREATE TABLE billing.x (id int);\n")
         _write(tmp_path, "common/tables/z.sql", "CREATE TABLE common.z (id int);\n")
 
@@ -40,21 +42,21 @@ class TestIterSqlFilesAreaFiltering:
 
 
 class TestIterSqlFilesSchemaFiltering:
-    def test_schemas_filter_keeps_matching(self, tmp_path: Path):
+    def test_schemas_filter_keeps_matching(self, tmp_path: Path) -> None:
         _write(tmp_path, "billing/tables/x.sql", "CREATE TABLE billing.x (id int);\n")
         _write(tmp_path, "reporting/tables/y.sql", "CREATE TABLE reporting.y (id int);\n")
 
         result = _names(tmp_path, schemas=frozenset({"billing"}))
         assert result == {Path("billing/tables/x.sql")}
 
-    def test_exclude_schemas_drops_matching(self, tmp_path: Path):
+    def test_exclude_schemas_drops_matching(self, tmp_path: Path) -> None:
         _write(tmp_path, "billing/tables/x.sql", "CREATE TABLE billing.x (id int);\n")
         _write(tmp_path, "reporting/tables/y.sql", "CREATE TABLE reporting.y (id int);\n")
 
         result = _names(tmp_path, exclude_schemas=frozenset({"billing"}))
         assert result == {Path("reporting/tables/y.sql")}
 
-    def test_area_and_schema_filters_combine(self, tmp_path: Path):
+    def test_area_and_schema_filters_combine(self, tmp_path: Path) -> None:
         _write(tmp_path, "keep/tables/a.sql", "-- area: billing\nCREATE TABLE reporting.a (id int);\n")
         _write(tmp_path, "wrong_area/tables/b.sql", "-- area: ops\nCREATE TABLE reporting.b (id int);\n")
         _write(tmp_path, "wrong_schema/tables/c.sql", "-- area: billing\nCREATE TABLE billing.c (id int);\n")
@@ -68,7 +70,7 @@ class TestIterSqlFilesLaziness:
     schema detection must run only when that axis is actually being filtered
     on, on top of the read+dependency-scan _iter_sql_files always does."""
 
-    def test_no_filters_never_detects_areas_or_schemas(self, tmp_path: Path, monkeypatch):
+    def test_no_filters_never_detects_areas_or_schemas(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _write(tmp_path, "tables/x.sql", "CREATE TABLE billing.x (id int);\n")
         calls: dict[str, int] = {"areas": 0, "schemas": 0}
         monkeypatch.setattr(
@@ -84,11 +86,11 @@ class TestIterSqlFilesLaziness:
 
         assert calls == {"areas": 0, "schemas": 0}
 
-    def test_area_filter_alone_never_detects_schemas(self, tmp_path: Path, monkeypatch):
+    def test_area_filter_alone_never_detects_schemas(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _write(tmp_path, "tables/x.sql", "-- area: billing\nCREATE TABLE billing.x (id int);\n")
         calls = 0
 
-        def counting_sql_schemas(content, dialect):
+        def counting_sql_schemas(content: str, dialect: object) -> frozenset[str]:
             nonlocal calls
             calls += 1
             return frozenset()
@@ -99,11 +101,11 @@ class TestIterSqlFilesLaziness:
 
         assert calls == 0
 
-    def test_schema_filter_alone_never_detects_areas(self, tmp_path: Path, monkeypatch):
+    def test_schema_filter_alone_never_detects_areas(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _write(tmp_path, "tables/x.sql", "CREATE TABLE billing.x (id int);\n")
         calls = 0
 
-        def counting_parse_areas(content):
+        def counting_parse_areas(content: str) -> frozenset[str]:
             nonlocal calls
             calls += 1
             return frozenset()
