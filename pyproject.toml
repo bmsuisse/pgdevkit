@@ -106,7 +106,9 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# `all=` is a published keyword of clean_testdb() (mirrored by the mssql backend); renaming it would break callers
+# `all=` is a published keyword of clean_testdb() (mirrored by the mssql backend and the `testdb clean` command
+# function); renaming it would break callers
+"pgdevkit/cli.py" = ["A002"]
 "pgdevkit/testdb/api.py" = ["A002"]
 "pgdevkit/testdb/mssql/api.py" = ["A002"]
 # TrackingTableMissing is a published exception class; renaming it would break `except` clauses of callers

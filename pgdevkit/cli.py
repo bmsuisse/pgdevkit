@@ -389,7 +389,7 @@ def testdb_shell() -> None:
 
 @testdb_app.command("clean")
 def testdb_clean(
-    drop_all: bool = typer.Option(False, "--all", help="Drop every database belonging to this project"),
+    all: bool = typer.Option(False, "--all", help="Drop every database belonging to this project"),
     orphaned: bool = typer.Option(
         False,
         "--orphaned",
@@ -398,10 +398,10 @@ def testdb_clean(
 ) -> None:
     """Drop this workspace's database (or every database of this project with --all,
     or only its orphaned ones with --orphaned)."""
-    if drop_all and orphaned:
+    if all and orphaned:
         err_console.print("[red]Error:[/red] pass at most one of --all, --orphaned")
         raise typer.Exit(2)
-    testdb.clean_testdb(all=drop_all, orphaned=orphaned)
+    testdb.clean_testdb(all=all, orphaned=orphaned)
     console.print("[green]Cleaned.[/green]")
 
 
