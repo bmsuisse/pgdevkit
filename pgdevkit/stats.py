@@ -8,7 +8,7 @@ import psycopg
 import psycopg.sql
 from psycopg.rows import dict_row
 
-from .dialect import resolve_dialect
+from pgdevkit.dialect import resolve_dialect
 
 STATS_DIRNAME = "_stats"
 TABLES_FILE = "_tables.json"
@@ -119,7 +119,7 @@ def _collect_mssql_stats(
     # Lazy: the mssql extra isn't required for postgres-only use.
     import mssql_python
 
-    from .mssql_introspect import _format_type, _is_system_schema
+    from pgdevkit.mssql_introspect import _format_type, _is_system_schema
 
     tables: dict[str, dict[str, Any]] = {}
     columns: dict[str, dict[str, Any]] = {}

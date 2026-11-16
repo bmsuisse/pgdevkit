@@ -19,7 +19,7 @@ from fastapi.routing import APIRoute
 from starlette.requests import ClientDisconnect
 from starlette.types import Message, Receive
 
-from .json_response import CLIENT_CLOSED_REQUEST
+from pgdevkit.fastapi.json_response import CLIENT_CLOSED_REQUEST
 
 logger = logging.getLogger(__name__)
 

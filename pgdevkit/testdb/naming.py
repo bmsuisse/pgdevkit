@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .config import ProjectConfig
+    from pgdevkit.testdb.config import ProjectConfig
 
 _INVALID_CHARS = re.compile(r"[^a-z0-9_]+")
 _MAX_SLUG_LEN = 30

@@ -23,8 +23,8 @@ from pathlib import Path
 import sqlglot
 import sqlglot.expressions as exp
 
-from .dialect import POSTGRES, SYSTEM_SCHEMAS, Dialect
-from .sql_text import strip_line_comments
+from pgdevkit.dialect import POSTGRES, SYSTEM_SCHEMAS, Dialect
+from pgdevkit.sql_text import strip_line_comments
 
 _CREATE_SCHEMA_RE = re.compile(
     r"CREATE\s+SCHEMA\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:AUTHORIZATION\s+)?\"?(\w+)\"?", re.IGNORECASE

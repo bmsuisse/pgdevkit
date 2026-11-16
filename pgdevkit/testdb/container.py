@@ -7,8 +7,8 @@ import docker
 import docker.errors
 import psycopg
 
-from . import _docker, constants
-from ._docker import client as _client
+from pgdevkit.testdb import _docker, constants
+from pgdevkit.testdb._docker import client as _client
 
 
 def _available(timeout: float = 3.0) -> bool:

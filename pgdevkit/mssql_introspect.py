@@ -6,17 +6,9 @@ import mssql_python
 import sqlglot
 import sqlglot.expressions as exp
 
-from .db.mssql_sql import ident
-from .models import (
-    ColumnDef,
-    ConstraintDef,
-    DatabaseSchema,
-    FunctionDef,
-    IndexDef,
-    TableDef,
-    ViewDef,
-)
-from .parser import _parse_function_details_tsql
+from pgdevkit.db.mssql_sql import ident
+from pgdevkit.models import ColumnDef, ConstraintDef, DatabaseSchema, FunctionDef, IndexDef, TableDef, ViewDef
+from pgdevkit.parser import _parse_function_details_tsql
 
 # Schemas that are SQL Server system/fixed-role schemas, not user schemas --
 # the equivalent of introspect.py's "pg_catalog"/"information_schema"/"pg_%"

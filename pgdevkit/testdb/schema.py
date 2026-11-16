@@ -13,12 +13,12 @@ import sqlglot.expressions as exp
 from psycopg.rows import dict_row
 from psycopg.sql import SQL, Identifier, Placeholder
 
-from ..areas import area_allowed, parse_areas
-from ..db.complex_types import ComplexHelper
-from ..dialect import POSTGRES, SYSTEM_SCHEMAS, Dialect
-from ..envtag import env_allowed, strip_env_suffix
-from ..parser import IGNORED_DIR_NAMES
-from ..schemas import schema_allowed, sql_schemas
+from pgdevkit.areas import area_allowed, parse_areas
+from pgdevkit.db.complex_types import ComplexHelper
+from pgdevkit.dialect import POSTGRES, SYSTEM_SCHEMAS, Dialect
+from pgdevkit.envtag import env_allowed, strip_env_suffix
+from pgdevkit.parser import IGNORED_DIR_NAMES
+from pgdevkit.schemas import schema_allowed, sql_schemas
 
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlglot").setLevel(logging.ERROR)

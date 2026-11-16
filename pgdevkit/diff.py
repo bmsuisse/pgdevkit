@@ -7,8 +7,8 @@ from enum import Enum
 import sqlglot
 import sqlglot.expressions as exp
 
-from .dialect import POSTGRES, Dialect, resolve_dialect
-from .models import DatabaseSchema, FunctionDef, IndexDef, TableDef
+from pgdevkit.dialect import POSTGRES, Dialect, resolve_dialect
+from pgdevkit.models import DatabaseSchema, FunctionDef, IndexDef, TableDef
 
 
 class DiffKind(str, Enum):

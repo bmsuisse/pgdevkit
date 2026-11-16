@@ -5,7 +5,7 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
-from .models import (
+from pgdevkit.models import (
     ColumnDef,
     CompositeTypeDef,
     ConstraintDef,

@@ -20,11 +20,11 @@ import sqlglot
 from psycopg import errors as pg_errors
 from psycopg import sql as pg_sql
 
-from .areas import filter_by_area
-from .dialect import Dialect, resolve_dialect
-from .envtag import env_allowed
-from .schemas import filter_by_schema
-from .sql_text import strip_line_comments
+from pgdevkit.areas import filter_by_area
+from pgdevkit.dialect import Dialect, resolve_dialect
+from pgdevkit.envtag import env_allowed
+from pgdevkit.schemas import filter_by_schema
+from pgdevkit.sql_text import strip_line_comments
 
 _IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_]*"
 
@@ -255,7 +255,7 @@ def already_fully_applied(conninfo: str, path: Path, dialect: str | Dialect = "p
     False — this never guesses. For MSSQL the unit is a `GO`-separated batch and the
     recognized shapes are table, view, schema and ADD column."""
     if _is_mssql(dialect):
-        from . import migrate_mssql
+        from pgdevkit import migrate_mssql
 
         batches = migrate_mssql.split_batches(path.read_text(encoding="utf-8"))
         mssql_targets = [migrate_mssql.idempotent_target(b) for b in batches]
@@ -297,7 +297,7 @@ def applied_migrations(
 ) -> dict[str, tuple[datetime, str]]:
     """Filename -> (applied_at, applied_by) for every migration recorded in the tracking table."""
     if _is_mssql(dialect):
-        from . import migrate_mssql
+        from pgdevkit import migrate_mssql
 
         return migrate_mssql.applied_migrations(conninfo, tracking_table)
     table = _tracking_table_identifier(tracking_table)
@@ -339,7 +339,7 @@ def record_applied(conninfo: str, tracking_table: str, filename: str, dialect: s
     """Best-effort insert into the tracking table. Returns False without raising if the
     tracking table doesn't exist yet — e.g. this migration is the one that creates it."""
     if _is_mssql(dialect):
-        from . import migrate_mssql
+        from pgdevkit import migrate_mssql
 
         return migrate_mssql.record_applied(conninfo, tracking_table, filename)
     table = _tracking_table_identifier(tracking_table)
@@ -362,7 +362,7 @@ def created_table_names(sql: str, dialect: str | Dialect = "postgres") -> list[s
     run a script directly (e.g. via `execute_sql_script`) instead of through a tracked
     migration file, and still want to know what tables -- if any -- it created."""
     if _is_mssql(dialect):
-        from . import migrate_mssql
+        from pgdevkit import migrate_mssql
 
         return migrate_mssql.created_table_names(migrate_mssql.split_batches(sql))
     return _created_table_names(_split_sql(sql))
@@ -372,7 +372,7 @@ def verify_created_tables(conninfo: str, stmts: list[str], dialect: str | Dialec
     """Table names from this migration's CREATE TABLE statements that do NOT exist in the
     database. Empty means everything landed. For MSSQL, `stmts` are `GO`-separated batches."""
     if _is_mssql(dialect):
-        from . import migrate_mssql
+        from pgdevkit import migrate_mssql
 
         return migrate_mssql.missing_tables(conninfo, migrate_mssql.created_table_names(stmts))
     tables = _created_table_names(stmts)
@@ -423,7 +423,7 @@ def execute_sql_script(conninfo: str, sql: str, dialect: str | Dialect = "postgr
     every time, like an idempotent `GRANT ... ON ALL TABLES IN SCHEMA` privilege sync.
     For MSSQL the script is split on `GO` lines instead and runs as one transaction."""
     if _is_mssql(dialect):
-        from . import migrate_mssql
+        from pgdevkit import migrate_mssql
 
         migrate_mssql.execute_batches(conninfo, migrate_mssql.split_batches(sql))
         return
@@ -449,7 +449,7 @@ def apply_migration(
     filename = path.name
     mssql = _is_mssql(dialect)
     if mssql:
-        from . import migrate_mssql
+        from pgdevkit import migrate_mssql
 
         stmts = migrate_mssql.split_batches(sql)
     else:

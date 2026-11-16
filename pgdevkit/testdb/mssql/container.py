@@ -7,8 +7,8 @@ import docker
 import docker.errors
 import mssql_python
 
-from .. import _docker
-from . import constants
+from pgdevkit.testdb import _docker
+from pgdevkit.testdb.mssql import constants
 
 
 def _available(timeout: float = 3.0) -> bool:

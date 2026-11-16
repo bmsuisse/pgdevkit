@@ -4,8 +4,8 @@ import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, TypeVar
 
-from .model import TableModel
-from .mssql_sql import ident, json_encode_values, qualified
+from pgdevkit.db.model import TableModel
+from pgdevkit.db.mssql_sql import ident, json_encode_values, qualified
 
 T = TypeVar("T", bound=TableModel)
 

@@ -8,10 +8,10 @@ from typing import Any
 import psycopg
 from psycopg.sql import SQL, Identifier
 
-from . import constants, query
-from .config import ProjectConfig, load_config
-from .container import ensure_container
-from .naming import (
+from pgdevkit.testdb import constants, query
+from pgdevkit.testdb.config import ProjectConfig, load_config
+from pgdevkit.testdb.container import ensure_container
+from pgdevkit.testdb.naming import (
     current_branch,
     escape_like_prefix,
     expected_db_names,
@@ -19,7 +19,7 @@ from .naming import (
     slugify,
     workspace_db_name,
 )
-from .schema import apply_schema
+from pgdevkit.testdb.schema import apply_schema
 
 
 def _admin_dsn() -> str:
@@ -41,7 +41,7 @@ def _mssql_api():
     # Imported lazily so importing pgdevkit.testdb (and thus pgdevkit.cli)
     # doesn't require the mssql extra unless a project actually opts into
     # `engine = "mssql"`.
-    from .mssql import api as mssql_api
+    from pgdevkit.testdb.mssql import api as mssql_api
 
     return mssql_api
 

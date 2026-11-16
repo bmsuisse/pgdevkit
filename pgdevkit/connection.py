@@ -102,7 +102,7 @@ def build_conninfo(
     if detect_provider(host) == "databricks_lakebase":
         if not databricks_workspace_host or not databricks_instance:
             raise ValueError("Lakebase host detected — pass --databricks-workspace-host and --databricks-instance")
-        from .lakebase import get_lakebase_password
+        from pgdevkit.lakebase import get_lakebase_password
 
         password = get_lakebase_password(databricks_workspace_host, databricks_instance)
     else:

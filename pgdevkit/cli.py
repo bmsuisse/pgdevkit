@@ -14,12 +14,12 @@ from rich.markup import escape
 from rich.table import Table
 from tqdm import tqdm
 
-from . import migrate, migrate_mssql, stats, testdb
-from .backends import get_backend
-from .connection import build_conninfo, build_mssql_conninfo
-from .diff import DiffKind, compute_diff
-from .fetch_missing import SUBFOLDER, find_missing_objects, layer_folder_for, reconstruct_ddl
-from .parser import parse_directory
+from pgdevkit import migrate, migrate_mssql, stats, testdb
+from pgdevkit.backends import get_backend
+from pgdevkit.connection import build_conninfo, build_mssql_conninfo
+from pgdevkit.diff import DiffKind, compute_diff
+from pgdevkit.fetch_missing import SUBFOLDER, find_missing_objects, layer_folder_for, reconstruct_ddl
+from pgdevkit.parser import parse_directory
 
 app = typer.Typer(name="pgdb", help="PostgreSQL database schema tools")
 console = Console()

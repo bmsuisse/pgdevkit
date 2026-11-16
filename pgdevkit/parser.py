@@ -8,9 +8,9 @@ from pathlib import Path
 import sqlglot
 import sqlglot.expressions as exp
 
-from .areas import area_allowed, parse_areas
-from .dialect import POSTGRES, Dialect, resolve_dialect
-from .models import (
+from pgdevkit.areas import area_allowed, parse_areas
+from pgdevkit.dialect import POSTGRES, Dialect, resolve_dialect
+from pgdevkit.models import (
     ColumnDef,
     CompositeTypeDef,
     ConstraintDef,
@@ -21,7 +21,7 @@ from .models import (
     TableDef,
     ViewDef,
 )
-from .schemas import schema_allowed, sql_schemas
+from pgdevkit.schemas import schema_allowed, sql_schemas
 
 logger = logging.getLogger(__name__)
 

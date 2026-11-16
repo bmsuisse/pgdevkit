@@ -7,9 +7,9 @@ from typing import Any
 
 import psycopg
 
-from .diff import DiffKind, compute_diff
-from .introspect import introspect_db
-from .parser import IGNORED_DIR_NAMES, parse_directory
+from pgdevkit.diff import DiffKind, compute_diff
+from pgdevkit.introspect import introspect_db
+from pgdevkit.parser import IGNORED_DIR_NAMES, parse_directory
 
 _LAYER_PREFIX_RE = re.compile(r"^\d+_?")
 

@@ -9,14 +9,14 @@ from typing import Any
 
 import mssql_python
 
-from ...db.mssql_sql import ident, json_encode_value
-from ...dialect import MSSQL
-from ...envtag import strip_env_suffix
-from .. import query
-from ..config import ProjectConfig
-from ..schema import _iter_sql_files, _strip_layer_prefix
-from . import constants
-from .container import ensure_mssql_container
+from pgdevkit.db.mssql_sql import ident, json_encode_value
+from pgdevkit.dialect import MSSQL
+from pgdevkit.envtag import strip_env_suffix
+from pgdevkit.testdb import query
+from pgdevkit.testdb.config import ProjectConfig
+from pgdevkit.testdb.mssql import constants
+from pgdevkit.testdb.mssql.container import ensure_mssql_container
+from pgdevkit.testdb.schema import _iter_sql_files, _strip_layer_prefix
 
 
 def _admin_dsn() -> str:
@@ -201,7 +201,7 @@ def ensure_testdb(
 
 
 async def _dbs_with_prefix(prefix: str) -> list[str]:
-    from ..naming import escape_like_prefix
+    from pgdevkit.testdb.naming import escape_like_prefix
 
     escaped_prefix = escape_like_prefix(prefix)
 
@@ -224,7 +224,7 @@ async def _dbs_with_prefix(prefix: str) -> list[str]:
 
 
 async def _find_orphaned_dbs(config: ProjectConfig) -> list[str]:
-    from ..naming import expected_db_names, live_worktree_branches, slugify
+    from pgdevkit.testdb.naming import expected_db_names, live_worktree_branches, slugify
 
     prefix = f"{slugify(config.name)}_"
     actual = await _dbs_with_prefix(prefix)
@@ -237,7 +237,7 @@ def find_orphaned_dbs(config: ProjectConfig) -> list[str]:
 
 
 def clean_testdb(config: ProjectConfig, db_name: str, all: bool, orphaned: bool = False) -> None:
-    from ..naming import slugify
+    from pgdevkit.testdb.naming import slugify
 
     async def _run() -> None:
         if orphaned:

@@ -23,7 +23,7 @@ from typing import Any
 
 import sqlglot
 
-from .testdb.query import split_tsql_batches
+from pgdevkit.testdb.query import split_tsql_batches
 
 _IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_]*"
 _NAME = r"(?:\[[^\]]+\]|[\w\"]+)(?:\.(?:\[[^\]]+\]|[\w\"]+))*"
@@ -46,7 +46,7 @@ def tracking_table_parts(tracking_table: str) -> tuple[str, str]:
 
 
 def _tracking_ident(tracking_table: str) -> str:
-    from .db.mssql_sql import qualified
+    from pgdevkit.db.mssql_sql import qualified
 
     return qualified(*tracking_table_parts(tracking_table))
 
@@ -129,7 +129,7 @@ def tracking_table_exists(con: Any, tracking_table: str) -> bool:
 
 
 def applied_migrations(conninfo: str, tracking_table: str) -> dict[str, tuple[datetime, str]]:
-    from .migrate import TrackingTableMissing
+    from pgdevkit.migrate import TrackingTableMissing
 
     con = connect(conninfo)
     try:

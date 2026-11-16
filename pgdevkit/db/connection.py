@@ -9,8 +9,8 @@ from psycopg import AsyncConnection
 from psycopg.conninfo import make_conninfo
 from psycopg_pool import AsyncConnectionPool, AsyncNullConnectionPool
 
-from ..connection import detect_provider, get_azure_postgres_password, is_azure_postgres_host
-from ..lakebase import get_lakebase_password
+from pgdevkit.connection import detect_provider, get_azure_postgres_password, is_azure_postgres_host
+from pgdevkit.lakebase import get_lakebase_password
 
 
 class PgPool:

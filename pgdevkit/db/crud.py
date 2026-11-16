@@ -11,8 +11,8 @@ from psycopg.sql import SQL, Composable, Composed, Identifier, Placeholder
 from psycopg.sql import Literal as SqlLiteral
 from pydantic import BaseModel
 
-from .complex_types import ComplexHelper
-from .model import PostgresTableModel
+from pgdevkit.db.complex_types import ComplexHelper
+from pgdevkit.db.model import PostgresTableModel
 
 T = TypeVar("T", bound=PostgresTableModel)
 

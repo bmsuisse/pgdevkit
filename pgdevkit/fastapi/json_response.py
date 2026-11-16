@@ -23,7 +23,7 @@ from starlette.exceptions import HTTPException
 from starlette.requests import ClientDisconnect
 from starlette.types import Message, Receive, Scope, Send
 
-from ..db.fetch import (
+from pgdevkit.db.fetch import (
     ConnectionSource,
     QueryParams,
     SqlQuery,
